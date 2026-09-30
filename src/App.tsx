@@ -1,0 +1,625 @@
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import {
+  Message,
+  Conversation,
+  ModelSpec,
+  ModelCacheInfo,
+  DownloadProgress,
+  TelemetryStats,
+  UserSettings,
+} from './types';
+import { DEFAULT_MODEL_ID, getModelById } from './lib/models';
+import {
+  loadStoredConversations,
+  saveStoredConversations,
+  loadActiveConversationId,
+  saveActiveConversationId,
+  loadUserSettings,
+  saveUserSettings,
+  getAllModelCacheStatuses,
+  deleteModelFromCache,
+  clearAllTransformersCaches,
+} from './lib/storage';
+import {
+  streamSerafinaResponse,
+  stopCurrentGeneration,
+  detectBestHardwareDevice,
+  loadModelPipeline,
+} from './lib/slmEngine';
+import { soundManager, waitForSerafinaVoice } from './lib/audio';
+import { APP_INFO, AI_PROFILE, VOICE_CONFIG } from './constants';
+import { Header } from './components/Header';
+import { SearchBar } from './components/SearchBar';
+import { Sidebar } from './components/Sidebar';
+import { TelemetryBar } from './components/TelemetryBar';
+import { ChatInput } from './components/ChatInput';
+import { MessageList } from './components/MessageList';
+import { SettingsModal } from './components/SettingsModal';
+import { TwitterProfileModal } from './components/TwitterProfileModal';
+
+export default function App() {
+  // ----------------------------------------------------
+  // State Initialization
+  // ----------------------------------------------------
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  const [activeModel, setActiveModel] = useState<ModelSpec>(() => getModelById(DEFAULT_MODEL_ID));
+  const [cacheStatuses, setCacheStatuses] = useState<Record<string, ModelCacheInfo>>({});
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+  const [userSettings, setUserSettings] = useState<UserSettings>(() => {
+    const loaded = loadUserSettings();
+    return { ...loaded, soundEffects: loaded.soundEffects !== false };
+  });
+
+  // Light / Dark Theme state (default: light, remembered via browser storage)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem(APP_INFO.storageKeys.theme);
+      if (stored === 'dark' || stored === 'light') return stored;
+    }
+    return 'light';
+  });
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+    try {
+      localStorage.setItem(APP_INFO.storageKeys.theme, theme);
+    } catch {
+      // Ignore storage errors
+    }
+  }, [theme]);
+
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
+  const [input, setInput] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+
+  // Modals & Panels
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isTelemetryExpanded, setIsTelemetryExpanded] = useState(false);
+  const [currentlySpeakingMsgId, setCurrentlySpeakingMsgId] = useState<string | null>(null);
+
+  // In-Conversation Search
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+
+  // Real-time Telemetry
+  const [telemetry, setTelemetry] = useState<TelemetryStats>({
+    activeModelName: activeModel.name,
+    modelId: activeModel.id,
+    device: 'wasm',
+    tokensPerSec: 0,
+    timeToFirstTokenMs: 0,
+    totalLatencyMs: 0,
+    tokenCount: 0,
+    statusText: 'Mind ready',
+    isGenerating: false,
+    isModelLoaded: false,
+  });
+
+  const hasPlayedReceiveAudio = useRef(false);
+
+  // Voice synthesis with priority order queue sourced from VOICE_CONFIG
+  const speakSerafinaMessage = useCallback(
+    async (msgId: string, text: string) => {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+      if (!userSettings.soundEffects) return;
+
+      window.speechSynthesis.cancel();
+
+      // Wait until voice synthesis engine is fully ready/loaded so the female voice queue is activated
+      const voice = await waitForSerafinaVoice(2000);
+
+      // Skip male voice if no female voice is loaded/ready
+      if (!voice) {
+        console.warn('No female voice available from queue, skipping voice synthesis.');
+        return;
+      }
+
+      // Check if user disabled sound while waiting
+      if (!userSettings.soundEffects) return;
+
+      setCurrentlySpeakingMsgId(msgId);
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.pitch = VOICE_CONFIG.pitch;
+      utterance.rate = VOICE_CONFIG.rate;
+      utterance.voice = voice;
+
+      utterance.onend = () => setCurrentlySpeakingMsgId(null);
+      utterance.onerror = () => setCurrentlySpeakingMsgId(null);
+
+      window.speechSynthesis.speak(utterance);
+    },
+    [userSettings.soundEffects]
+  );
+
+  const handleToggleSpeak = (msgId: string, content: string) => {
+    if (currentlySpeakingMsgId === msgId) {
+      window.speechSynthesis?.cancel();
+      setCurrentlySpeakingMsgId(null);
+    } else {
+      speakSerafinaMessage(msgId, content);
+    }
+  };
+
+  // ----------------------------------------------------
+  // Initial Boot: Load persistent data & inspect cache
+  // ----------------------------------------------------
+  const refreshCacheStatuses = useCallback(async () => {
+    try {
+      const statuses = await getAllModelCacheStatuses();
+      setCacheStatuses(statuses);
+    } catch (e) {
+      console.warn('Cache status inspect error:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStoredConversations().then((stored) => {
+      if (stored && stored.length > 0) {
+        setConversations(stored);
+        const lastActive = loadActiveConversationId();
+        const found = stored.find((c) => c.id === lastActive);
+        if (found) {
+          setActiveConvId(found.id);
+        } else {
+          setActiveConvId(stored[0].id);
+        }
+      } else {
+        const initialConv: Conversation = {
+          id: `conv_${Date.now()}`,
+          title: 'Direct Message',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          messages: [],
+          modelId: DEFAULT_MODEL_ID,
+        };
+        setConversations([initialConv]);
+        setActiveConvId(initialConv.id);
+        saveStoredConversations([initialConv]);
+      }
+    });
+
+    detectBestHardwareDevice(userSettings.preferredDevice).then((dev) => {
+      setTelemetry((prev) => ({
+        ...prev,
+        device: dev,
+      }));
+    });
+
+    refreshCacheStatuses();
+  }, [refreshCacheStatuses, userSettings.preferredDevice]);
+
+  const currentConversation = conversations.find((c) => c.id === activeConvId) || conversations[0] || null;
+
+  // Search matches computed from the current conversation
+  const searchMatches = useMemo(() => {
+    if (!searchQuery.trim() || !currentConversation) return [];
+    const q = searchQuery.trim().toLowerCase();
+    return currentConversation.messages
+      .filter((m) => m.content.toLowerCase().includes(q))
+      .map((m) => m.id);
+  }, [searchQuery, currentConversation]);
+
+  // Reset match index when query or conversation changes
+  useEffect(() => {
+    setCurrentMatchIndex(0);
+  }, [searchQuery, activeConvId]);
+
+  const handleNextMatch = () => {
+    if (searchMatches.length === 0) return;
+    setCurrentMatchIndex((prev) => (prev + 1) % searchMatches.length);
+  };
+
+  const handlePrevMatch = () => {
+    if (searchMatches.length === 0) return;
+    setCurrentMatchIndex((prev) => (prev - 1 + searchMatches.length) % searchMatches.length);
+  };
+
+  const updateConversationMessages = useCallback(
+    (newMessages: Message[]) => {
+      if (!activeConvId) return;
+      setConversations((prev) => {
+        const updated = prev.map((conv) => {
+          if (conv.id === activeConvId) {
+            let newTitle = conv.title;
+            if ((!newTitle || newTitle === 'Direct Message') && newMessages.length > 0) {
+              const firstUserMsg = newMessages.find((m) => m.role === 'user');
+              if (firstUserMsg) {
+                newTitle = firstUserMsg.content.slice(0, 32);
+              }
+            }
+            return {
+              ...conv,
+              title: newTitle,
+              messages: newMessages,
+              updatedAt: Date.now(),
+              modelId: activeModel.id,
+            };
+          }
+          return conv;
+        });
+        saveStoredConversations(updated);
+        return updated;
+      });
+    },
+    [activeConvId, activeModel.id]
+  );
+
+  // ----------------------------------------------------
+  // Actions: New Chat, Switch Chat, Delete, Pin
+  // ----------------------------------------------------
+  const handleNewChat = () => {
+    if (isGenerating) stopCurrentGeneration();
+    window.speechSynthesis?.cancel();
+    setCurrentlySpeakingMsgId(null);
+    const newConv: Conversation = {
+      id: `conv_${Date.now()}`,
+      title: 'Direct Message',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [],
+      modelId: activeModel.id,
+    };
+    const updated = [newConv, ...conversations];
+    setConversations(updated);
+    setActiveConvId(newConv.id);
+    saveActiveConversationId(newConv.id);
+    saveStoredConversations(updated);
+    setInput('');
+    setStreamingText('');
+  };
+
+  const handleSelectConversation = (id: string) => {
+    if (isGenerating) stopCurrentGeneration();
+    window.speechSynthesis?.cancel();
+    setCurrentlySpeakingMsgId(null);
+    setActiveConvId(id);
+    saveActiveConversationId(id);
+    setStreamingText('');
+  };
+
+  const handleDeleteConversation = (id: string) => {
+    const remaining = conversations.filter((c) => c.id !== id);
+    if (remaining.length === 0) {
+      handleNewChat();
+    } else {
+      setConversations(remaining);
+      saveStoredConversations(remaining);
+      if (activeConvId === id) {
+        setActiveConvId(remaining[0].id);
+        saveActiveConversationId(remaining[0].id);
+      }
+    }
+  };
+
+  const handleTogglePin = (id: string) => {
+    setConversations((prev) => {
+      const updated = prev.map((c) => (c.id === id ? { ...c, pinned: !c.pinned } : c));
+      saveStoredConversations(updated);
+      return updated;
+    });
+  };
+
+  const handleSelectModel = (model: ModelSpec) => {
+    setActiveModel(model);
+    setTelemetry((prev) => ({
+      ...prev,
+      activeModelName: model.name,
+      modelId: model.id,
+    }));
+  };
+
+  // ----------------------------------------------------
+  // Send Message Flow
+  // ----------------------------------------------------
+  const handleSendMessage = async (textToSend: string, customBaseHistory?: Message[]) => {
+    const trimmed = textToSend.trim();
+    if (!trimmed) return;
+    if (isGenerating) return;
+
+    if (userSettings.soundEffects) {
+      soundManager.playSend();
+    }
+
+    setInput('');
+
+    const userMessage: Message = {
+      id: `msg_user_${Date.now()}`,
+      role: 'user',
+      content: trimmed,
+      timestamp: Date.now(),
+    };
+
+    const baseHistory = customBaseHistory || (currentConversation ? currentConversation.messages : []);
+    const updatedWithUser = [...baseHistory, userMessage];
+    updateConversationMessages(updatedWithUser);
+
+    setIsGenerating(true);
+    setStreamingText('');
+    hasPlayedReceiveAudio.current = false;
+
+    setTelemetry((prev) => ({
+      ...prev,
+      isGenerating: true,
+      tokensPerSec: 0,
+      timeToFirstTokenMs: 0,
+      totalLatencyMs: 0,
+      tokenCount: 0,
+      statusText: 'Formulating reply...',
+    }));
+
+    try {
+      const assistantText = await streamSerafinaResponse({
+        model: activeModel,
+        history: updatedWithUser,
+        userMessage: trimmed,
+        devicePref: userSettings.preferredDevice,
+        maxTokens: userSettings.maxTokens || 512,
+        onToken: (_piece, fullText) => {
+          setStreamingText(fullText);
+          if (!hasPlayedReceiveAudio.current && userSettings.soundEffects) {
+            soundManager.playReceive();
+            hasPlayedReceiveAudio.current = true;
+          }
+        },
+        onTelemetry: (stats) => {
+          setTelemetry((prev) => ({
+            ...prev,
+            tokensPerSec: stats.tokensPerSec,
+            timeToFirstTokenMs: stats.ttftMs,
+            totalLatencyMs: stats.totalMs,
+            tokenCount: stats.tokenCount,
+            device: stats.device,
+          }));
+        },
+        onProgress: (prog) => {
+          setDownloadProgress(prog);
+          if (prog.status === 'ready') {
+            refreshCacheStatuses();
+          }
+        },
+      });
+
+      const assistantMessage: Message = {
+        id: `msg_asst_${Date.now()}`,
+        role: 'assistant',
+        content: assistantText,
+        timestamp: Date.now(),
+        modelUsed: activeModel.name,
+        speedTps: telemetry.tokensPerSec,
+        generationTimeMs: telemetry.totalLatencyMs,
+      };
+
+      updateConversationMessages([...updatedWithUser, assistantMessage]);
+      setStreamingText('');
+      setDownloadProgress(null);
+      refreshCacheStatuses();
+
+      // Automatically speak out Serafina's message synced to its speaker button
+      speakSerafinaMessage(assistantMessage.id, assistantText);
+    } catch (err: unknown) {
+      console.error('Chat generation error:', err);
+
+      const fallbackAssistantMessage: Message = {
+        id: `msg_asst_err_${Date.now()}`,
+        role: 'assistant',
+        content:
+          "My memory stalled loading those weights into your browser. If your device is low on RAM, try SmolLM2 135M.",
+        timestamp: Date.now(),
+        modelUsed: activeModel.name,
+        error: true,
+      };
+
+      updateConversationMessages([...updatedWithUser, fallbackAssistantMessage]);
+      setStreamingText('');
+      setDownloadProgress(null);
+    } finally {
+      setIsGenerating(false);
+      setTelemetry((prev) => ({ ...prev, isGenerating: false }));
+    }
+  };
+
+  // ----------------------------------------------------
+  // User Message Toolbar Handlers (Retry & Edit)
+  // ----------------------------------------------------
+  const handleRetryUserMessage = (text: string) => {
+    if (!currentConversation || isGenerating) return;
+    const msgs = currentConversation.messages;
+    const msgIndex = msgs.findIndex((m) => m.content === text && m.role === 'user');
+    if (msgIndex !== -1) {
+      const historyBefore = msgs.slice(0, msgIndex);
+      handleSendMessage(text, historyBefore);
+    } else {
+      handleSendMessage(text);
+    }
+  };
+
+  const handleEditUserMessage = (messageId: string, newText: string) => {
+    if (!currentConversation || isGenerating) return;
+    const msgs = currentConversation.messages;
+    const msgIndex = msgs.findIndex((m) => m.id === messageId);
+    if (msgIndex !== -1) {
+      const historyBefore = msgs.slice(0, msgIndex);
+      handleSendMessage(newText, historyBefore);
+    }
+  };
+
+  // Preload a model from Settings
+  const handlePreloadModel = async (model: ModelSpec) => {
+    try {
+      await loadModelPipeline(model, userSettings.preferredDevice, (prog) => {
+        setDownloadProgress(prog);
+      });
+      await refreshCacheStatuses();
+    } catch (e) {
+      console.error('Preload failed:', e);
+    } finally {
+      setDownloadProgress(null);
+    }
+  };
+
+  const handleDeleteModelCache = async (hfRepo: string) => {
+    await deleteModelFromCache(hfRepo);
+    await refreshCacheStatuses();
+  };
+
+  const handleClearAllCache = async () => {
+    await clearAllTransformersCaches();
+    await refreshCacheStatuses();
+  };
+
+  const handleUpdateSettings = (newPartial: Partial<UserSettings>) => {
+    // If sound is being disabled, stop any active speech immediately
+    if (newPartial.soundEffects === false) {
+      window.speechSynthesis?.cancel();
+      setCurrentlySpeakingMsgId(null);
+    }
+    setUserSettings((prev) => {
+      const updated = { ...prev, ...newPartial };
+      saveUserSettings(updated);
+      return updated;
+    });
+  };
+
+  const handleToggleNavbarSound = () => {
+    const nextVal = !userSettings.soundEffects;
+    if (!nextVal) {
+      window.speechSynthesis?.cancel();
+      setCurrentlySpeakingMsgId(null);
+    }
+    handleUpdateSettings({ soundEffects: nextVal });
+  };
+
+  return (
+    <div className={`flex h-screen w-screen overflow-hidden bg-[#f8f9fc] dark:bg-[#0f1117] text-[#1e2029] dark:text-[#f1f2f6] font-sans antialiased transition-colors ${theme === 'dark' ? 'dark' : ''}`}>
+      {/* Sidebar (Conversations History) */}
+      <Sidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        conversations={conversations}
+        activeId={activeConvId}
+        onSelectConversation={handleSelectConversation}
+        onNewChat={handleNewChat}
+        onDeleteConversation={handleDeleteConversation}
+        onTogglePin={handleTogglePin}
+        cacheStatuses={cacheStatuses}
+      />
+
+      {/* Main DM Viewport */}
+      <main className="flex-1 flex flex-col h-full min-w-0 relative bg-[#f8f9fc] dark:bg-[#0f1117] transition-colors">
+        {/* Top Header with Clickable Profile Region, Quick Search, Theme Toggle */}
+        <Header
+          isGenerating={isGenerating}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+          isSearchOpen={isSearchOpen}
+          onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
+          onOpenProfile={() => setIsProfileOpen(true)}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          soundEnabled={userSettings.soundEffects}
+          onToggleSound={handleToggleNavbarSound}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+        />
+
+        {/* Quick Conversation Search Bar */}
+        <SearchBar
+          isOpen={isSearchOpen}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          currentMatchIndex={currentMatchIndex}
+          totalMatches={searchMatches.length}
+          onNextMatch={handleNextMatch}
+          onPrevMatch={handlePrevMatch}
+          onClose={() => {
+            setIsSearchOpen(false);
+            setSearchQuery('');
+          }}
+        />
+
+        {/* Message Thread */}
+        <MessageList
+          messages={currentConversation ? currentConversation.messages : []}
+          isGenerating={isGenerating}
+          streamingText={streamingText}
+          activeModel={activeModel}
+          onSelectStarter={handleSendMessage}
+          onRetryUserMessage={handleRetryUserMessage}
+          onEditUserMessage={handleEditUserMessage}
+          currentlySpeakingId={currentlySpeakingMsgId}
+          onToggleSpeak={handleToggleSpeak}
+          onOpenProfile={() => setIsProfileOpen(true)}
+          searchQuery={searchQuery}
+          currentMatchMessageId={searchMatches[currentMatchIndex] || null}
+        />
+
+        {/* Telemetry Status Bar (Directly Above Chat Input Panel, no model info on left) */}
+        <TelemetryBar
+          activeModel={activeModel}
+          telemetry={telemetry}
+          downloadProgress={downloadProgress}
+          isExpanded={isTelemetryExpanded}
+          onToggleExpand={() => setIsTelemetryExpanded(!isTelemetryExpanded)}
+          onCancelDownload={() => {
+            stopCurrentGeneration();
+            setDownloadProgress(null);
+            setIsGenerating(false);
+          }}
+        />
+
+        {/* Chat Input Panel with Model Selector & Max Tokens Customization */}
+        <ChatInput
+          input={input}
+          setInput={setInput}
+          onSend={handleSendMessage}
+          isGenerating={isGenerating}
+          onStop={() => {
+            stopCurrentGeneration();
+            setIsGenerating(false);
+            setStreamingText('');
+            window.speechSynthesis?.cancel();
+            setCurrentlySpeakingMsgId(null);
+          }}
+          activeModel={activeModel}
+          cacheStatuses={cacheStatuses}
+          onSelectModel={handleSelectModel}
+          maxTokens={userSettings.maxTokens || 512}
+          onChangeMaxTokens={(val) => handleUpdateSettings({ maxTokens: val })}
+        />
+      </main>
+
+      {/* Twitter/X Style Profile Preview Modal */}
+      <TwitterProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+      />
+
+      {/* Settings & Offline SLM Storage Manager Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        cacheStatuses={cacheStatuses}
+        onDeleteModel={handleDeleteModelCache}
+        onClearAllCache={handleClearAllCache}
+        onPreloadModel={handlePreloadModel}
+        userSettings={userSettings}
+        onUpdateSettings={handleUpdateSettings}
+        isDownloading={Boolean(downloadProgress && downloadProgress.status === 'downloading')}
+      />
+    </div>
+  );
+}

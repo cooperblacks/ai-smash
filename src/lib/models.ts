@@ -1,0 +1,81 @@
+import { ModelSpec } from '../types';
+
+export const AVAILABLE_MODELS: ModelSpec[] = [
+  {
+    id: 'smollm2-135m',
+    name: 'SmolLM2 135M',
+    tagline: 'Instant Browser SLM',
+    family: 'browser-slm',
+    hfRepo: 'HuggingFaceTB/SmolLM2-135M-Instruct',
+    sizeLabel: '~80 MB',
+    approxParams: '135M',
+    defaultDtype: 'q4f16',
+    isSmallModel: true,
+    description: 'Ultra-lightweight in-browser SLM. Lowest RAM footprint, fast execution.',
+    speedRating: 'Instant',
+    isDefault: true,
+    ramRequired: '< 250 MB',
+  },
+  {
+    id: 'smollm2-360m',
+    name: 'SmolLM2 360M',
+    tagline: 'Balanced Fast SLM',
+    family: 'browser-slm',
+    hfRepo: 'HuggingFaceTB/SmolLM2-360M-Instruct',
+    sizeLabel: '~190 MB',
+    approxParams: '360M',
+    defaultDtype: 'q4f16',
+    isSmallModel: true,
+    description: 'Balanced in-browser SLM with smooth conversational pacing.',
+    speedRating: 'Ultra Fast',
+    ramRequired: '~400 MB',
+  },
+  {
+    id: 'qwen2.5-0.5b',
+    name: 'Qwen 2.5 0.5B',
+    tagline: 'Intelligent Pocket SLM',
+    family: 'browser-slm',
+    hfRepo: 'onnx-community/Qwen2.5-0.5B-Instruct',
+    sizeLabel: '~350 MB',
+    approxParams: '0.5B',
+    defaultDtype: 'q4',
+    isSmallModel: false,
+    description: 'Nuanced multilingual SLM with sharp conversational memory.',
+    speedRating: 'Fast',
+    ramRequired: '~600 MB',
+  },
+  {
+    id: 'minicpm-2b',
+    name: 'MiniCPM 5-2B',
+    tagline: 'OpenBMB Deep Reasoning SLM',
+    family: 'browser-slm',
+    hfRepo: 'openbmb/MiniCPM5-2B',
+    sizeLabel: '~1.3 GB',
+    approxParams: '2B',
+    defaultDtype: 'q4',
+    isSmallModel: false,
+    description: 'State-of-the-art 2B parameter architecture from OpenBMB.',
+    speedRating: 'Deep',
+    ramRequired: '~2.2 GB',
+  },
+  {
+    id: 'llama-3.2-1b',
+    name: 'Llama 3.2 1B',
+    tagline: 'Meta Compact SLM',
+    family: 'browser-slm',
+    hfRepo: 'onnx-community/Llama-3.2-1B-Instruct-ONNX',
+    sizeLabel: '~720 MB',
+    approxParams: '1B',
+    defaultDtype: 'q4',
+    isSmallModel: false,
+    description: 'Rich conversational depth and dialogue understanding.',
+    speedRating: 'Balanced',
+    ramRequired: '~1.2 GB',
+  },
+];
+
+export const DEFAULT_MODEL_ID = 'smollm2-135m';
+
+export function getModelById(id: string): ModelSpec {
+  return AVAILABLE_MODELS.find((m) => m.id === id) || AVAILABLE_MODELS[0];
+}

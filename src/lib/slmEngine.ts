@@ -1,0 +1,344 @@
+import { pipeline, env, TextStreamer } from '@huggingface/transformers';
+import { ModelSpec, DownloadProgress, HardwareDevice, Message } from '../types';
+import { getPersonaPrompt, cleanSerafinaResponse } from './prompts';
+
+// Configure Transformers.js for browser environment
+if (typeof window !== 'undefined') {
+  env.allowLocalModels = false;
+  env.useBrowserCache = true;
+}
+
+// Active generator cache in memory
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let activeGenerator: any = null;
+let activeModelId: string | null = null;
+let isModelLoading = false;
+let abortController: AbortController | null = null;
+
+export async function detectBestHardwareDevice(preference: 'auto' | 'webgpu' | 'wasm' = 'auto'): Promise<HardwareDevice> {
+  if (preference === 'wasm') return 'wasm';
+  if (typeof navigator !== 'undefined' && 'gpu' in navigator) {
+    try {
+      const adapter = await (navigator as unknown as { gpu: { requestAdapter: () => Promise<unknown> } }).gpu.requestAdapter();
+      if (adapter) return 'webgpu';
+    } catch {
+      return 'wasm';
+    }
+  }
+  return 'wasm';
+}
+
+export function isModelCurrentlyLoaded(modelId: string): boolean {
+  return activeGenerator !== null && activeModelId === modelId;
+}
+
+export function getActiveModelId(): string | null {
+  return activeModelId;
+}
+
+/**
+ * Pre-warm or load an SLM model pipeline
+ */
+export async function loadModelPipeline(
+  model: ModelSpec,
+  devicePref: 'auto' | 'webgpu' | 'wasm',
+  onProgress?: (prog: DownloadProgress) => void
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  if (model.family === 'cloud') {
+    return { cloud: true };
+  }
+
+  if (activeGenerator && activeModelId === model.id) {
+    onProgress?.({
+      modelId: model.id,
+      status: 'ready',
+      progress: 100,
+      loadedBytes: 0,
+      totalBytes: 0,
+    });
+    return activeGenerator;
+  }
+
+  if (isModelLoading) {
+    throw new Error('Another model is currently initializing. Please wait a moment.');
+  }
+
+  isModelLoading = true;
+  onProgress?.({
+    modelId: model.id,
+    status: 'downloading',
+    progress: 0,
+    loadedBytes: 0,
+    totalBytes: 0,
+  });
+
+  const device = await detectBestHardwareDevice(devicePref);
+
+  try {
+    // Pipeline creation with progress callback
+    const generator = await pipeline('text-generation', model.hfRepo, {
+      device: device === 'webgpu' ? 'webgpu' : 'wasm',
+      dtype: model.defaultDtype,
+      progress_callback: (item: { status?: string; progress?: number; loaded?: number; total?: number; file?: string }) => {
+        if (!onProgress) return;
+        const progressNum = typeof item.progress === 'number' ? Math.round(item.progress) : 0;
+        onProgress({
+          modelId: model.id,
+          status: item.status === 'done' || item.status === 'ready' ? 'ready' : 'downloading',
+          progress: progressNum,
+          loadedBytes: item.loaded || 0,
+          totalBytes: item.total || 0,
+          fileName: item.file,
+        });
+      },
+    });
+
+    activeGenerator = generator;
+    activeModelId = model.id;
+    isModelLoading = false;
+
+    onProgress?.({
+      modelId: model.id,
+      status: 'ready',
+      progress: 100,
+      loadedBytes: 0,
+      totalBytes: 0,
+    });
+
+    return generator;
+  } catch (error: unknown) {
+    isModelLoading = false;
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`Failed to load ${model.name} with ${device}:`, msg);
+
+    // If webgpu failed, try fallback to wasm
+    if (device === 'webgpu') {
+      try {
+        console.log('Attempting fallback to WASM runtime...');
+        onProgress?.({
+          modelId: model.id,
+          status: 'downloading',
+          progress: 10,
+          loadedBytes: 0,
+          totalBytes: 0,
+          fileName: 'Retrying on CPU/WASM...',
+        });
+
+        const fallbackGenerator = await pipeline('text-generation', model.hfRepo, {
+          device: 'wasm',
+          dtype: 'q4',
+          progress_callback: (item: { status?: string; progress?: number; loaded?: number; total?: number; file?: string }) => {
+            if (!onProgress) return;
+            const progressNum = typeof item.progress === 'number' ? Math.round(item.progress) : 0;
+            onProgress({
+              modelId: model.id,
+              status: item.status === 'done' || item.status === 'ready' ? 'ready' : 'downloading',
+              progress: progressNum,
+              loadedBytes: item.loaded || 0,
+              totalBytes: item.total || 0,
+              fileName: item.file || 'Downloading CPU tensors...',
+            });
+          },
+        });
+
+        activeGenerator = fallbackGenerator;
+        activeModelId = model.id;
+        isModelLoading = false;
+        onProgress?.({
+          modelId: model.id,
+          status: 'ready',
+          progress: 100,
+          loadedBytes: 0,
+          totalBytes: 0,
+        });
+        return fallbackGenerator;
+      } catch (wasmErr) {
+        console.error('WASM fallback also failed:', wasmErr);
+      }
+    }
+
+    isModelLoading = false;
+    onProgress?.({
+      modelId: model.id,
+      status: 'error',
+      progress: 0,
+      loadedBytes: 0,
+      totalBytes: 0,
+      error: msg,
+    });
+    throw new Error(msg);
+  }
+}
+
+/**
+ * Stream conversational completion from Serafina
+ */
+export async function streamSerafinaResponse({
+  model,
+  history,
+  userMessage,
+  devicePref,
+  maxTokens = 512,
+  onToken,
+  onTelemetry,
+  onProgress,
+}: {
+  model: ModelSpec;
+  history: Message[];
+  userMessage: string;
+  devicePref: 'auto' | 'webgpu' | 'wasm';
+  maxTokens?: number;
+  onToken: (token: string, fullAccumulated: string) => void;
+  onTelemetry?: (stats: {
+    ttftMs: number;
+    tokensPerSec: number;
+    totalMs: number;
+    tokenCount: number;
+    device: HardwareDevice;
+  }) => void;
+  onProgress?: (prog: DownloadProgress) => void;
+}): Promise<string> {
+  const startTime = performance.now();
+  let firstTokenTime: number | null = null;
+  let tokenCount = 0;
+  let accumulatedText = '';
+  abortController = new AbortController();
+
+  // If Cloud Model (Gemini 3.8 Flash)
+  if (model.family === 'cloud') {
+    const systemPrompt = getPersonaPrompt(false);
+    const messagesPayload = [
+      ...history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user', content: userMessage },
+    ];
+
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: messagesPayload,
+        systemPrompt,
+        maxTokens,
+      }),
+      signal: abortController.signal,
+    });
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => ({}));
+      throw new Error(errJson.error || `Server error: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Response body stream not available');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.text) {
+              if (firstTokenTime === null) {
+                firstTokenTime = performance.now();
+              }
+              tokenCount++;
+              accumulatedText += data.text;
+              onToken(data.text, cleanSerafinaResponse(accumulatedText));
+
+              const now = performance.now();
+              const elapsedSec = (now - startTime) / 1000;
+              const tps = elapsedSec > 0 ? Math.round((tokenCount / elapsedSec) * 10) / 10 : 0;
+              onTelemetry?.({
+                ttftMs: Math.round(firstTokenTime - startTime),
+                tokensPerSec: tps,
+                totalMs: Math.round(now - startTime),
+                tokenCount,
+                device: 'cloud',
+              });
+            }
+          } catch {
+            // Ignore parse errors on SSE boundary
+          }
+        }
+      }
+    }
+
+    const cleanedFinal = cleanSerafinaResponse(accumulatedText);
+    return cleanedFinal;
+  }
+
+  // In-Browser SLM (Transformers.js)
+  const generator = await loadModelPipeline(model, devicePref, onProgress);
+  const device = await detectBestHardwareDevice(devicePref);
+  const personaPrompt = getPersonaPrompt(model.isSmallModel);
+
+  // Build structured chat prompt
+  const conversationMessages = [
+    { role: 'system', content: personaPrompt },
+    ...history.slice(-6).map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content: userMessage },
+  ];
+
+  // Custom text streamer
+  const streamer = new TextStreamer(generator.tokenizer, {
+    skip_prompt: true,
+    skip_special_tokens: true,
+    callback_function: (piece: string) => {
+      if (!piece) return;
+      if (firstTokenTime === null) {
+        firstTokenTime = performance.now();
+      }
+      tokenCount++;
+      accumulatedText += piece;
+      onToken(piece, cleanSerafinaResponse(accumulatedText));
+
+      const now = performance.now();
+      const elapsedSec = (now - startTime) / 1000;
+      const tps = elapsedSec > 0 ? Math.round((tokenCount / elapsedSec) * 10) / 10 : 0;
+      onTelemetry?.({
+        ttftMs: firstTokenTime ? Math.round(firstTokenTime - startTime) : 0,
+        tokensPerSec: tps,
+        totalMs: Math.round(now - startTime),
+        tokenCount,
+        device,
+      });
+    },
+  });
+
+  try {
+    await generator(conversationMessages, {
+      max_new_tokens: Math.min(maxTokens || (model.isSmallModel ? 256 : 512), 2048),
+      temperature: 0.75,
+      top_p: 0.9,
+      do_sample: true,
+      streamer,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error('Generation error in browser SLM:', errorMsg);
+    // If browser SLM crashed (e.g. out of memory or abort), provide friendly fallback
+    if (accumulatedText.length === 0) {
+      throw err;
+    }
+  }
+
+  const finalResult = cleanSerafinaResponse(accumulatedText);
+  return finalResult;
+}
+
+export function stopCurrentGeneration(): void {
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+}
