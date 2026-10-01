@@ -39,6 +39,12 @@ export const AI_PROFILE = {
     'https://muxai.vercel.app/Serafina_banner3.png',
     'https://muxai.vercel.app/Serafina_banner4.png',
   ],
+  vrmModelUrl: 'https://muxai.vercel.app/seraphina_v1.2_vrm1.vrm',
+};
+
+export const VRM_CONFIG = {
+  modelUrl: 'https://muxai.vercel.app/seraphina_v1.2_vrm1.vrm',
+  cacheKey: 'serafina_vrm_cache_v1',
 };
 
 export const VOICE_CONFIG = {
@@ -71,6 +77,16 @@ export const TOKEN_CONFIG = {
   minTokens: 32,
   maxTokens: 4096,
   presets: [128, 256, 512, 1024, 2048],
+};
+
+export const OLLAMA_CONFIG = {
+  muxAiEndpoint: 'https://trout-egotism-decorator.ngrok-free.dev',
+  pingIntervalMs: 5000,
+  defaultCustomUrl: 'http://localhost:11434',
+  storageKeys: {
+    customUrl: 'serafina_custom_ollama_url',
+    customModel: 'serafina_custom_ollama_model',
+  },
 };
 
 export const SYSTEM_PROMPTS = {

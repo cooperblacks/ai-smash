@@ -51,14 +51,23 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
             <X className="w-4 h-4" />
           </button>
 
-          {/* Banner cycle indicator pills */}
-          <div className="absolute bottom-2.5 right-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/40 backdrop-blur-sm">
+          {/* Banner cycle indicator buttons for quick jumping */}
+          <div className="absolute bottom-2.5 right-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-black/50 backdrop-blur-md z-10">
             {AI_PROFILE.banners.map((_, idx) => (
-              <span
+              <button
                 key={idx}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  idx === currentBannerIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/40'
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCurrentBannerIndex(idx);
+                }}
+                className={`h-2 rounded-full transition-all duration-300 cursor-pointer ${
+                  idx === currentBannerIndex
+                    ? 'w-5 bg-white shadow-xs'
+                    : 'w-2 bg-white/40 hover:bg-white/80'
                 }`}
+                title={`Jump to banner ${idx + 1}`}
+                aria-label={`Jump to banner ${idx + 1}`}
               />
             ))}
           </div>

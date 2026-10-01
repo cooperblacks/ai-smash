@@ -1,5 +1,6 @@
 import { Conversation, UserSettings } from '../types';
 import { AVAILABLE_MODELS } from './models';
+import { OLLAMA_CONFIG } from '../constants';
 
 const CONVERSATIONS_KEY = 'serafina_conversations_v1';
 const SETTINGS_KEY = 'serafina_user_settings_v1';
@@ -9,7 +10,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   userName: 'You',
   preferredDevice: 'auto',
   hapticFeedback: true,
-  soundEffects: false,
+  soundEffects: true,
   telemetryExpanded: true,
   autoScroll: true,
   bannerCycling: true,
@@ -55,10 +56,15 @@ export function saveActiveConversationId(id: string): void {
 export function loadUserSettings(): UserSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_USER_SETTINGS;
-    return { ...DEFAULT_USER_SETTINGS, ...JSON.parse(raw) };
+    if (!raw) return { ...DEFAULT_USER_SETTINGS, soundEffects: true };
+    const parsed = JSON.parse(raw);
+    return {
+      ...DEFAULT_USER_SETTINGS,
+      ...parsed,
+      soundEffects: parsed.soundEffects !== undefined ? Boolean(parsed.soundEffects) : true,
+    };
   } catch {
-    return DEFAULT_USER_SETTINGS;
+    return { ...DEFAULT_USER_SETTINGS, soundEffects: true };
   }
 }
 
@@ -67,6 +73,23 @@ export function saveUserSettings(settings: UserSettings): void {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch (err) {
     console.error('Failed to save settings:', err);
+  }
+}
+
+export function loadCustomOllamaUrl(): string {
+  try {
+    const stored = localStorage.getItem(OLLAMA_CONFIG.storageKeys.customUrl);
+    return stored?.trim() || OLLAMA_CONFIG.defaultCustomUrl;
+  } catch {
+    return OLLAMA_CONFIG.defaultCustomUrl;
+  }
+}
+
+export function saveCustomOllamaUrl(url: string): void {
+  try {
+    localStorage.setItem(OLLAMA_CONFIG.storageKeys.customUrl, url.trim());
+  } catch (err) {
+    console.error('Failed to save custom ollama url:', err);
   }
 }
 

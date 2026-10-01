@@ -52,8 +52,10 @@ export const MessageList: React.FC<MessageListProps> = ({
   let lastDateStr = '';
 
   return (
-    <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 space-y-2">
-      {/* Empty State: Pure Minimalist Private DM */}
+    <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+      {/* Desktop & Ultrawide centered canvas with max-width */}
+      <div className="max-w-3xl lg:max-w-4xl mx-auto w-full space-y-2">
+        {/* Empty State: Pure Minimalist Private DM */}
       {messages.length === 0 && (
         <div className="max-w-md mx-auto my-auto pt-12 pb-16 flex flex-col items-center text-center px-4 animate-in fade-in duration-200">
           {/* Avatar with subtle ring - Clickable to open Profile Modal */}
@@ -171,6 +173,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       )}
 
       <div ref={bottomRef} className="h-2" />
+      </div>
     </div>
   );
 };

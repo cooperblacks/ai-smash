@@ -20,13 +20,13 @@ export interface Conversation {
   modelId?: string;
 }
 
-export type HardwareDevice = 'webgpu' | 'wasm' | 'cpu' | 'cloud';
+export type HardwareDevice = 'webgpu' | 'wasm' | 'cpu' | 'cloud' | 'ollama';
 
 export interface ModelSpec {
   id: string;
   name: string;
   tagline: string;
-  family: 'browser-slm' | 'cloud';
+  family: 'browser-slm' | 'cloud' | 'ollama';
   hfRepo: string;
   sizeLabel: string;
   approxParams: string;
@@ -36,6 +36,8 @@ export interface ModelSpec {
   speedRating: 'Instant' | 'Ultra Fast' | 'Fast' | 'Balanced' | 'Deep';
   isDefault?: boolean;
   ramRequired?: string;
+  endpointUrl?: string;
+  isCustomOllama?: boolean;
 }
 
 export interface ModelCacheInfo {

@@ -1,6 +1,8 @@
 import { pipeline, env, TextStreamer } from '@huggingface/transformers';
 import { ModelSpec, DownloadProgress, HardwareDevice, Message } from '../types';
 import { getPersonaPrompt, cleanSerafinaResponse } from './prompts';
+import { streamOllama } from './ollama';
+import { loadCustomOllamaUrl } from './storage';
 
 // Configure Transformers.js for browser environment
 if (typeof window !== 'undefined') {
@@ -45,7 +47,7 @@ export async function loadModelPipeline(
   onProgress?: (prog: DownloadProgress) => void
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  if (model.family === 'cloud') {
+  if (model.family === 'cloud' || model.family === 'ollama') {
     return { cloud: true };
   }
 
@@ -275,6 +277,31 @@ export async function streamSerafinaResponse({
 
     const cleanedFinal = cleanSerafinaResponse(accumulatedText);
     return cleanedFinal;
+  }
+
+  // If Cloud Ollama Model (MuxAI + Ollama or Self-hosted Ollama)
+  if (model.family === 'ollama') {
+    const endpointUrl = model.isCustomOllama
+      ? loadCustomOllamaUrl()
+      : (model.endpointUrl || 'https://trout-egotism-decorator.ngrok-free.dev/');
+
+    return await streamOllama({
+      url: endpointUrl,
+      model: 'serafina',
+      history,
+      userMessage,
+      maxTokens,
+      onToken,
+      onTelemetry: (stats) => {
+        onTelemetry?.({
+          ttftMs: stats.ttftMs,
+          tokensPerSec: stats.tokensPerSec,
+          totalMs: stats.totalMs,
+          tokenCount: stats.tokenCount,
+          device: 'ollama',
+        });
+      },
+    });
   }
 
   // In-Browser SLM (Transformers.js)

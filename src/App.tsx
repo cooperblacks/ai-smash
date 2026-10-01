@@ -36,6 +36,8 @@ import { ChatInput } from './components/ChatInput';
 import { MessageList } from './components/MessageList';
 import { SettingsModal } from './components/SettingsModal';
 import { TwitterProfileModal } from './components/TwitterProfileModal';
+import { VRMCanvas } from './components/VRMCanvas';
+import { lipSyncManager } from './lib/lipSync';
 
 export default function App() {
   // ----------------------------------------------------
@@ -83,6 +85,9 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingText, setStreamingText] = useState('');
 
+  // 3D VRM Mode Toggle State
+  const [is3DMode, setIs3DMode] = useState(false);
+
   // Modals & Panels
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -111,11 +116,14 @@ export default function App() {
 
   const hasPlayedReceiveAudio = useRef(false);
 
+  // Effective sound enabled (in 3D view, she will always have sound enabled)
+  const isSoundActive = userSettings.soundEffects || is3DMode;
+
   // Voice synthesis with priority order queue sourced from VOICE_CONFIG
   const speakSerafinaMessage = useCallback(
     async (msgId: string, text: string) => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-      if (!userSettings.soundEffects) return;
+      if (!isSoundActive) return;
 
       window.speechSynthesis.cancel();
 
@@ -129,27 +137,42 @@ export default function App() {
       }
 
       // Check if user disabled sound while waiting
-      if (!userSettings.soundEffects) return;
+      if (!isSoundActive) return;
 
       setCurrentlySpeakingMsgId(msgId);
+      lipSyncManager.startSpeech(text);
 
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.pitch = VOICE_CONFIG.pitch;
       utterance.rate = VOICE_CONFIG.rate;
       utterance.voice = voice;
 
-      utterance.onend = () => setCurrentlySpeakingMsgId(null);
-      utterance.onerror = () => setCurrentlySpeakingMsgId(null);
+      utterance.onboundary = (event) => {
+        const charIndex = event.charIndex || 0;
+        const charLength = event.charLength || 5;
+        const word = text.slice(charIndex, charIndex + charLength);
+        lipSyncManager.onBoundary(word);
+      };
+
+      utterance.onend = () => {
+        setCurrentlySpeakingMsgId(null);
+        lipSyncManager.endSpeech();
+      };
+      utterance.onerror = () => {
+        setCurrentlySpeakingMsgId(null);
+        lipSyncManager.endSpeech();
+      };
 
       window.speechSynthesis.speak(utterance);
     },
-    [userSettings.soundEffects]
+    [isSoundActive]
   );
 
   const handleToggleSpeak = (msgId: string, content: string) => {
     if (currentlySpeakingMsgId === msgId) {
       window.speechSynthesis?.cancel();
       setCurrentlySpeakingMsgId(null);
+      lipSyncManager.endSpeech();
     } else {
       speakSerafinaMessage(msgId, content);
     }
@@ -320,6 +343,7 @@ export default function App() {
       ...prev,
       activeModelName: model.name,
       modelId: model.id,
+      device: model.family === 'ollama' ? 'ollama' : prev.device,
     }));
   };
 
@@ -331,7 +355,7 @@ export default function App() {
     if (!trimmed) return;
     if (isGenerating) return;
 
-    if (userSettings.soundEffects) {
+    if (isSoundActive) {
       soundManager.playSend();
     }
 
@@ -371,7 +395,7 @@ export default function App() {
         maxTokens: userSettings.maxTokens || 512,
         onToken: (_piece, fullText) => {
           setStreamingText(fullText);
-          if (!hasPlayedReceiveAudio.current && userSettings.soundEffects) {
+          if (!hasPlayedReceiveAudio.current && isSoundActive) {
             soundManager.playReceive();
             hasPlayedReceiveAudio.current = true;
           }
@@ -409,7 +433,7 @@ export default function App() {
       setDownloadProgress(null);
       refreshCacheStatuses();
 
-      // Automatically speak out Serafina's message synced to its speaker button
+      // Automatically speak out Serafina's message synced to its speaker button / 3D thought bubble
       speakSerafinaMessage(assistantMessage.id, assistantText);
     } catch (err: unknown) {
       console.error('Chat generation error:', err);
@@ -483,8 +507,8 @@ export default function App() {
   };
 
   const handleUpdateSettings = (newPartial: Partial<UserSettings>) => {
-    // If sound is being disabled, stop any active speech immediately
-    if (newPartial.soundEffects === false) {
+    // If sound is being disabled and not in 3D mode, stop any active speech immediately
+    if (newPartial.soundEffects === false && !is3DMode) {
       window.speechSynthesis?.cancel();
       setCurrentlySpeakingMsgId(null);
     }
@@ -497,7 +521,7 @@ export default function App() {
 
   const handleToggleNavbarSound = () => {
     const nextVal = !userSettings.soundEffects;
-    if (!nextVal) {
+    if (!nextVal && !is3DMode) {
       window.speechSynthesis?.cancel();
       setCurrentlySpeakingMsgId(null);
     }
@@ -519,55 +543,66 @@ export default function App() {
         cacheStatuses={cacheStatuses}
       />
 
-      {/* Main DM Viewport */}
+      {/* Main Viewport */}
       <main className="flex-1 flex flex-col h-full min-w-0 relative bg-[#f8f9fc] dark:bg-[#0f1117] transition-colors">
-        {/* Top Header with Clickable Profile Region, Quick Search, Theme Toggle */}
+        {/* Top Header with 3D Mode Toggle Button between Search and Sound */}
         <Header
           isGenerating={isGenerating}
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
           isSearchOpen={isSearchOpen}
           onToggleSearch={() => setIsSearchOpen((prev) => !prev)}
+          is3DMode={is3DMode}
+          onToggle3DMode={() => setIs3DMode(!is3DMode)}
           onOpenProfile={() => setIsProfileOpen(true)}
           onOpenSettings={() => setIsSettingsOpen(true)}
-          soundEnabled={userSettings.soundEffects}
+          soundEnabled={isSoundActive}
           onToggleSound={handleToggleNavbarSound}
           theme={theme}
           onToggleTheme={handleToggleTheme}
         />
 
         {/* Quick Conversation Search Bar */}
-        <SearchBar
-          isOpen={isSearchOpen}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          currentMatchIndex={currentMatchIndex}
-          totalMatches={searchMatches.length}
-          onNextMatch={handleNextMatch}
-          onPrevMatch={handlePrevMatch}
-          onClose={() => {
-            setIsSearchOpen(false);
-            setSearchQuery('');
-          }}
-        />
+        {!is3DMode && (
+          <SearchBar
+            isOpen={isSearchOpen}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            currentMatchIndex={currentMatchIndex}
+            totalMatches={searchMatches.length}
+            onNextMatch={handleNextMatch}
+            onPrevMatch={handlePrevMatch}
+            onClose={() => {
+              setIsSearchOpen(false);
+              setSearchQuery('');
+            }}
+          />
+        )}
 
-        {/* Message Thread */}
-        <MessageList
-          messages={currentConversation ? currentConversation.messages : []}
-          isGenerating={isGenerating}
-          streamingText={streamingText}
-          activeModel={activeModel}
-          onSelectStarter={handleSendMessage}
-          onRetryUserMessage={handleRetryUserMessage}
-          onEditUserMessage={handleEditUserMessage}
-          currentlySpeakingId={currentlySpeakingMsgId}
-          onToggleSpeak={handleToggleSpeak}
-          onOpenProfile={() => setIsProfileOpen(true)}
-          searchQuery={searchQuery}
-          currentMatchMessageId={searchMatches[currentMatchIndex] || null}
-        />
+        {/* Central Display: 3D VRM Mode OR Message Thread Canvas */}
+        {is3DMode ? (
+          <VRMCanvas
+            isSpeaking={currentlySpeakingMsgId !== null}
+            isGenerating={isGenerating}
+          />
+        ) : (
+          <MessageList
+            messages={currentConversation ? currentConversation.messages : []}
+            isGenerating={isGenerating}
+            streamingText={streamingText}
+            activeModel={activeModel}
+            onSelectStarter={handleSendMessage}
+            onRetryUserMessage={handleRetryUserMessage}
+            onEditUserMessage={handleEditUserMessage}
+            currentlySpeakingId={currentlySpeakingMsgId}
+            onToggleSpeak={handleToggleSpeak}
+            onOpenProfile={() => setIsProfileOpen(true)}
+            searchQuery={searchQuery}
+            currentMatchMessageId={searchMatches[currentMatchIndex] || null}
+          />
+        )}
 
-        {/* Telemetry Status Bar (Directly Above Chat Input Panel, no model info on left) */}
+        {/* Telemetry Status Bar (Directly Above Chat Input Panel) */}
         <TelemetryBar
           activeModel={activeModel}
           telemetry={telemetry}
@@ -593,6 +628,7 @@ export default function App() {
             setStreamingText('');
             window.speechSynthesis?.cancel();
             setCurrentlySpeakingMsgId(null);
+            lipSyncManager.endSpeech();
           }}
           activeModel={activeModel}
           cacheStatuses={cacheStatuses}

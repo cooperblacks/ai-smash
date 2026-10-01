@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Search, PanelLeft, Volume2, VolumeX, Sun, Moon } from 'lucide-react';
+import { Settings as SettingsIcon, Search, PanelLeft, Volume2, VolumeX, Sun, Moon, Box } from 'lucide-react';
 import { AI_PROFILE } from '../constants';
 
 interface HeaderProps {
@@ -8,6 +8,8 @@ interface HeaderProps {
   onToggleSidebar: () => void;
   isSearchOpen: boolean;
   onToggleSearch: () => void;
+  is3DMode: boolean;
+  onToggle3DMode: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   soundEnabled: boolean;
@@ -22,6 +24,8 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSidebar,
   isSearchOpen,
   onToggleSearch,
+  is3DMode,
+  onToggle3DMode,
   onOpenProfile,
   onOpenSettings,
   soundEnabled,
@@ -105,7 +109,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </div>
 
-        {/* Right Actions: Search, Sound, Light/Dark Theme, Settings */}
+        {/* Right Actions: Search, [3D Mode Button], Sound, Light/Dark Theme, Settings */}
         <div className="flex items-center gap-1">
           {/* Quick Search Button */}
           <button
@@ -120,6 +124,21 @@ export const Header: React.FC<HeaderProps> = ({
             <Search className="w-4 h-4" />
           </button>
 
+          {/* 3D Mode Toggle Button (Positioned between Search and Sound) */}
+          <button
+            onClick={onToggle3DMode}
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-mono text-xs font-bold active:scale-95 transition-all duration-100 ${
+              is3DMode
+                ? 'bg-amber-500 text-neutral-950 shadow-md ring-2 ring-amber-400 animate-in zoom-in-95 duration-100'
+                : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08]'
+            }`}
+            title={is3DMode ? 'Exit 3D VRM Mode' : 'Enter 3D VRM Mode'}
+            aria-label="Toggle 3D mode"
+          >
+            <Box className="w-4 h-4" />
+            <span className="text-[11px] font-bold">3D</span>
+          </button>
+
           {/* Sound & Voice Button */}
           <button
             onClick={onToggleSound}
@@ -129,7 +148,7 @@ export const Header: React.FC<HeaderProps> = ({
             {soundEnabled ? <Volume2 className="w-4 h-4 text-amber-600 dark:text-amber-400" /> : <VolumeX className="w-4 h-4" />}
           </button>
 
-          {/* Light / Dark Theme Button (Between Sound and Settings as requested) */}
+          {/* Light / Dark Theme Button */}
           <button
             onClick={onToggleTheme}
             className="p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08] active:scale-95 transition-all duration-100"

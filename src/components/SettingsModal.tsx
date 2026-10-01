@@ -191,7 +191,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             <div className="space-y-2">
-              {AVAILABLE_MODELS.map((model) => {
+              {AVAILABLE_MODELS.filter((m) => m.family === 'browser-slm').map((model) => {
                 const cache = cacheStatuses[model.id];
                 const isDownloaded = cache?.downloaded || false;
                 const sizeMB = cache?.sizeBytes ? Math.round(cache.sizeBytes / (1024 * 1024)) : 0;
