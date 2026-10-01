@@ -42,6 +42,7 @@ import { TwitterProfileModal } from './components/TwitterProfileModal';
 import { VRMCanvas } from './components/VRMCanvas';
 import { SplashScreen } from './components/SplashScreen';
 import { lipSyncManager } from './lib/lipSync';
+import { AlertCircle } from 'lucide-react';
 
 export default function App() {
   // ----------------------------------------------------
@@ -261,6 +262,44 @@ export default function App() {
 
   const hasCheckedAutoSwitch = useRef(false);
 
+  // Server offline auto-failover notification state (stays for 6 seconds then fades)
+  const [serverFallbackNotice, setServerFallbackNotice] = useState<{
+    message: string;
+    isFading: boolean;
+  } | null>(null);
+  const serverFallbackTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const serverFallbackFadeTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const triggerFallbackNotice = useCallback((optionName: string) => {
+    if (serverFallbackTimerRef.current) clearTimeout(serverFallbackTimerRef.current);
+    if (serverFallbackFadeTimerRef.current) clearTimeout(serverFallbackFadeTimerRef.current);
+
+    setServerFallbackNotice({
+      message: `Server issue on ${optionName}, changed to local LM.`,
+      isFading: false,
+    });
+
+    // Stays for 6 seconds, then fades away smoothly
+    serverFallbackTimerRef.current = setTimeout(() => {
+      setServerFallbackNotice((prev) => (prev ? { ...prev, isFading: true } : null));
+      serverFallbackFadeTimerRef.current = setTimeout(() => {
+        setServerFallbackNotice(null);
+      }, 600);
+    }, 6000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (serverFallbackTimerRef.current) clearTimeout(serverFallbackTimerRef.current);
+      if (serverFallbackFadeTimerRef.current) clearTimeout(serverFallbackFadeTimerRef.current);
+    };
+  }, []);
+
+  const activeModelRef = useRef(activeModel);
+  useEffect(() => {
+    activeModelRef.current = activeModel;
+  }, [activeModel]);
+
   useEffect(() => {
     let isSubscribed = true;
 
@@ -323,16 +362,43 @@ export default function App() {
           }));
         }
       } else {
-        // Keep active model's detectedModel up to date if currently on an Ollama model
-        setActiveModel((current) => {
-          if (current.id === 'muxai-ollama' && muxRes.modelName && current.detectedModel !== muxRes.modelName) {
-            return { ...current, detectedModel: muxRes.modelName };
-          }
-          if (current.id === 'self-hosted-ollama' && customRes.modelName && current.detectedModel !== customRes.modelName) {
-            return { ...current, detectedModel: customRes.modelName };
-          }
-          return current;
-        });
+        // Continuous health check: whenever an active Ollama server goes offline again,
+        // auto-switch to smollm2 135 model and show notification for 6 seconds
+        const currentModel = activeModelRef.current;
+        if (currentModel.id === 'muxai-ollama' && !muxRes.online) {
+          const smollmSpec = getModelById('smollm2-135m');
+          setActiveModel(smollmSpec);
+          setTelemetry((prev) => ({
+            ...prev,
+            activeModelName: smollmSpec.name,
+            modelId: smollmSpec.id,
+            device: 'webgpu',
+            statusText: 'Ready',
+          }));
+          triggerFallbackNotice(currentModel.name);
+        } else if (currentModel.id === 'self-hosted-ollama' && !customRes.online) {
+          const smollmSpec = getModelById('smollm2-135m');
+          setActiveModel(smollmSpec);
+          setTelemetry((prev) => ({
+            ...prev,
+            activeModelName: smollmSpec.name,
+            modelId: smollmSpec.id,
+            device: 'webgpu',
+            statusText: 'Ready',
+          }));
+          triggerFallbackNotice(currentModel.name);
+        } else {
+          // Keep active model's detectedModel up to date if currently on an Ollama model
+          setActiveModel((current) => {
+            if (current.id === 'muxai-ollama' && muxRes.modelName && current.detectedModel !== muxRes.modelName) {
+              return { ...current, detectedModel: muxRes.modelName };
+            }
+            if (current.id === 'self-hosted-ollama' && customRes.modelName && current.detectedModel !== customRes.modelName) {
+              return { ...current, detectedModel: customRes.modelName };
+            }
+            return current;
+          });
+        }
       }
     };
 
@@ -662,11 +728,26 @@ export default function App() {
       }
       console.error('Chat generation error:', err);
 
+      const isOllama = activeModel.family === 'ollama';
+      if (isOllama) {
+        const smollmSpec = getModelById('smollm2-135m');
+        setActiveModel(smollmSpec);
+        setTelemetry((prev) => ({
+          ...prev,
+          activeModelName: smollmSpec.name,
+          modelId: smollmSpec.id,
+          device: 'webgpu',
+          statusText: 'Ready',
+        }));
+        triggerFallbackNotice(activeModel.name);
+      }
+
       const fallbackAssistantMessage: Message = {
         id: `msg_asst_err_${Date.now()}`,
         role: 'assistant',
-        content:
-          "My memory stalled loading those weights into your browser. If your device is low on RAM, try SmolLM2 135M.",
+        content: isOllama
+          ? `Connection to ${activeModel.name} was interrupted. I have automatically switched to local SmolLM2 135M.`
+          : "My memory stalled loading those weights into your browser. If your device is low on RAM, try SmolLM2 135M.",
         timestamp: Date.now(),
         modelUsed: activeModel.name,
         error: true,
@@ -825,6 +906,20 @@ export default function App() {
             searchQuery={searchQuery}
             currentMatchMessageId={searchMatches[currentMatchIndex] || null}
           />
+        )}
+
+        {/* Server Issue Fallback Notification (Above Status Bar) */}
+        {serverFallbackNotice && (
+          <div className="flex justify-center px-4 mb-2">
+            <div
+              className={`px-3.5 py-1.5 rounded-full text-xs font-medium flex items-center gap-2 shadow-sm transition-all duration-500 border z-30 ${
+                serverFallbackNotice.isFading ? 'opacity-0 -translate-y-1' : 'opacity-100 translate-y-0'
+              } bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700/60 backdrop-blur-md animate-in fade-in slide-in-from-bottom-1`}
+            >
+              <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>{serverFallbackNotice.message}</span>
+            </div>
+          </div>
         )}
 
         {/* Telemetry Status Bar (Directly Above Chat Input Panel) */}
