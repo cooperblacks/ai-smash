@@ -1,4 +1,5 @@
 import { ModelSpec } from '../types';
+import { OLLAMA_CONFIG } from '../constants';
 
 export const AVAILABLE_MODELS: ModelSpec[] = [
   {
@@ -84,7 +85,7 @@ export const AVAILABLE_MODELS: ModelSpec[] = [
     isSmallModel: false,
     description: 'High-capability cloud Ollama server hosted via MuxAI. Leverages full Seraphina prompt.',
     speedRating: 'Deep',
-    endpointUrl: 'https://trout-egotism-decorator.ngrok-free.dev/',
+    endpointUrl: OLLAMA_CONFIG.muxAiEndpoint,
   },
   {
     id: 'self-hosted-ollama',

@@ -6,11 +6,24 @@ import { OLLAMA_CONFIG } from '../constants';
 import { pingOllama } from '../lib/ollama';
 import { loadCustomOllamaUrl, saveCustomOllamaUrl } from '../lib/storage';
 
+export interface OllamaServerStatus {
+  online: boolean;
+  modelName: string;
+  models: string[];
+}
+
+export interface OllamaStatusMap {
+  muxAi: OllamaServerStatus;
+  custom: OllamaServerStatus;
+}
+
 interface ModelSelectorProps {
   activeModel: ModelSpec;
   cacheStatuses: Record<string, ModelCacheInfo>;
   onSelectModel: (model: ModelSpec) => void;
   disabled?: boolean;
+  ollamaStatus?: OllamaStatusMap;
+  onUpdateCustomUrl?: (url: string) => void;
 }
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -18,15 +31,18 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   cacheStatuses,
   onSelectModel,
   disabled = false,
+  ollamaStatus,
+  onUpdateCustomUrl,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Ollama server ping statuses
-  const [isMuxAiOnline, setIsMuxAiOnline] = useState(false);
-  const [isCustomOnline, setIsCustomOnline] = useState(false);
-  const [muxAiModelName, setMuxAiModelName] = useState('---');
-  const [customModelName, setCustomModelName] = useState('---');
+  // Fallback internal Ollama ping states if external not provided
+  const [internalMuxAiOnline, setInternalMuxAiOnline] = useState(false);
+  const [internalCustomOnline, setInternalCustomOnline] = useState(false);
+  const [internalMuxAiModelName, setInternalMuxAiModelName] = useState('---');
+  const [internalCustomModelName, setInternalCustomModelName] = useState('---');
+
   const [customUrl, setCustomUrl] = useState(() => loadCustomOllamaUrl());
   const [customInputUrl, setCustomInputUrl] = useState(() => loadCustomOllamaUrl());
   const [isEditingCustomUrl, setIsEditingCustomUrl] = useState(false);
@@ -45,8 +61,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [isOpen]);
 
-  // Periodic 5-second ping check to MuxAI and Custom Ollama endpoints
+  // Periodic 5-second ping check fallback if not provided externally
   useEffect(() => {
+    if (ollamaStatus) return; // Managed by App.tsx
+
     let isSubscribed = true;
 
     const runPings = async () => {
@@ -55,19 +73,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         pingOllama(customUrl),
       ]);
       if (isSubscribed) {
-        setIsMuxAiOnline(muxRes.online);
-        if (muxRes.modelName) {
-          setMuxAiModelName(muxRes.modelName);
-        } else if (!muxRes.online) {
-          setMuxAiModelName('---');
-        }
+        setInternalMuxAiOnline(muxRes.online);
+        setInternalMuxAiModelName(muxRes.modelName || (muxRes.online ? 'Online' : '---'));
 
-        setIsCustomOnline(customRes.online);
-        if (customRes.modelName) {
-          setCustomModelName(customRes.modelName);
-        } else if (!customRes.online) {
-          setCustomModelName('---');
-        }
+        setInternalCustomOnline(customRes.online);
+        setInternalCustomModelName(customRes.modelName || (customRes.online ? 'Online' : '---'));
       }
     };
 
@@ -78,19 +88,31 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [customUrl]);
+  }, [customUrl, ollamaStatus]);
 
-  const handleSaveCustomUrl = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Effective statuses
+  const isMuxAiOnline = ollamaStatus ? ollamaStatus.muxAi.online : internalMuxAiOnline;
+  const isCustomOnline = ollamaStatus ? ollamaStatus.custom.online : internalCustomOnline;
+  const muxAiModelName = ollamaStatus
+    ? (ollamaStatus.muxAi.modelName || (ollamaStatus.muxAi.online ? 'Online' : '---'))
+    : internalMuxAiModelName;
+  const customModelName = ollamaStatus
+    ? (ollamaStatus.custom.modelName || (ollamaStatus.custom.online ? 'Online' : '---'))
+    : internalCustomModelName;
+
+  const handleSaveCustomUrl = (e?: React.SyntheticEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     const trimmed = customInputUrl.trim();
     if (trimmed) {
       saveCustomOllamaUrl(trimmed);
       setCustomUrl(trimmed);
       setIsEditingCustomUrl(false);
+      onUpdateCustomUrl?.(trimmed);
       // Immediately test
       pingOllama(trimmed).then((res) => {
-        setIsCustomOnline(res.online);
-        if (res.modelName) setCustomModelName(res.modelName);
+        setInternalCustomOnline(res.online);
+        if (res.modelName) setInternalCustomModelName(res.modelName);
       });
     }
   };
@@ -121,10 +143,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           {activeModel.name}
         </span>
 
-        <span className="text-[10px] text-amber-800 dark:text-amber-300 font-mono bg-amber-100/70 dark:bg-amber-900/40 px-1 py-0.2 rounded border border-amber-200 dark:border-amber-700/50">
-          {activeModel.sizeLabel}
-        </span>
-
         <ChevronDown
           className={`w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 transition-transform duration-150 ${
             isOpen ? 'rotate-180' : ''
@@ -138,9 +156,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           <div className="px-3 py-2 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              Intelligence Models
+              Select AI model
             </span>
-            <span className="text-[10px] text-neutral-400 dark:text-neutral-500 font-mono">In-Browser &bull; Cloud</span>
           </div>
 
           <div className="py-1 flex flex-col gap-1">
@@ -172,7 +189,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     disabled={isOptionDisabled}
                     onClick={() => {
                       if (!isOptionDisabled) {
-                        onSelectModel(model);
+                        const modelToSelect: ModelSpec = {
+                          ...model,
+                          detectedModel: isMuxAiOption
+                            ? (muxAiModelName !== '---' ? muxAiModelName : undefined)
+                            : isSelfHostedOption
+                            ? (customModelName !== '---' ? customModelName : undefined)
+                            : undefined,
+                        };
+                        onSelectModel(modelToSelect);
                         setIsOpen(false);
                       }
                     }}
@@ -285,28 +310,50 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   {isSelfHostedOption && (
                     <div className="px-3 pb-2.5 pt-0.5 border-t border-neutral-100 dark:border-neutral-800/80">
                       {isEditingCustomUrl ? (
-                        <form onSubmit={handleSaveCustomUrl} className="flex items-center gap-1.5 mt-1.5">
+                        <div
+                          className="flex items-center gap-1.5 mt-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <input
                             type="text"
                             value={customInputUrl}
                             onChange={(e) => setCustomInputUrl(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleSaveCustomUrl();
+                              } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setIsEditingCustomUrl(false);
+                              }
+                            }}
                             placeholder="http://localhost:11434"
                             className="flex-1 px-2 py-1 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-amber-500"
+                            autoFocus
                           />
                           <button
-                            type="submit"
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-neutral-900 dark:bg-amber-500 text-white dark:text-neutral-950 hover:bg-neutral-800"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSaveCustomUrl(e);
+                            }}
+                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-neutral-900 dark:bg-amber-500 text-white dark:text-neutral-950 hover:bg-neutral-800 active:scale-95 transition-all cursor-pointer"
                           >
                             Save
                           </button>
                           <button
                             type="button"
-                            onClick={() => setIsEditingCustomUrl(false)}
-                            className="px-2 py-1 text-xs rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setIsEditingCustomUrl(false);
+                            }}
+                            className="px-2 py-1 text-xs rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 active:scale-95 transition-all cursor-pointer"
                           >
                             Cancel
                           </button>
-                        </form>
+                        </div>
                       ) : (
                         <div className="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400 mt-1">
                           <span className="font-mono truncate max-w-[210px] flex items-center gap-1">

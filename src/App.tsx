@@ -19,6 +19,7 @@ import {
   getAllModelCacheStatuses,
   deleteModelFromCache,
   clearAllTransformersCaches,
+  loadCustomOllamaUrl,
 } from './lib/storage';
 import {
   streamSerafinaResponse,
@@ -27,12 +28,14 @@ import {
   loadModelPipeline,
 } from './lib/slmEngine';
 import { soundManager, waitForSerafinaVoice } from './lib/audio';
-import { APP_INFO, AI_PROFILE, VOICE_CONFIG } from './constants';
+import { pingOllama } from './lib/ollama';
+import { APP_INFO, AI_PROFILE, VOICE_CONFIG, OLLAMA_CONFIG } from './constants';
 import { Header } from './components/Header';
 import { SearchBar } from './components/SearchBar';
 import { Sidebar } from './components/Sidebar';
 import { TelemetryBar } from './components/TelemetryBar';
 import { ChatInput } from './components/ChatInput';
+import { OllamaStatusMap } from './components/ModelSelector';
 import { MessageList } from './components/MessageList';
 import { SettingsModal } from './components/SettingsModal';
 import { TwitterProfileModal } from './components/TwitterProfileModal';
@@ -247,6 +250,122 @@ export default function App() {
 
     refreshCacheStatuses();
   }, [refreshCacheStatuses, userSettings.preferredDevice]);
+
+  // ----------------------------------------------------
+  // Ollama Servers: 5-Second Ping Check & Page-Load Auto-Switch
+  // ----------------------------------------------------
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatusMap>({
+    muxAi: { online: false, modelName: '', models: [] },
+    custom: { online: false, modelName: '', models: [] },
+  });
+
+  const hasCheckedAutoSwitch = useRef(false);
+
+  useEffect(() => {
+    let isSubscribed = true;
+
+    const checkOllamaEndpoints = async () => {
+      const customUrl = loadCustomOllamaUrl() || OLLAMA_CONFIG.defaultCustomUrl;
+      const [muxRes, customRes] = await Promise.all([
+        pingOllama(OLLAMA_CONFIG.muxAiEndpoint),
+        pingOllama(customUrl),
+      ]);
+
+      if (!isSubscribed) return;
+
+      const newStatus: OllamaStatusMap = {
+        muxAi: {
+          online: muxRes.online,
+          modelName: muxRes.modelName || '',
+          models: muxRes.models || [],
+        },
+        custom: {
+          online: customRes.online,
+          modelName: customRes.modelName || '',
+          models: customRes.models || [],
+        },
+      };
+
+      setOllamaStatus(newStatus);
+
+      // Auto-switch at page load if custom or main server is detected online
+      if (!hasCheckedAutoSwitch.current) {
+        hasCheckedAutoSwitch.current = true;
+        if (customRes.online) {
+          const spec = getModelById('self-hosted-ollama');
+          const detected = customRes.modelName || 'Hudson/llama3.1-uncensored:8b';
+          const modelToActivate: ModelSpec = {
+            ...spec,
+            detectedModel: detected,
+          };
+          setActiveModel(modelToActivate);
+          setTelemetry((prev) => ({
+            ...prev,
+            activeModelName: modelToActivate.name,
+            modelId: modelToActivate.id,
+            device: 'ollama',
+            statusText: `Connected to Custom Ollama (${detected})`,
+          }));
+        } else if (muxRes.online) {
+          const spec = getModelById('muxai-ollama');
+          const detected = muxRes.modelName || 'Hudson/llama3.1-uncensored:8b';
+          const modelToActivate: ModelSpec = {
+            ...spec,
+            detectedModel: detected,
+          };
+          setActiveModel(modelToActivate);
+          setTelemetry((prev) => ({
+            ...prev,
+            activeModelName: modelToActivate.name,
+            modelId: modelToActivate.id,
+            device: 'ollama',
+            statusText: `Connected to MuxAI Ollama (${detected})`,
+          }));
+        }
+      } else {
+        // Keep active model's detectedModel up to date if currently on an Ollama model
+        setActiveModel((current) => {
+          if (current.id === 'muxai-ollama' && muxRes.modelName && current.detectedModel !== muxRes.modelName) {
+            return { ...current, detectedModel: muxRes.modelName };
+          }
+          if (current.id === 'self-hosted-ollama' && customRes.modelName && current.detectedModel !== customRes.modelName) {
+            return { ...current, detectedModel: customRes.modelName };
+          }
+          return current;
+        });
+      }
+    };
+
+    // Immediate initial check at page load
+    checkOllamaEndpoints();
+
+    // Recurring check every 5 seconds
+    const interval = setInterval(checkOllamaEndpoints, OLLAMA_CONFIG.pingIntervalMs || 5000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleUpdateCustomUrl = useCallback((newUrl: string) => {
+    pingOllama(newUrl).then((res) => {
+      setOllamaStatus((prev) => ({
+        ...prev,
+        custom: {
+          online: res.online,
+          modelName: res.modelName || '',
+          models: res.models || [],
+        },
+      }));
+      if (res.online && activeModel.id === 'self-hosted-ollama') {
+        setActiveModel((prev) => ({
+          ...prev,
+          detectedModel: res.modelName || prev.detectedModel,
+        }));
+      }
+    });
+  }, [activeModel.id]);
 
   const currentConversation = conversations.find((c) => c.id === activeConvId) || conversations[0] || null;
 
@@ -730,6 +849,8 @@ export default function App() {
           onSelectModel={handleSelectModel}
           maxTokens={userSettings.maxTokens || 512}
           onChangeMaxTokens={(val) => handleUpdateSettings({ maxTokens: val })}
+          ollamaStatus={ollamaStatus}
+          onUpdateCustomUrl={handleUpdateCustomUrl}
         />
       </main>
 

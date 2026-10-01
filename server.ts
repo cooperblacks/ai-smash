@@ -1,9 +1,9 @@
-import express, { Request, Response } from 'express';
+import express, { type Request, type Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { SYSTEM_PROMPTS, APP_INFO } from './src/constants';
+import { SYSTEM_PROMPTS, APP_INFO } from './src/constants/index.ts';
 
 dotenv.config();
 
@@ -128,65 +128,129 @@ app.get('/api/animation/idle', async (_req: Request, res: Response) => {
   }
 });
 
+// Helper to normalize Ollama base URL
+function cleanOllamaBaseUrl(rawUrl: string): string {
+  let url = (rawUrl || '').trim();
+  // Strip trailing slashes
+  url = url.replace(/\/+$/, '');
+  // Strip any trailing API subpaths if user pasted full endpoint
+  url = url.replace(/\/(api\/tags|api\/chat|api\/generate|api\/version|v1\/models|v1\/chat\/completions)$/, '');
+  return url.replace(/\/+$/, '');
+}
+
+const OLLAMA_REQUEST_HEADERS = {
+  'ngrok-skip-browser-warning': 'true',
+  'User-Agent': 'curl/8.0.0',
+  'Accept': 'application/json',
+};
+
 // Ollama connectivity ping endpoint
 app.post('/api/ollama/ping', async (req: Request, res: Response) => {
   try {
-    const targetUrl = (req.body?.url || '').trim().replace(/\/+$/, '');
-    if (!targetUrl) {
+    const baseUrl = cleanOllamaBaseUrl(req.body?.url || '');
+    if (!baseUrl) {
       return res.json({ online: false, error: 'No URL provided' });
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
+    const timeout = setTimeout(() => controller.abort(), 4000);
 
     let online = false;
     let models: string[] = [];
 
+    // 1. Try /api/tags (Native Ollama model list)
     try {
-      const resp = await fetch(`${targetUrl}/api/tags`, {
+      const resp = await fetch(`${baseUrl}/api/tags`, {
         method: 'GET',
-        headers: {
-          'ngrok-skip-browser-warning': 'true',
-          'User-Agent': 'Serafina-DM/1.0',
-        },
+        headers: OLLAMA_REQUEST_HEADERS,
         signal: controller.signal,
       });
 
       if (resp.ok && !resp.headers.get('ngrok-error-code')) {
-        online = true;
-        try {
-          const data = (await resp.json()) as { models?: Array<{ name: string }> };
-          if (data?.models) {
-            models = data.models.map((m) => m.name);
+        const contentType = resp.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = (await resp.json()) as { models?: Array<{ name?: string; model?: string }> };
+          if (Array.isArray(data?.models)) {
+            models = data.models
+              .map((m) => (m.name || m.model || '').trim())
+              .filter(Boolean);
+            if (models.length > 0) {
+              online = true;
+            }
           }
-        } catch {
-          // Response was ok even if JSON parsing failed
         }
       }
     } catch {
-      // Fallback check to root /
+      // Continue to /v1/models fallback
+    }
+
+    // 2. Try /v1/models (OpenAI compatibility endpoint on Ollama, shown in pyngrok setup)
+    if (models.length === 0) {
       try {
-        const rootResp = await fetch(`${targetUrl}/`, {
+        const v1Resp = await fetch(`${baseUrl}/v1/models`, {
           method: 'GET',
-          headers: {
-            'ngrok-skip-browser-warning': 'true',
-            'User-Agent': 'Serafina-DM/1.0',
-          },
+          headers: OLLAMA_REQUEST_HEADERS,
           signal: controller.signal,
         });
-        if (rootResp.ok && !rootResp.headers.get('ngrok-error-code')) {
+
+        if (v1Resp.ok && !v1Resp.headers.get('ngrok-error-code')) {
+          const contentType = v1Resp.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = (await v1Resp.json()) as { data?: Array<{ id?: string; name?: string }> };
+            if (Array.isArray(data?.data)) {
+              models = data.data
+                .map((m) => (m.id || m.name || '').trim())
+                .filter(Boolean);
+              if (models.length > 0) {
+                online = true;
+              }
+            }
+          }
+        }
+      } catch {
+        // Continue to root/version fallback
+      }
+    }
+
+    // 3. Fallback check to /api/version or / root
+    if (!online) {
+      try {
+        const verResp = await fetch(`${baseUrl}/api/version`, {
+          method: 'GET',
+          headers: OLLAMA_REQUEST_HEADERS,
+          signal: controller.signal,
+        });
+        if (verResp.ok && !verResp.headers.get('ngrok-error-code')) {
           online = true;
         }
       } catch {
-        online = false;
+        try {
+          const rootResp = await fetch(`${baseUrl}/`, {
+            method: 'GET',
+            headers: OLLAMA_REQUEST_HEADERS,
+            signal: controller.signal,
+          });
+          if (rootResp.ok && !rootResp.headers.get('ngrok-error-code')) {
+            const text = await rootResp.text();
+            if (text.includes('Ollama is running') || text.includes('ollama')) {
+              online = true;
+            }
+          }
+        } catch {
+          online = false;
+        }
       }
-    } finally {
-      clearTimeout(timeout);
     }
 
-    res.json({ online, models, modelName: models[0] || '' });
+    clearTimeout(timeout);
+
+    res.json({
+      online,
+      models,
+      modelName: models[0] || '',
+    });
   } catch {
-    res.json({ online: false, modelName: '' });
+    res.json({ online: false, modelName: '', models: [] });
   }
 });
 
@@ -194,43 +258,103 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
 app.post('/api/ollama/chat', async (req: Request, res: Response) => {
   try {
     const { url, model, messages, systemPrompt, maxTokens } = req.body;
-    const targetUrl = (url || '').trim().replace(/\/+$/, '');
-    if (!targetUrl) {
+    const baseUrl = cleanOllamaBaseUrl(url || '');
+    if (!baseUrl) {
       return res.status(400).json({ error: 'Target Ollama URL is required' });
+    }
+
+    // Resolve target model: if user model is unspecified or defaults to 'serafina',
+    // auto-fetch available models from the target Ollama instance to use the actual model in VRAM
+    let resolvedModel = (model || '').trim();
+    if (!resolvedModel || resolvedModel === 'serafina') {
+      try {
+        const tagsResp = await fetch(`${baseUrl}/api/tags`, {
+          method: 'GET',
+          headers: OLLAMA_REQUEST_HEADERS,
+          signal: AbortSignal.timeout(3000),
+        });
+        if (tagsResp.ok) {
+          const data = (await tagsResp.json()) as { models?: Array<{ name?: string; model?: string }> };
+          const availModels = (data?.models || []).map((m) => m.name || m.model || '').filter(Boolean);
+          if (availModels.length > 0) {
+            // If serafina exists, use it; otherwise pick the first loaded model (e.g. Hudson/llama3.1-uncensored:8b)
+            if (availModels.includes('serafina')) {
+              resolvedModel = 'serafina';
+            } else {
+              resolvedModel = availModels[0];
+            }
+          }
+        }
+      } catch {
+        // Keep resolvedModel or fallback
+      }
+
+      if (!resolvedModel || resolvedModel === 'serafina') {
+        try {
+          const v1Resp = await fetch(`${baseUrl}/v1/models`, {
+            method: 'GET',
+            headers: OLLAMA_REQUEST_HEADERS,
+            signal: AbortSignal.timeout(3000),
+          });
+          if (v1Resp.ok) {
+            const data = (await v1Resp.json()) as { data?: Array<{ id?: string }> };
+            const v1Models = (data?.data || []).map((m) => m.id || '').filter(Boolean);
+            if (v1Models.length > 0) {
+              resolvedModel = v1Models[0];
+            }
+          }
+        } catch {
+          // Ignore
+        }
+      }
+    }
+
+    if (!resolvedModel) {
+      resolvedModel = 'serafina';
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const formattedMessages = [
-      { role: 'system', content: systemPrompt || SERAFINA_SYSTEM_PROMPT },
-      ...(messages || []).map((m: { role: string; content: string }) => ({
+    // Filter out any client system messages to guarantee exactly ONE complete system prompt
+    const cleanedHistory = (messages || [])
+      .filter((m: { role: string; content: string }) => m.role !== 'system')
+      .map((m: { role: string; content: string }) => ({
         role: m.role,
         content: m.content,
-      })),
+      }));
+
+    // Full system prompt according to Ollama system instructions protocol
+    const formattedMessages = [
+      { role: 'system', content: systemPrompt || SERAFINA_SYSTEM_PROMPT },
+      ...cleanedHistory,
     ];
 
-    const ollamaResp = await fetch(`${targetUrl}/api/chat`, {
+    const numPredict = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
+
+    const ollamaResp = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
         'ngrok-skip-browser-warning': 'true',
-        'User-Agent': 'Serafina-DM/1.0',
+        'User-Agent': 'curl/8.0.0',
       },
       body: JSON.stringify({
-        model: model || 'serafina',
+        model: resolvedModel,
         messages: formattedMessages,
         stream: true,
         options: {
-          num_predict: Math.min(Math.max(Number(maxTokens) || 512, 64), 4096),
+          num_predict: numPredict,
+          temperature: 0.85,
         },
       }),
     });
 
     if (!ollamaResp.ok || !ollamaResp.body) {
       const errText = await ollamaResp.text();
-      res.write(`data: ${JSON.stringify({ error: errText || 'Ollama server error' })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: errText || `Ollama server error (${ollamaResp.status})` })}\n\n`);
       return res.end();
     }
 
@@ -250,7 +374,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
         if (!trimmed) continue;
         try {
           const parsed = JSON.parse(trimmed);
-          const piece = parsed.message?.content || parsed.response || '';
+          const piece = parsed.message?.content || parsed.response || parsed.choices?.[0]?.delta?.content || '';
           if (piece) {
             res.write(`data: ${JSON.stringify({ text: piece })}\n\n`);
           }

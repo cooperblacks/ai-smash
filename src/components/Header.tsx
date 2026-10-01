@@ -65,6 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Left: Sidebar Toggle & Clickable Serafina Profile Region */}
         <div className="flex items-center gap-2">
           <button
+            data-sidebar-toggle="true"
             onClick={onToggleSidebar}
             title={isSidebarOpen ? 'Hide conversations' : 'Show conversations'}
             className="p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08] active:scale-95 transition-all duration-100"

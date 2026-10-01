@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
 import { ModelSpec, ModelCacheInfo } from '../types';
-import { ModelSelector } from './ModelSelector';
+import { ModelSelector, OllamaStatusMap } from './ModelSelector';
 import { MaxTokensSelector } from './MaxTokensSelector';
 import { AI_PROFILE } from '../constants';
 
@@ -16,6 +16,8 @@ interface ChatInputProps {
   onSelectModel: (model: ModelSpec) => void;
   maxTokens: number;
   onChangeMaxTokens: (val: number) => void;
+  ollamaStatus?: OllamaStatusMap;
+  onUpdateCustomUrl?: (url: string) => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -29,6 +31,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onSelectModel,
   maxTokens,
   onChangeMaxTokens,
+  ollamaStatus,
+  onUpdateCustomUrl,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -82,6 +86,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 cacheStatuses={cacheStatuses}
                 onSelectModel={onSelectModel}
                 disabled={isGenerating}
+                ollamaStatus={ollamaStatus}
+                onUpdateCustomUrl={onUpdateCustomUrl}
               />
 
               <MaxTokensSelector

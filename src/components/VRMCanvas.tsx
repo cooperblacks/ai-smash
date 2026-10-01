@@ -263,11 +263,14 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
               if (rightLowerArm) rightLowerArm.rotation.set(0.0, 0.22, 0.1);
             }
 
-            // Initial preset expressions: relaxed with subtle playful warm smirk
+            // Initial preset expressions: relaxed 0.25, happy 0
             if (vrm.expressionManager) {
               try {
-                vrm.expressionManager.setValue('relaxed', 0.35);
-                vrm.expressionManager.setValue('happy', 0.2);
+                vrm.expressionManager.setValue('relaxed', 0.25);
+                vrm.expressionManager.setValue('happy', 0.0);
+                vrm.expressionManager.setValue('surprised', 0.0);
+                vrm.expressionManager.setValue('sad', 0.0);
+                vrm.expressionManager.setValue('angry', 0.0);
               } catch {
                 // Ignore if specific expression not defined
               }
@@ -360,6 +363,14 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     let targetBodyRotationY = 0;
     let currentBodyRotationY = 0;
 
+    // Occasional smile timer (1/4 chance every 15 seconds, stays 5 seconds)
+    let smileCheckTimer = 0;
+    const SMILE_CHECK_INTERVAL = 15.0;
+    let isSmiling = false;
+    let smileStayTimer = 0;
+    let currentRelaxed = 0.25;
+    let currentHappy = 0.0;
+
     // 7. Render & Animation Loop
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
@@ -416,7 +427,33 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           delta * 6.0
         );
 
-        // Dynamic Lip-Sync Visemes (aa, ih, ou, ee, oh)
+        // Occasional Smile: 1/4 chance every 15 seconds, stays 5 seconds
+        smileCheckTimer += delta;
+        if (smileCheckTimer >= SMILE_CHECK_INTERVAL) {
+          smileCheckTimer = 0;
+          if (!isSmiling && Math.random() < 0.25) {
+            isSmiling = true;
+            smileStayTimer = 5.0;
+          }
+        }
+
+        if (isSmiling) {
+          smileStayTimer -= delta;
+          if (smileStayTimer <= 0) {
+            isSmiling = false;
+            smileStayTimer = 0;
+          }
+        }
+
+        // Idle: (relaxed: 0.25, happy: 0)
+        // Smile: (relaxed: 0.35, happy: 0.25)
+        const targetRelaxed = isSmiling ? 0.35 : 0.25;
+        const targetHappy = isSmiling ? 0.25 : 0.0;
+
+        currentRelaxed = THREE.MathUtils.lerp(currentRelaxed, targetRelaxed, delta * 3.5);
+        currentHappy = THREE.MathUtils.lerp(currentHappy, targetHappy, delta * 3.5);
+
+        // Dynamic Lip-Sync Visemes (aa, ih, ou, ee, oh) - lips move as usual
         if (vrm.expressionManager) {
           vrm.expressionManager.setValue('aa', visemes.aa);
           vrm.expressionManager.setValue('ih', visemes.ih);
@@ -424,17 +461,12 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           vrm.expressionManager.setValue('ee', visemes.ee);
           vrm.expressionManager.setValue('oh', visemes.oh);
 
-          // Built-in Preset Emotions (happy, relaxed, surprised, sad, angry)
-          const emotionPresets: EmotionPreset[] = ['happy', 'relaxed', 'surprised', 'sad', 'angry'];
-          for (const preset of emotionPresets) {
-            if (preset === emotion.preset) {
-              vrm.expressionManager.setValue(preset, emotion.weight);
-            } else if (preset === 'relaxed') {
-              vrm.expressionManager.setValue('relaxed', speakingNow ? 0.15 : 0.35);
-            } else {
-              vrm.expressionManager.setValue(preset, 0);
-            }
-          }
+          // Smoothly animated facial expression
+          vrm.expressionManager.setValue('relaxed', currentRelaxed);
+          vrm.expressionManager.setValue('happy', currentHappy);
+          vrm.expressionManager.setValue('surprised', 0);
+          vrm.expressionManager.setValue('sad', 0);
+          vrm.expressionManager.setValue('angry', 0);
         }
 
         // ----------------------------------------------------

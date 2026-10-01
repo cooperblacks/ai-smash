@@ -276,7 +276,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Modal Footer */}
         <div className="p-4 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/70 dark:bg-white/[0.02] flex items-center justify-between">
-          <span className="text-xs text-neutral-400 dark:text-neutral-500 font-mono">{APP_INFO.copyright}</span>
+          <a
+            href="https://muxai.vercel.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-neutral-400 dark:text-neutral-500 hover:text-amber-600 dark:hover:text-amber-400 font-mono transition-colors underline decoration-dotted underline-offset-2"
+            title="Visit MuxAI"
+          >
+            {APP_INFO.copyright}
+          </a>
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-amber-500 dark:hover:bg-amber-600 dark:text-neutral-950 text-white font-medium text-xs active:scale-95 transition-all shadow-xs"

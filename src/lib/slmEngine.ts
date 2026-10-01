@@ -285,9 +285,11 @@ export async function streamSerafinaResponse({
       ? loadCustomOllamaUrl()
       : (model.endpointUrl || 'https://trout-egotism-decorator.ngrok-free.dev/');
 
+    const targetModel = model.detectedModel || model.customModel || '';
+
     return await streamOllama({
       url: endpointUrl,
-      model: 'serafina',
+      model: targetModel,
       history,
       userMessage,
       maxTokens,

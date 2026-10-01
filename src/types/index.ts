@@ -38,6 +38,8 @@ export interface ModelSpec {
   ramRequired?: string;
   endpointUrl?: string;
   isCustomOllama?: boolean;
+  detectedModel?: string;
+  customModel?: string;
 }
 
 export interface ModelCacheInfo {

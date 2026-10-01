@@ -8,13 +8,19 @@ export interface OllamaPingResult {
   models?: string[];
 }
 
+function cleanOllamaUrl(rawUrl: string): string {
+  let url = (rawUrl || '').trim().replace(/\/+$/, '');
+  url = url.replace(/\/(api\/tags|api\/chat|api\/generate|api\/version|v1\/models|v1\/chat\/completions)$/, '');
+  return url.replace(/\/+$/, '');
+}
+
 /**
  * Pings an Ollama server to check whether it is alive and retrieve the active model.
  * First tries backend proxy /api/ollama/ping, with fallback to direct browser fetch.
  */
 export async function pingOllama(url: string): Promise<OllamaPingResult> {
-  const cleanedUrl = (url || '').trim().replace(/\/+$/, '');
-  if (!cleanedUrl) return { online: false };
+  const cleanedUrl = cleanOllamaUrl(url);
+  if (!cleanedUrl) return { online: false, modelName: '', models: [] };
 
   // 1. Try server-side proxy
   try {
@@ -22,7 +28,7 @@ export async function pingOllama(url: string): Promise<OllamaPingResult> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url: cleanedUrl }),
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(4500),
     });
 
     if (res.ok) {
@@ -30,41 +36,73 @@ export async function pingOllama(url: string): Promise<OllamaPingResult> {
       return {
         online: Boolean(data.online),
         modelName: data.modelName || (data.models && data.models[0]) || '',
-        models: data.models,
+        models: data.models || [],
       };
     }
   } catch {
     // Backend proxy failed or running statically, try direct ping
   }
 
-  // 2. Direct browser fetch fallback
+  // 2. Direct browser fetch fallback (for local Ollama without proxy or direct CORS)
+  const browserHeaders = {
+    'ngrok-skip-browser-warning': 'true',
+    'Accept': 'application/json',
+  };
+
   try {
     const directResp = await fetch(`${cleanedUrl}/api/tags`, {
       method: 'GET',
-      headers: { 'ngrok-skip-browser-warning': 'true' },
-      signal: AbortSignal.timeout(3000),
+      headers: browserHeaders,
+      signal: AbortSignal.timeout(3500),
     });
     if (directResp.ok && !directResp.headers.get('ngrok-error-code')) {
       const data = await directResp.json().catch(() => null);
-      const modelName = data?.models?.[0]?.name || '';
-      return { online: true, modelName };
+      const models = Array.isArray(data?.models)
+        ? data.models.map((m: { name?: string; model?: string }) => m.name || m.model || '').filter(Boolean)
+        : [];
+      return {
+        online: true,
+        modelName: models[0] || '',
+        models,
+      };
+    }
+  } catch {
+    // Continue to /v1/models
+  }
+
+  try {
+    const v1Resp = await fetch(`${cleanedUrl}/v1/models`, {
+      method: 'GET',
+      headers: browserHeaders,
+      signal: AbortSignal.timeout(3500),
+    });
+    if (v1Resp.ok && !v1Resp.headers.get('ngrok-error-code')) {
+      const data = await v1Resp.json().catch(() => null);
+      const models = Array.isArray(data?.data)
+        ? data.data.map((m: { id?: string }) => m.id || '').filter(Boolean)
+        : [];
+      return {
+        online: true,
+        modelName: models[0] || '',
+        models,
+      };
     }
   } catch {
     try {
       const rootResp = await fetch(`${cleanedUrl}/`, {
         method: 'GET',
-        headers: { 'ngrok-skip-browser-warning': 'true' },
+        headers: browserHeaders,
         signal: AbortSignal.timeout(3000),
       });
       if (rootResp.ok && !rootResp.headers.get('ngrok-error-code')) {
-        return { online: true };
+        return { online: true, modelName: '', models: [] };
       }
     } catch {
-      return { online: false };
+      return { online: false, modelName: '', models: [] };
     }
   }
 
-  return { online: false };
+  return { online: false, modelName: '', models: [] };
 }
 
 interface StreamOllamaOptions {
@@ -81,7 +119,7 @@ interface StreamOllamaOptions {
  * Streams response from an Ollama instance utilizing the full Seraphina prompt to the maximum.
  */
 export async function streamOllama(options: StreamOllamaOptions): Promise<string> {
-  const { url, model = 'serafina', history, userMessage, maxTokens = 512, onToken, onTelemetry } = options;
+  const { url, model = '', history, userMessage, maxTokens = 512, onToken, onTelemetry } = options;
   const startTime = Date.now();
   let firstTokenTime: number | null = null;
   let tokenCount = 0;

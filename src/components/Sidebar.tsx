@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Conversation, ModelCacheInfo } from '../types';
 import { MessageSquare, Plus, Search, Trash2, Pin, PinOff, X, HardDrive, AlertTriangle } from 'lucide-react';
+import { APP_INFO } from '../constants';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -31,6 +32,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const holdIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const holdStartTimeRef = useRef<number>(0);
+  const sidebarRef = useRef<HTMLElement>(null);
+
+  // Auto-close sidebar if clicked away from it (disabled when delete modal is open)
+  useEffect(() => {
+    if (!isOpen || Boolean(pendingDeleteId)) return;
+
+    const handlePointerDown = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.closest('[data-sidebar-toggle]') ||
+        target?.closest('[data-delete-modal]') ||
+        Boolean(pendingDeleteId)
+      ) {
+        return;
+      }
+      if (sidebarRef.current && !sidebarRef.current.contains(target as Node)) {
+        onClose();
+      }
+    };
+
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', handlePointerDown);
+      document.addEventListener('touchstart', handlePointerDown);
+    }, 20);
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [isOpen, pendingDeleteId, onClose]);
 
   const filteredConversations = conversations.filter((c) =>
     (c.title || 'Untitled conversation').toLowerCase().includes(searchQuery.toLowerCase())
@@ -84,13 +116,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      {/* Mobile backdrop */}
+      {/* Click-away backdrop */}
       <div
-        className="fixed inset-0 bg-black/20 dark:bg-black/50 backdrop-blur-xs z-30 lg:hidden"
+        className="fixed inset-0 bg-black/20 dark:bg-black/50 backdrop-blur-xs z-30 transition-opacity"
         onClick={onClose}
       />
 
-      <aside className="fixed top-0 bottom-0 left-0 w-72 sm:w-80 bg-white dark:bg-[#13151f] border-r border-black/[0.08] dark:border-white/[0.08] z-40 flex flex-col shadow-xl transition-all duration-200">
+      <aside
+        ref={sidebarRef}
+        className="fixed top-0 bottom-0 left-0 w-72 sm:w-80 bg-white dark:bg-[#13151f] border-r border-black/[0.08] dark:border-white/[0.08] z-40 flex flex-col shadow-xl transition-all duration-200"
+      >
         {/* Sidebar Header */}
         <div className="p-3 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
           <button
@@ -203,21 +238,48 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-tight">
             Stored in browser IndexedDB.
           </p>
+          <div className="mt-2 pt-2 border-t border-neutral-100 dark:border-neutral-800/80 text-center">
+            <a
+              href="https://muxai.vercel.app"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] font-mono text-neutral-400 dark:text-neutral-500 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+              title="Visit MuxAI"
+            >
+              {APP_INFO.copyright}
+            </a>
+          </div>
         </div>
       </aside>
 
       {/* Delete Confirmation Modal with 3-Second Press & Hold */}
       {pendingDeleteId && (
         <div
+          data-delete-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => {
             cancelHold();
             setPendingDeleteId(null);
           }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              cancelHold();
+              setPendingDeleteId(null);
+            }
+          }}
+          onTouchStart={(e) => {
+            if (e.target === e.currentTarget) {
+              cancelHold();
+              setPendingDeleteId(null);
+            }
+          }}
         >
           <div
+            data-delete-modal="true"
             className="w-full max-w-sm bg-white dark:bg-[#161822] rounded-3xl p-5 shadow-2xl border border-black/10 dark:border-white/[0.1] flex flex-col items-center text-center animate-in zoom-in-95 duration-150"
             onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
           >
             <div className="w-12 h-12 rounded-full bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center justify-center mb-3">
               <AlertTriangle className="w-6 h-6" />
