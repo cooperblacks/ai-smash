@@ -37,6 +37,7 @@ import { MessageList } from './components/MessageList';
 import { SettingsModal } from './components/SettingsModal';
 import { TwitterProfileModal } from './components/TwitterProfileModal';
 import { VRMCanvas } from './components/VRMCanvas';
+import { SplashScreen } from './components/SplashScreen';
 import { lipSyncManager } from './lib/lipSync';
 
 export default function App() {
@@ -87,6 +88,27 @@ export default function App() {
 
   // 3D VRM Mode Toggle State
   const [is3DMode, setIs3DMode] = useState(false);
+
+  // Splash Screen State
+  const [isSplashActive, setIsSplashActive] = useState(true);
+  const [isVoiceLoaded, setIsVoiceLoaded] = useState(false);
+  const [isSplashTimeout, setIsSplashTimeout] = useState(false);
+
+  useEffect(() => {
+    // Preload voice engine
+    waitForSerafinaVoice(2500)
+      .then(() => setIsVoiceLoaded(true))
+      .catch(() => setIsVoiceLoaded(true));
+
+    // Fallback: If voice engine takes > 20s, automatically proceed through splash screen
+    const timer = setTimeout(() => {
+      setIsSplashTimeout(true);
+    }, 20000);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  const isSplashReady = isVoiceLoaded || isSplashTimeout;
 
   // Modals & Panels
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -347,6 +369,77 @@ export default function App() {
     }));
   };
 
+  const streamingTextRef = useRef('');
+  const isGeneratingRef = useRef(false);
+
+  useEffect(() => {
+    isGeneratingRef.current = isGenerating;
+  }, [isGenerating]);
+
+  // Stop generation without discarding accumulated tokens
+  const handleStopGeneration = useCallback(() => {
+    if (!isGeneratingRef.current) return;
+
+    stopCurrentGeneration();
+    isGeneratingRef.current = false;
+    setIsGenerating(false);
+
+    window.speechSynthesis?.cancel();
+    setCurrentlySpeakingMsgId(null);
+    lipSyncManager.endSpeech();
+
+    // Preserve the partial message generated so far as a completed message
+    const partialText = streamingTextRef.current.trim();
+    if (partialText.length > 0) {
+      const stoppedAssistantMessage: Message = {
+        id: `msg_asst_${Date.now()}`,
+        role: 'assistant',
+        content: partialText,
+        timestamp: Date.now(),
+        modelUsed: activeModel.name,
+        speedTps: telemetry.tokensPerSec,
+        generationTimeMs: telemetry.totalLatencyMs,
+      };
+
+      setConversations((prev) => {
+        const active = prev.find((c) => c.id === activeConvId);
+        if (!active) return prev;
+        const updatedMessages = [...active.messages, stoppedAssistantMessage];
+        const updated = prev.map((conv) => {
+          if (conv.id === activeConvId) {
+            return {
+              ...conv,
+              messages: updatedMessages,
+              updatedAt: Date.now(),
+            };
+          }
+          return conv;
+        });
+        saveStoredConversations(updated);
+        return updated;
+      });
+
+      refreshCacheStatuses();
+
+      if (isSoundActive) {
+        speakSerafinaMessage(stoppedAssistantMessage.id, partialText);
+      }
+    }
+
+    setStreamingText('');
+    streamingTextRef.current = '';
+    setDownloadProgress(null);
+    setTelemetry((prev) => ({ ...prev, isGenerating: false }));
+  }, [
+    activeConvId,
+    activeModel.name,
+    telemetry.tokensPerSec,
+    telemetry.totalLatencyMs,
+    refreshCacheStatuses,
+    isSoundActive,
+    speakSerafinaMessage,
+  ]);
+
   // ----------------------------------------------------
   // Send Message Flow
   // ----------------------------------------------------
@@ -373,7 +466,9 @@ export default function App() {
     updateConversationMessages(updatedWithUser);
 
     setIsGenerating(true);
+    isGeneratingRef.current = true;
     setStreamingText('');
+    streamingTextRef.current = '';
     hasPlayedReceiveAudio.current = false;
 
     setTelemetry((prev) => ({
@@ -394,6 +489,7 @@ export default function App() {
         devicePref: userSettings.preferredDevice,
         maxTokens: userSettings.maxTokens || 512,
         onToken: (_piece, fullText) => {
+          streamingTextRef.current = fullText;
           setStreamingText(fullText);
           if (!hasPlayedReceiveAudio.current && isSoundActive) {
             soundManager.playReceive();
@@ -418,6 +514,11 @@ export default function App() {
         },
       });
 
+      // If user stopped it mid-generation, handleStopGeneration already committed the partial message!
+      if (!isGeneratingRef.current) {
+        return;
+      }
+
       const assistantMessage: Message = {
         id: `msg_asst_${Date.now()}`,
         role: 'assistant',
@@ -430,12 +531,16 @@ export default function App() {
 
       updateConversationMessages([...updatedWithUser, assistantMessage]);
       setStreamingText('');
+      streamingTextRef.current = '';
       setDownloadProgress(null);
       refreshCacheStatuses();
 
       // Automatically speak out Serafina's message synced to its speaker button / 3D thought bubble
       speakSerafinaMessage(assistantMessage.id, assistantText);
     } catch (err: unknown) {
+      if (!isGeneratingRef.current) {
+        return;
+      }
       console.error('Chat generation error:', err);
 
       const fallbackAssistantMessage: Message = {
@@ -450,9 +555,11 @@ export default function App() {
 
       updateConversationMessages([...updatedWithUser, fallbackAssistantMessage]);
       setStreamingText('');
+      streamingTextRef.current = '';
       setDownloadProgress(null);
     } finally {
       setIsGenerating(false);
+      isGeneratingRef.current = false;
       setTelemetry((prev) => ({ ...prev, isGenerating: false }));
     }
   };
@@ -608,11 +715,7 @@ export default function App() {
           downloadProgress={downloadProgress}
           isExpanded={isTelemetryExpanded}
           onToggleExpand={() => setIsTelemetryExpanded(!isTelemetryExpanded)}
-          onCancelDownload={() => {
-            stopCurrentGeneration();
-            setDownloadProgress(null);
-            setIsGenerating(false);
-          }}
+          onCancelDownload={handleStopGeneration}
         />
 
         {/* Chat Input Panel with Model Selector & Max Tokens Customization */}
@@ -621,14 +724,7 @@ export default function App() {
           setInput={setInput}
           onSend={handleSendMessage}
           isGenerating={isGenerating}
-          onStop={() => {
-            stopCurrentGeneration();
-            setIsGenerating(false);
-            setStreamingText('');
-            window.speechSynthesis?.cancel();
-            setCurrentlySpeakingMsgId(null);
-            lipSyncManager.endSpeech();
-          }}
+          onStop={handleStopGeneration}
           activeModel={activeModel}
           cacheStatuses={cacheStatuses}
           onSelectModel={handleSelectModel}
@@ -655,6 +751,15 @@ export default function App() {
         onUpdateSettings={handleUpdateSettings}
         isDownloading={Boolean(downloadProgress && downloadProgress.status === 'downloading')}
       />
+
+      {/* App Launch Splash Screen */}
+      {isSplashActive && (
+        <SplashScreen
+          isReady={isSplashReady}
+          theme={theme}
+          onFadeComplete={() => setIsSplashActive(false)}
+        />
+      )}
     </div>
   );
 }

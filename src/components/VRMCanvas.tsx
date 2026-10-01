@@ -9,10 +9,12 @@ import { Sparkles } from 'lucide-react';
 
 interface VRMCanvasProps {
   isSpeaking: boolean;
+  onLoaded?: () => void;
 }
 
 export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   isSpeaking,
+  onLoaded,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,6 +31,11 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   useEffect(() => {
     isSpeakingRef.current = isSpeaking;
   }, [isSpeaking]);
+
+  const onLoadedRef = useRef(onLoaded);
+  useEffect(() => {
+    onLoadedRef.current = onLoaded;
+  }, [onLoaded]);
 
   // Three.js, VRM and Animation references
   const vrmRef = useRef<VRM | null>(null);
@@ -157,11 +164,24 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // 2. Camera Setup: Natural portrait framing with full body visibility
+    // 2. Camera Setup: Zoomed-out portrait framing ensuring waist and hips are always visible
     const camera = new THREE.PerspectiveCamera(28, width / height, 0.1, 50.0);
     camera.position.set(0.0, 1.15, 1.65);
     camera.lookAt(0.0, 1.05, 0.0);
+
     cameraRef.current = camera;
+
+    const adjustCameraFraming = () => {
+      if (!cameraRef.current || !container) return;
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || window.innerHeight;
+      const aspect = w / h;
+
+      cameraRef.current = camera;
+
+    };
+
+    adjustCameraFraming();
 
     // 3. Renderer Setup
     const renderer = new THREE.WebGLRenderer({
@@ -300,6 +320,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
             setIsLoaded(true);
             setDownloadProgress(null);
+            onLoadedRef.current?.();
           },
           (err) => {
             console.error('VRM parse error:', err);
@@ -312,7 +333,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         setLoadError(err instanceof Error ? err.message : 'Failed to download VRM.');
       });
 
-    // 6. Animation State Variables
+    // 6. Animation & Interaction State Variables
     const animStartTime = performance.now();
     let lastAnimTime = performance.now();
 
@@ -327,6 +348,17 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     let nextSaccadeInterval = 2.0;
     let saccadeOffsetX = 0;
     let saccadeOffsetY = 0;
+
+    // Smooth head speech centering factor (0 = cursor tracking, 1 = facing center directly)
+    let speechFacingFactor = 0;
+
+    // Body click pushback force and continuous rotation holding
+    let isHoldingOnBody = false;
+    let lastClientX = 0;
+    let currentPushbackZ = 0;
+    let currentRecoilPitch = 0;
+    let targetBodyRotationY = 0;
+    let currentBodyRotationY = 0;
 
     // 7. Render & Animation Loop
     const animate = () => {
@@ -352,12 +384,37 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         vrm.update(delta);
 
         // ----------------------------------------------------
-        // 3. Update LipSync & Viseme Engine (thresholded, zero quivering)
+        // 3. Body Click Pushback Force & Continuous Rotation Recovery
+        // ----------------------------------------------------
+        // Pushback decays smoothly back to 0
+        currentPushbackZ = THREE.MathUtils.lerp(currentPushbackZ, 0, delta * 5.5);
+        currentRecoilPitch = THREE.MathUtils.lerp(currentRecoilPitch, 0, delta * 5.5);
+
+        // If user releases hold, smoothly animate body back to front idle (0)
+        if (!isHoldingOnBody) {
+          targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, 0, delta * 3.8);
+        }
+
+        currentBodyRotationY = THREE.MathUtils.lerp(currentBodyRotationY, targetBodyRotationY, delta * 12.0);
+
+        // Apply physical pushback and body rotation
+        vrm.scene.position.set(0, -0.16, currentPushbackZ);
+        vrm.scene.rotation.set(currentRecoilPitch, currentBodyRotationY, 0);
+
+        // ----------------------------------------------------
+        // 4. Update LipSync & Viseme Engine (thresholded, zero quivering)
         // ----------------------------------------------------
         lipSyncManager.update(delta, elapsed);
         const visemes = lipSyncManager.getVisemes();
         const emotion = lipSyncManager.getEmotion();
         const speakingNow = isSpeakingRef.current || lipSyncManager.getIsSpeaking();
+
+        // Smoothly interpolate speech facing factor (1 when speaking, 0 when silent)
+        speechFacingFactor = THREE.MathUtils.lerp(
+          speechFacingFactor,
+          speakingNow ? 1.0 : 0.0,
+          delta * 6.0
+        );
 
         // Dynamic Lip-Sync Visemes (aa, ih, ou, ee, oh)
         if (vrm.expressionManager) {
@@ -381,7 +438,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         }
 
         // ----------------------------------------------------
-        // 4. Natural Blinking (preset: 'blink')
+        // 5. Natural Blinking (preset: 'blink')
         // ----------------------------------------------------
         blinkTimer += delta;
         if (!isBlinking && blinkTimer > nextBlinkInterval) {
@@ -402,7 +459,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         }
 
         // ----------------------------------------------------
-        // 5. Eye Saccades (Realistic Micro-Glances)
+        // 6. Eye Saccades (Realistic Micro-Glances)
         // ----------------------------------------------------
         saccadeTimer += delta;
         if (saccadeTimer > nextSaccadeInterval) {
@@ -413,9 +470,9 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         }
 
         // ----------------------------------------------------
-        // 6. Direct High-Sensitivity Cursor Head & Neck Tracking
-        // Dynamically projects 3D face position to 2D screen NDC coordinates
-        // Ensuring cursor tracking is naturally centered relative to her actual face
+        // 7. Head & Neck Tracking with Smooth Speech-Centering
+        // When speaking, smoothly animates towards facing the relative center directly forward
+        // When not speaking, follows dynamic 3D-to-2D projected mouse cursor
         // ----------------------------------------------------
         const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
         const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
@@ -433,15 +490,22 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           const deltaX = mouseRef.current.x - headScreenPos.x;
           const deltaY = mouseRef.current.y - headScreenPos.y;
 
-          const targetRotY = THREE.MathUtils.clamp(deltaX * 0.75, -0.85, 0.85) + saccadeOffsetX;
-          const targetRotX = THREE.MathUtils.clamp(-deltaY * 0.6, -0.45, 0.45) + saccadeOffsetY;
+          // When speaking, cursor influence scales down so head centers directly forward:
+          const activeDeltaX = deltaX * (1.0 - speechFacingFactor);
+          const activeDeltaY = deltaY * (1.0 - speechFacingFactor);
+
+          // Subtle lifelike speech micro-nodding cadence while talking
+          const speechNodX = speechFacingFactor * Math.sin(elapsed * 4.5) * 0.02;
+
+          const targetRotY = THREE.MathUtils.clamp(activeDeltaX * 0.75, -0.85, 0.85) + saccadeOffsetX * (1.0 - speechFacingFactor * 0.6);
+          const targetRotX = THREE.MathUtils.clamp(-activeDeltaY * 0.6, -0.45, 0.45) + saccadeOffsetY * (1.0 - speechFacingFactor * 0.6) + speechNodX;
 
           headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 7.5);
           headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 7.5);
 
           if (neckNode) {
-            const targetNeckY = THREE.MathUtils.clamp(deltaX * 0.35, -0.4, 0.4);
-            const targetNeckX = THREE.MathUtils.clamp(-deltaY * 0.25, -0.25, 0.25);
+            const targetNeckY = THREE.MathUtils.clamp(activeDeltaX * 0.35, -0.4, 0.4);
+            const targetNeckX = THREE.MathUtils.clamp(-activeDeltaY * 0.25, -0.25, 0.25) + speechNodX * 0.4;
             neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 6.0);
             neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 6.0);
           }
@@ -460,26 +524,71 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       const newH = container.clientHeight || window.innerHeight;
       camera.aspect = newW / newH;
       camera.updateProjectionMatrix();
+      adjustCameraFraming();
       renderer.setSize(newW, newH);
     };
 
     window.addEventListener('resize', handleResize);
 
-    // 9. Pointer movement for head and gaze tracking
+    // 9. Pointer movement for head and gaze tracking + body rotation
     const handlePointerMove = (e: MouseEvent) => {
       const rect = container.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
       mouseRef.current = { x, y };
+
+      if (isHoldingOnBody) {
+        const deltaX = e.clientX - lastClientX;
+        lastClientX = e.clientX;
+        targetBodyRotationY += deltaX * 0.009;
+      }
+    };
+
+    // 10. Pointer Down on 3D Model: Trigger pushback force and begin rotation hold
+    const handlePointerDown = (e: PointerEvent) => {
+      if (!container || !cameraRef.current || !vrmRef.current) return;
+      const rect = container.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+
+      // Raycast against the VRM avatar scene
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
+      const intersects = raycaster.intersectObjects(vrmRef.current.scene.children, true);
+
+      if (intersects.length > 0) {
+        isHoldingOnBody = true;
+        lastClientX = e.clientX;
+
+        // Apply dynamic physical pushback force away from camera
+        currentPushbackZ = -0.11;
+        currentRecoilPitch = -0.07;
+
+        canvas.style.cursor = 'grabbing';
+      }
+    };
+
+    // 11. Pointer Up: Release hold, trigger smooth recovery to forward idle
+    const handlePointerUp = () => {
+      if (isHoldingOnBody) {
+        isHoldingOnBody = false;
+        canvas.style.cursor = 'default';
+      }
     };
 
     window.addEventListener('mousemove', handlePointerMove);
+    container.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
 
     return () => {
       isDisposed = true;
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('mousemove', handlePointerMove);
+      container.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
       renderer.dispose();
       scene.clear();
       if (vrmRef.current) {
@@ -501,7 +610,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       {/* 3D WebGL Canvas */}
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full outline-none" />
 
-      {/* Download / Caching Progress Overlay */}
+      {/* Download / Caching Progress Overlay (only displayed if initial download is still ongoing) */}
       {!isLoaded && !loadError && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 bg-white/70 dark:bg-[#0f1117]/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="flex flex-col items-center max-w-xs w-full text-center space-y-4">
