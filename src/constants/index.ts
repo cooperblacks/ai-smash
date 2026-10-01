@@ -44,6 +44,7 @@ export const AI_PROFILE = {
 
 export const VRM_CONFIG = {
   modelUrl: 'https://muxai.vercel.app/seraphina_v1.2_vrm1.vrm',
+  animationUrl: 'https://muxai.vercel.app/mixamo_idle.fbx',
   cacheKey: 'serafina_vrm_cache_v1',
 };
 

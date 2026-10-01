@@ -77,6 +77,57 @@ app.get('/api/vrm', async (_req: Request, res: Response) => {
   }
 });
 
+// Proxy endpoint for Mixamo idle animation FBX asset
+app.get('/api/animation/idle', async (_req: Request, res: Response) => {
+  try {
+    const targetUrls = [
+      'https://ai.mux8.com/mixamo_idle.fbx',
+      'https://muxai.vercel.app/mixamo_idle.fbx',
+    ];
+
+    let fbxResp: globalThis.Response | null = null;
+    for (const url of targetUrls) {
+      try {
+        const resp = await fetch(url, { redirect: 'follow' });
+        if (resp.ok && resp.body) {
+          fbxResp = resp;
+          break;
+        }
+      } catch {
+        // Continue to fallback
+      }
+    }
+
+    if (!fbxResp || !fbxResp.body) {
+      return res.status(502).json({ error: 'Failed to fetch remote animation asset' });
+    }
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    const contentLength = fbxResp.headers.get('content-length');
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
+    }
+
+    const reader = fbxResp.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+    res.end();
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Error fetching animation asset';
+    console.error('Animation proxy error:', errorMsg);
+    if (!res.headersSent) {
+      res.status(500).json({ error: errorMsg });
+    } else {
+      res.end();
+    }
+  }
+});
+
 // Ollama connectivity ping endpoint
 app.post('/api/ollama/ping', async (req: Request, res: Response) => {
   try {

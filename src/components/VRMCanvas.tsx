@@ -2,18 +2,17 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
+import { retargetAnimationFromUrl } from 'vrm-mixamo-retarget';
 import { VRM_CONFIG, AI_PROFILE } from '../constants';
 import { lipSyncManager, EmotionPreset } from '../lib/lipSync';
 import { Sparkles } from 'lucide-react';
 
 interface VRMCanvasProps {
   isSpeaking: boolean;
-  isGenerating: boolean;
 }
 
 export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   isSpeaking,
-  isGenerating,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -24,20 +23,16 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   const [isLoaded, setIsLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Store speaking/generating state in refs to prevent unnecessary re-mounts
+  // Store speaking state in ref to prevent unnecessary re-mounts
   const isSpeakingRef = useRef(isSpeaking);
-  const isGeneratingRef = useRef(isGenerating);
 
   useEffect(() => {
     isSpeakingRef.current = isSpeaking;
   }, [isSpeaking]);
 
-  useEffect(() => {
-    isGeneratingRef.current = isGenerating;
-  }, [isGenerating]);
-
-  // Three.js and VRM references
+  // Three.js, VRM and Animation references
   const vrmRef = useRef<VRM | null>(null);
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -146,7 +141,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     throw lastError || new Error('Failed to download VRM model from all candidate endpoints.');
   }, []);
 
-  // Main Three.js Scene Setup & VRM Loader (Mounts ONCE - no glitching)
+  // Main Three.js Scene Setup & VRM Loader
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -162,8 +157,8 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // 2. Camera Setup: Waist level alignment with natural portrait framing
-    const camera = new THREE.PerspectiveCamera(28, width / height, 0.1, 20.0);
+    // 2. Camera Setup: Natural portrait framing with full body visibility
+    const camera = new THREE.PerspectiveCamera(28, width / height, 0.1, 50.0);
     camera.position.set(0.0, 1.15, 1.65);
     camera.lookAt(0.0, 1.05, 0.0);
     cameraRef.current = camera;
@@ -179,29 +174,24 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.95;
+    renderer.toneMappingExposure = 1.0;
     rendererRef.current = renderer;
 
-    // 4. Studio Lighting Rig (Soft, warm portrait lighting)
-    const ambientLight = new THREE.AmbientLight(0xfff3e5, 0.55);
+    // 4. Pure Neutral Studio Lighting (Clean white/cool-fill daylight - zero yellow tint)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xfff0dc, 0.85);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
     keyLight.position.set(1.5, 2.5, 2.2);
     scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0xdde5f0, 0.35);
+    const fillLight = new THREE.DirectionalLight(0xf0f4f8, 0.4);
     fillLight.position.set(-1.5, 1.5, 1.5);
     scene.add(fillLight);
 
-    const rimLight = new THREE.DirectionalLight(0xfff8ee, 0.35);
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.3);
     rimLight.position.set(0.0, 2.5, -2.0);
     scene.add(rimLight);
-
-    // Warm point accent
-    const warmChestLight = new THREE.PointLight(0xffdec2, 0.25, 3);
-    warmChestLight.position.set(0, 1.1, 0.9);
-    scene.add(warmChestLight);
 
     // 5. Load VRM model with GLTFLoader and VRMLoaderPlugin
     const loader = new GLTFLoader();
@@ -235,7 +225,12 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
             // Lower model vertically so waist aligns cleanly with chat composer
             vrm.scene.position.set(0, -0.16, 0);
 
-            // Natural, clean resting arm stance (no weird poses)
+            // DISABLE FRUSTUM CULLING ON ALL MESHES so her full body, legs and skirt are NEVER culled!
+            vrm.scene.traverse((obj) => {
+              obj.frustumCulled = false;
+            });
+
+            // Resting arm stance as fallback before Mixamo animation plays
             if (vrm.humanoid) {
               const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
               const rightUpperArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
@@ -260,6 +255,48 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
             vrmRef.current = vrm;
             scene.add(vrm.scene);
+
+            // ----------------------------------------------------
+            // Load and Retarget Mixamo Idle Animation
+            // Filter out head/neck tracks so cursor tracking is NEVER overridden!
+            // ----------------------------------------------------
+            const animCandidateUrls = [
+              '/api/animation/idle',
+              'https://ai.mux8.com/mixamo_idle.fbx',
+              VRM_CONFIG.animationUrl,
+            ];
+
+            const loadMixamoIdle = async () => {
+              for (const animUrl of animCandidateUrls) {
+                try {
+                  const clip = await retargetAnimationFromUrl(animUrl, vrm);
+                  if (clip && !isDisposed) {
+                    // Get normalized head and neck bone names to filter out of the animation clip
+                    const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
+                    const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
+                    const headPrefix = headNode?.name ? `${headNode.name}.` : '';
+                    const neckPrefix = neckNode?.name ? `${neckNode.name}.` : '';
+
+                    clip.tracks = clip.tracks.filter((track) => {
+                      if (headPrefix && track.name.startsWith(headPrefix)) return false;
+                      if (neckPrefix && track.name.startsWith(neckPrefix)) return false;
+                      return true;
+                    });
+
+                    const mixer = new THREE.AnimationMixer(vrm.scene);
+                    mixerRef.current = mixer;
+                    const action = mixer.clipAction(clip);
+                    action.setLoop(THREE.LoopRepeat, Infinity);
+                    action.play();
+                    break;
+                  }
+                } catch (animErr) {
+                  console.warn(`Mixamo retarget failed for ${animUrl}:`, animErr);
+                }
+              }
+            };
+
+            loadMixamoIdle();
 
             setIsLoaded(true);
             setDownloadProgress(null);
@@ -302,18 +339,27 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       const vrm = vrmRef.current;
 
       if (vrm) {
-        // Update VRM spring bones, hair & cloth physics
+        // ----------------------------------------------------
+        // 1. Continuous Mixamo Idle Body Animation (body/hips/arms/legs)
+        // ----------------------------------------------------
+        if (mixerRef.current) {
+          mixerRef.current.update(delta);
+        }
+
+        // ----------------------------------------------------
+        // 2. Update VRM spring bones, hair & cloth physics
+        // ----------------------------------------------------
         vrm.update(delta);
 
-        // Update LipSync & Viseme Engine
+        // ----------------------------------------------------
+        // 3. Update LipSync & Viseme Engine (thresholded, zero quivering)
+        // ----------------------------------------------------
         lipSyncManager.update(delta, elapsed);
         const visemes = lipSyncManager.getVisemes();
         const emotion = lipSyncManager.getEmotion();
-        const speakingNow = isSpeakingRef.current || isGeneratingRef.current;
+        const speakingNow = isSpeakingRef.current || lipSyncManager.getIsSpeaking();
 
-        // ----------------------------------------------------
-        // A. Dynamic Lip-Sync Visemes (aa, ih, ou, ee, oh)
-        // ----------------------------------------------------
+        // Dynamic Lip-Sync Visemes (aa, ih, ou, ee, oh)
         if (vrm.expressionManager) {
           vrm.expressionManager.setValue('aa', visemes.aa);
           vrm.expressionManager.setValue('ih', visemes.ih);
@@ -321,15 +367,12 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           vrm.expressionManager.setValue('ee', visemes.ee);
           vrm.expressionManager.setValue('oh', visemes.oh);
 
-          // ----------------------------------------------------
-          // B. Built-in Preset Emotions (happy, relaxed, surprised, sad, angry)
-          // ----------------------------------------------------
+          // Built-in Preset Emotions (happy, relaxed, surprised, sad, angry)
           const emotionPresets: EmotionPreset[] = ['happy', 'relaxed', 'surprised', 'sad', 'angry'];
           for (const preset of emotionPresets) {
             if (preset === emotion.preset) {
               vrm.expressionManager.setValue(preset, emotion.weight);
             } else if (preset === 'relaxed') {
-              // Keep subtle base relaxed expression if speaking with another emotion
               vrm.expressionManager.setValue('relaxed', speakingNow ? 0.15 : 0.35);
             } else {
               vrm.expressionManager.setValue(preset, 0);
@@ -338,7 +381,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         }
 
         // ----------------------------------------------------
-        // C. Natural Blinking Algorithm (preset: 'blink')
+        // 4. Natural Blinking (preset: 'blink')
         // ----------------------------------------------------
         blinkTimer += delta;
         if (!isBlinking && blinkTimer > nextBlinkInterval) {
@@ -359,7 +402,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         }
 
         // ----------------------------------------------------
-        // D. Eye Saccades (Realistic Micro-Glances)
+        // 5. Eye Saccades (Realistic Micro-Glances)
         // ----------------------------------------------------
         saccadeTimer += delta;
         if (saccadeTimer > nextSaccadeInterval) {
@@ -370,31 +413,25 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         }
 
         // ----------------------------------------------------
-        // E. Breathing Motion (subtle, natural chest/spine expansion)
-        // ----------------------------------------------------
-        const breath = Math.sin(elapsed * 1.5) * 0.01;
-        const chestNode = vrm.humanoid?.getNormalizedBoneNode('chest');
-        const spineNode = vrm.humanoid?.getNormalizedBoneNode('spine');
-        if (spineNode) spineNode.rotation.x = breath * 0.4;
-        if (chestNode) chestNode.rotation.x = breath * 0.8;
-
-        // ----------------------------------------------------
-        // F. Correct Directional Head Cursor Tracking
+        // 6. Direct High-Sensitivity Cursor Head & Neck Tracking
+        // Purely uninterrupted because head/neck are excluded from Mixamo clip
         // ----------------------------------------------------
         const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
         const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
 
         if (headNode) {
-          const targetRotY = THREE.MathUtils.clamp(mouseRef.current.x * 0.22, -0.4, 0.4) + saccadeOffsetX;
-          const targetRotX = THREE.MathUtils.clamp(-mouseRef.current.y * 0.16, -0.2, 0.2) + saccadeOffsetY;
+          const targetRotY = THREE.MathUtils.clamp(mouseRef.current.x * 0.55, -0.75, 0.75) + saccadeOffsetX;
+          const targetRotX = THREE.MathUtils.clamp(-mouseRef.current.y * 0.38, -0.38, 0.38) + saccadeOffsetY;
 
-          headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 4.0);
-          headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 4.0);
+          headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 7.5);
+          headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 7.5);
         }
 
         if (neckNode) {
-          const targetNeckY = THREE.MathUtils.clamp(mouseRef.current.x * 0.1, -0.2, 0.2);
-          neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 3.5);
+          const targetNeckY = THREE.MathUtils.clamp(mouseRef.current.x * 0.25, -0.35, 0.35);
+          const targetNeckX = THREE.MathUtils.clamp(-mouseRef.current.y * 0.15, -0.2, 0.2);
+          neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 6.0);
+          neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 6.0);
         }
       }
 
@@ -415,7 +452,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     window.addEventListener('resize', handleResize);
 
-    // 9. Pointer movement for intuitive head and gaze tracking
+    // 9. Pointer movement for head and gaze tracking
     const handlePointerMove = (e: MouseEvent) => {
       const rect = container.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -441,11 +478,10 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative flex-1 w-full h-full overflow-hidden select-none flex items-center justify-center bg-gradient-to-b from-[#f3f4f8] via-[#eef0f6] to-[#e4e7f0] dark:from-[#0d0f16] dark:via-[#11131c] dark:to-[#171a26]"
+      className="relative flex-1 w-full h-full overflow-hidden select-none flex items-center justify-center bg-gradient-to-b from-[#f8f9fc] via-[#f1f3f9] to-[#e8ebf4] dark:from-[#0d0f16] dark:via-[#11131c] dark:to-[#171a26]"
     >
-      {/* Background Soft Ambient Light Shaft */}
+      {/* Background Soft Studio Vignette (Pure neutral, zero yellow) */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[520px] h-[520px] bg-amber-400/8 dark:bg-amber-500/4 rounded-full blur-3xl" />
         <div className="absolute bottom-0 inset-x-0 h-40 bg-gradient-to-t from-black/[0.03] dark:from-white/[0.015] to-transparent" />
       </div>
 

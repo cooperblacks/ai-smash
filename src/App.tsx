@@ -583,7 +583,6 @@ export default function App() {
         {is3DMode ? (
           <VRMCanvas
             isSpeaking={currentlySpeakingMsgId !== null}
-            isGenerating={isGenerating}
           />
         ) : (
           <MessageList

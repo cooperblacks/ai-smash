@@ -119,12 +119,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </div>
           </div>
         </div>
-
-        {/* Minimal Footer Note */}
-        <div className="flex items-center justify-between px-2 text-[10px] text-neutral-400 dark:text-neutral-400 font-mono">
-          <span>Enter to send, Shift + Enter for newline</span>
-          <span>In-Browser SLM</span>
-        </div>
       </form>
     </div>
   );
