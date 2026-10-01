@@ -414,24 +414,37 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
         // ----------------------------------------------------
         // 6. Direct High-Sensitivity Cursor Head & Neck Tracking
-        // Purely uninterrupted because head/neck are excluded from Mixamo clip
+        // Dynamically projects 3D face position to 2D screen NDC coordinates
+        // Ensuring cursor tracking is naturally centered relative to her actual face
         // ----------------------------------------------------
         const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
         const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
 
-        if (headNode) {
-          const targetRotY = THREE.MathUtils.clamp(mouseRef.current.x * 0.55, -0.75, 0.75) + saccadeOffsetX;
-          const targetRotX = THREE.MathUtils.clamp(-mouseRef.current.y * 0.38, -0.38, 0.38) + saccadeOffsetY;
+        if (headNode && cameraRef.current) {
+          // Dynamic real-time 3D world position of head & eye center
+          const headWorldPos = new THREE.Vector3();
+          headNode.getWorldPosition(headWorldPos);
+          headWorldPos.y += 0.055; // vertical offset to eye level
+
+          // Project 3D head coordinate to 2D canvas Normalized Device Coordinates (NDC) [-1, 1]
+          const headScreenPos = headWorldPos.project(cameraRef.current);
+
+          // Calculate true relative delta between cursor location and her face on screen
+          const deltaX = mouseRef.current.x - headScreenPos.x;
+          const deltaY = mouseRef.current.y - headScreenPos.y;
+
+          const targetRotY = THREE.MathUtils.clamp(deltaX * 0.75, -0.85, 0.85) + saccadeOffsetX;
+          const targetRotX = THREE.MathUtils.clamp(-deltaY * 0.6, -0.45, 0.45) + saccadeOffsetY;
 
           headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 7.5);
           headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 7.5);
-        }
 
-        if (neckNode) {
-          const targetNeckY = THREE.MathUtils.clamp(mouseRef.current.x * 0.25, -0.35, 0.35);
-          const targetNeckX = THREE.MathUtils.clamp(-mouseRef.current.y * 0.15, -0.2, 0.2);
-          neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 6.0);
-          neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 6.0);
+          if (neckNode) {
+            const targetNeckY = THREE.MathUtils.clamp(deltaX * 0.35, -0.4, 0.4);
+            const targetNeckX = THREE.MathUtils.clamp(-deltaY * 0.25, -0.25, 0.25);
+            neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 6.0);
+            neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 6.0);
+          }
         }
       }
 
