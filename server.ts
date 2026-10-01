@@ -138,6 +138,17 @@ function cleanOllamaBaseUrl(rawUrl: string): string {
   return url.replace(/\/+$/, '');
 }
 
+function buildServerOllamaUrl(rawUrl: string, endpoint: string): string {
+  const clean = cleanOllamaBaseUrl(rawUrl);
+  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const full = `${clean}${path}`;
+  if (full.includes('ngrok')) {
+    const sep = full.includes('?') ? '&' : '?';
+    return `${full}${sep}ngrok-skip-browser-warning=true`;
+  }
+  return full;
+}
+
 const OLLAMA_REQUEST_HEADERS = {
   'ngrok-skip-browser-warning': 'true',
   'User-Agent': 'curl/8.0.0',
@@ -160,7 +171,7 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
 
     // 1. Try /api/tags (Native Ollama model list)
     try {
-      const resp = await fetch(`${baseUrl}/api/tags`, {
+      const resp = await fetch(buildServerOllamaUrl(baseUrl, '/api/tags'), {
         method: 'GET',
         headers: OLLAMA_REQUEST_HEADERS,
         signal: controller.signal,
@@ -187,7 +198,7 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
     // 2. Try /v1/models (OpenAI compatibility endpoint on Ollama, shown in pyngrok setup)
     if (models.length === 0) {
       try {
-        const v1Resp = await fetch(`${baseUrl}/v1/models`, {
+        const v1Resp = await fetch(buildServerOllamaUrl(baseUrl, '/v1/models'), {
           method: 'GET',
           headers: OLLAMA_REQUEST_HEADERS,
           signal: controller.signal,
@@ -215,7 +226,7 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
     // 3. Fallback check to /api/version or / root
     if (!online) {
       try {
-        const verResp = await fetch(`${baseUrl}/api/version`, {
+        const verResp = await fetch(buildServerOllamaUrl(baseUrl, '/api/version'), {
           method: 'GET',
           headers: OLLAMA_REQUEST_HEADERS,
           signal: controller.signal,
@@ -225,7 +236,7 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
         }
       } catch {
         try {
-          const rootResp = await fetch(`${baseUrl}/`, {
+          const rootResp = await fetch(buildServerOllamaUrl(baseUrl, '/'), {
             method: 'GET',
             headers: OLLAMA_REQUEST_HEADERS,
             signal: controller.signal,
@@ -268,7 +279,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
     let resolvedModel = (model || '').trim();
     if (!resolvedModel || resolvedModel === 'serafina') {
       try {
-        const tagsResp = await fetch(`${baseUrl}/api/tags`, {
+        const tagsResp = await fetch(buildServerOllamaUrl(baseUrl, '/api/tags'), {
           method: 'GET',
           headers: OLLAMA_REQUEST_HEADERS,
           signal: AbortSignal.timeout(3000),
@@ -291,7 +302,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
 
       if (!resolvedModel || resolvedModel === 'serafina') {
         try {
-          const v1Resp = await fetch(`${baseUrl}/v1/models`, {
+          const v1Resp = await fetch(buildServerOllamaUrl(baseUrl, '/v1/models'), {
             method: 'GET',
             headers: OLLAMA_REQUEST_HEADERS,
             signal: AbortSignal.timeout(3000),
@@ -333,7 +344,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
 
     const numPredict = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
 
-    const ollamaResp = await fetch(`${baseUrl}/api/chat`, {
+    const ollamaResp = await fetch(buildServerOllamaUrl(baseUrl, '/api/chat'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

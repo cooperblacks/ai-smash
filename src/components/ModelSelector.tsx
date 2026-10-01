@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDown, HardDrive, Check, Sparkles, ArrowDownCircle, Cloud, Globe, Edit2 } from 'lucide-react';
+import { ChevronDown, HardDrive, Check, Sparkles, ArrowDownCircle, Cloud, Globe, Edit2, Youtube, Download } from 'lucide-react';
 import { ModelSpec, ModelCacheInfo } from '../types';
 import { AVAILABLE_MODELS } from '../lib/models';
 import { OLLAMA_CONFIG } from '../constants';
@@ -366,22 +366,45 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               e.stopPropagation();
                               setIsEditingCustomUrl(true);
                             }}
-                            className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 hover:underline font-medium"
+                            className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 hover:underline font-medium cursor-pointer"
                           >
                             <Edit2 className="w-3 h-3" />
                             <span>Edit URL</span>
                           </button>
                         </div>
                       )}
+
+                      {/* Helpful resources: Watch Tutorial & Download .ipynb */}
+                      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                        <a
+                          href="https://www.youtube.com/watch?v=uDJnu2EEzRc"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[11px] font-medium bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-950/40 dark:hover:bg-red-900/60 dark:text-red-400 border border-red-200/60 dark:border-red-800/40 transition-colors shadow-xs active:scale-95 group cursor-pointer"
+                          title="Watch Tutorial on YouTube"
+                        >
+                          <Youtube className="w-3.5 h-3.5 text-red-600 dark:text-red-400 shrink-0 group-hover:scale-110 transition-transform" />
+                          <span>Watch Tutorial</span>
+                        </a>
+                        <a
+                          href="https://muxai.vercel.app/muxai_backend_runner.ipynb"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          download="muxai_backend_runner.ipynb"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[11px] font-medium bg-neutral-100 hover:bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 transition-colors shadow-xs active:scale-95 group cursor-pointer"
+                          title="Download Google Colab / Jupyter Notebook (.ipynb)"
+                        >
+                          <Download className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                          <span>Download .ipynb</span>
+                        </a>
+                      </div>
                     </div>
                   )}
                 </div>
               );
             })}
-          </div>
-
-          <div className="p-2 border-t border-neutral-100 dark:border-neutral-800 text-[10px] text-neutral-400 dark:text-neutral-500 text-center font-mono">
-            SLM executes in-browser &bull; Ollama routes via cloud
           </div>
         </div>
       )}
