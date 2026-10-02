@@ -198,10 +198,12 @@ export const VRM_CONFIG = {
   cacheKey: 'hana_vrm_cache_v1',
   candidateModelUrls: [
     '/api/vrm',
+    'https://ai.mux8.com/hana_v1.0_vrm1.vrm',
     'https://muxai.vercel.app/hana_v1.0_vrm1.vrm',
   ],
   candidateAnimationUrls: [
     '/api/animation/idle',
+    'https://ai.mux8.com/mixamo_idle.fbx',
     'https://muxai.vercel.app/mixamo_idle.fbx',
   ],
   camera: {
@@ -236,7 +238,7 @@ export const VRM_CONFIG = {
 export const VOICE_CONFIG = {
   // Voice priority queue: highest quality neural/natural/enhanced female voices
   priorityQueue: [
-    'Jenny', 'Aria', 'Ava', 'Serena', 'Samantha',
+    'Aria', 'Ava', 'Serena', 'Samantha',
     'Zoe', 'Emma', 'Sonia', 'Libby', 'Victoria',
     'Fiona', 'Tessa', 'Veena', 'Google UK English Female',
     'Google US English', 'India'
