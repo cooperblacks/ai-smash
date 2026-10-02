@@ -92,42 +92,79 @@ function isExcludedVoice(voice: SpeechSynthesisVoice): boolean {
   );
 }
 
-function findVoiceFromList(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+
+function findVoiceFromList(
+  voices: SpeechSynthesisVoice[]
+): SpeechSynthesisVoice | null {
   if (!voices || voices.length === 0) return null;
 
-  // Filter out all male and excluded (Russian/Ukrainian) voices
-  const eligibleVoices = voices.filter((v) => !isLikelyMaleVoice(v) && !isExcludedVoice(v));
+  // Keep the existing exclusions.
+  const eligibleVoices = voices.filter(
+    (voice) =>
+      !isLikelyMaleVoice(voice) &&
+      !isExcludedVoice(voice)
+  );
+
   if (eligibleVoices.length === 0) return null;
 
-  // 1. Highest quality check: Prioritize modern neural, natural, enhanced, and premium female voices regardless of language
-  const qualityKeywords = ['natural', 'neural', 'enhanced', 'premium', 'high quality'];
-  for (const qk of qualityKeywords) {
-    const qualityMatch = eligibleVoices.find((v) => {
-      const name = (v.name || '').toLowerCase();
-      return name.includes(qk);
-    });
-    if (qualityMatch) return qualityMatch;
-  }
+  // Prefer English voices so a high-quality voice in
+  // an unrelated language is not selected by accident.
+  const englishVoices = eligibleVoices.filter((voice) =>
+    (voice.lang || "").toLowerCase().startsWith("en")
+  );
 
-  // 2. Priority order queue sourced from VOICE_CONFIG.priorityQueue
+  // 1. Honor Hana's configured voice bank first.
   for (const keyword of VOICE_CONFIG.priorityQueue) {
-    const kw = keyword.toLowerCase();
-    const match = eligibleVoices.find((v) => {
-      const name = (v.name || '').toLowerCase();
-      const lang = (v.lang || '').toLowerCase();
-      return name.includes(kw) || lang.includes(kw);
-    });
+    const match = englishVoices.find((voice) =>
+      (voice.name || "")
+        .toLowerCase()
+        .includes(keyword.toLowerCase())
+    );
+
     if (match) return match;
   }
 
-  // 3. Fallback: Universal female voice option sourced from VOICE_CONFIG.femaleKeywords
-  const universalFemale = eligibleVoices.find((v) => {
-    const name = (v.name || '').toLowerCase();
-    return VOICE_CONFIG.femaleKeywords.some((kw) => name.includes(kw));
-  });
-  if (universalFemale) return universalFemale;
+  // 2. Use a high-quality English voice if available.
+  const qualityKeywords = [
+    "natural",
+    "neural",
+    "enhanced",
+    "premium",
+    "high quality",
+  ];
 
-  // 4. Fallback: First eligible non-male, non-excluded voice
+  for (const keyword of qualityKeywords) {
+    const match = englishVoices.find((voice) =>
+      (voice.name || "")
+        .toLowerCase()
+        .includes(keyword)
+    );
+
+    if (match) return match;
+  }
+
+  // 3. Try the existing female-name hints.
+  const femaleVoice = englishVoices.find((voice) =>
+    VOICE_CONFIG.femaleKeywords.some((keyword) =>
+      (voice.name || "")
+        .toLowerCase()
+        .includes(keyword)
+    )
+  );
+
+  if (femaleVoice) return femaleVoice;
+
+  // 4. Prefer the browser's default English voice.
+  const defaultEnglishVoice = englishVoices.find(
+    (voice) => voice.default
+  );
+
+  if (defaultEnglishVoice) return defaultEnglishVoice;
+
+  // 5. Last resort: any eligible English voice.
+  if (englishVoices.length > 0) return englishVoices[0];
+
+  // 6. If no English voice exists, retain a fallback.
   return eligibleVoices[0] || null;
 }
 

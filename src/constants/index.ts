@@ -237,12 +237,23 @@ export const VRM_CONFIG = {
 // =====================================================================
 export const VOICE_CONFIG = {
   // Voice priority queue: highest quality neural/natural/enhanced female voices
-  priorityQueue: [
-    'Aria', 'Ava', 'Serena', 'Samantha',
-    'Zoe', 'Emma', 'Sonia', 'Libby', 'Victoria',
-    'Fiona', 'Tessa', 'Veena', 'Google UK English Female',
-    'Google US English', 'India'
-  ],
+  
+priorityQueue: [
+  'Microsoft Aria',
+  'Microsoft Jenny',
+  'Samantha',
+  'Ava',
+  'Serena',
+  'Zira',
+  'Google US English',
+  'Google UK English Female',
+  'Victoria',
+  'Karen',
+  'Moira',
+  'Fiona',
+  'Tessa',
+  'Veena',
+],
   pitch: 1.15,
   rate: 1.05,
   preloadTimeoutMs: 2500,
