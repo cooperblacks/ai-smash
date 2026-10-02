@@ -1,4 +1,4 @@
-# Edge AI 3D Interactive Companion Platform
+# AI Smash - 3D Interactive Companion Platform
 
 > A private, responsive conversational platform combining in-browser Small Language Models (SLMs), cloud AI endpoints, and an interactive 3D humanoid avatar with full-body physics.
 
