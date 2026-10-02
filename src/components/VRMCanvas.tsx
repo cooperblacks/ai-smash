@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
 import { retargetAnimationFromUrl } from 'vrm-mixamo-retarget';
 import { VRM_CONFIG, AI_PROFILE, THEME_COLORS } from '../constants';
-import { lipSyncManager, EmotionPreset } from '../lib/lipSync';
+import { lipSyncManager } from '../lib/lipSync';
 import { Sparkles } from 'lucide-react';
 
 interface VRMCanvasProps {
@@ -160,7 +160,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // 2. Camera Setup: Zoomed-out portrait framing ensuring waist and hips are always visible
+    // 2. Camera Setup: Zoomed-out portrait framing ensuring waist and hips are visible
     const camera = new THREE.PerspectiveCamera(
       VRM_CONFIG.camera.fov,
       width / height,
@@ -182,12 +182,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     const adjustCameraFraming = () => {
       if (!cameraRef.current || !container) return;
-      const w = container.clientWidth || window.innerWidth;
-      const h = container.clientHeight || window.innerHeight;
-      const aspect = w / h;
-
       cameraRef.current = camera;
-
     };
 
     adjustCameraFraming();
@@ -268,22 +263,21 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
             VRMUtils.removeUnnecessaryVertices(gltf.scene);
             VRMUtils.combineSkeletons(gltf.scene);
 
-            // Rotate VRM 0.0 if applicable
             try {
               VRMUtils.rotateVRM0(vrm);
             } catch {
               // Ignore if already VRM 1.0
             }
 
-            // Lower model vertically so waist aligns cleanly with chat composer
+            // Lower model vertically so waist aligns cleanly
             vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
 
-            // DISABLE FRUSTUM CULLING ON ALL MESHES so her full body, legs and skirt are NEVER culled!
+            // Disable frustum culling on all meshes
             vrm.scene.traverse((obj) => {
               obj.frustumCulled = false;
             });
 
-            // Resting arm stance as fallback before Mixamo animation plays
+            // Resting arm stance as fallback
             if (vrm.humanoid) {
               const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
               const rightUpperArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
@@ -296,7 +290,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
               if (rightLowerArm) rightLowerArm.rotation.set(0.0, 0.22, 0.1);
             }
 
-            // Initial preset expressions: relaxed 0.25, happy 0
+            // Initial preset expressions
             if (vrm.expressionManager) {
               try {
                 vrm.expressionManager.setValue('relaxed', 0.25);
@@ -305,17 +299,14 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
                 vrm.expressionManager.setValue('sad', 0.0);
                 vrm.expressionManager.setValue('angry', 0.0);
               } catch {
-                // Ignore if specific expression not defined
+                // Ignore if expression not defined
               }
             }
 
             vrmRef.current = vrm;
             scene.add(vrm.scene);
 
-            // ----------------------------------------------------
             // Load and Retarget Mixamo Idle Animation
-            // Filter out head/neck tracks so cursor tracking is NEVER overridden!
-            // ----------------------------------------------------
             const animCandidateUrls = VRM_CONFIG.candidateAnimationUrls;
 
             const loadMixamoIdle = async () => {
@@ -323,7 +314,6 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
                 try {
                   const clip = await retargetAnimationFromUrl(animUrl, vrm);
                   if (clip && !isDisposed) {
-                    // Get normalized head and neck bone names to filter out of the animation clip
                     const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
                     const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
                     const headPrefix = headNode?.name ? `${headNode.name}.` : '';
@@ -381,10 +371,10 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     let saccadeOffsetX = 0;
     let saccadeOffsetY = 0;
 
-    // Smooth head speech centering factor (0 = cursor tracking, 1 = facing center directly)
+    // Speech facing factor
     let speechFacingFactor = 0;
 
-    // Body continuous rotation holding & angular dynamics
+    // Body continuous rotation holding & auto-reset dynamics
     let isHoldingOnBody = false;
     let lastClientX = 0;
     let targetBodyRotationY = 0;
@@ -392,7 +382,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     let prevBodyRotationY = 0;
     let smoothedAngularVelocity = 0;
 
-    // Full-body physics: Physical impact impulse state on the model itself (no camera zoom)
+    // Physical impact impulse parameters
     let clickImpulsePitch = 0;
     let clickImpulseVelocityPitch = 0;
     let clickImpulseRoll = 0;
@@ -403,7 +393,11 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     let clickImpulseVelocityArms = 0;
     let clickFlinchBlink = 0;
 
-    // Occasional smile timer sourced from constants
+    // Hit-triggered expression flashes
+    let hitExpressionSurprised = 0;
+    let hitExpressionHappy = 0;
+
+    // Occasional smile timer
     let smileCheckTimer = 0;
     const SMILE_CHECK_INTERVAL = VRM_CONFIG.interaction.smileCheckIntervalSec;
     let isSmiling = false;
@@ -422,16 +416,12 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       const vrm = vrmRef.current;
 
       if (vrm) {
-        // ----------------------------------------------------
-        // 1. Continuous Mixamo Idle Body Animation (body/hips/arms/legs)
-        // ----------------------------------------------------
+        // Continuous Mixamo Idle Body Animation
         if (mixerRef.current) {
           mixerRef.current.update(delta);
         }
 
-        // ----------------------------------------------------
-        // 2. Damped Spring Physics for Physical Impact (Click on model)
-        // ----------------------------------------------------
+        // Damped Spring Physics for Physical Impact
         const springK = 140.0;
         const springDamping = 16.0;
 
@@ -455,11 +445,18 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           clickFlinchBlink = Math.max(0, clickFlinchBlink - delta * 8.0);
         }
 
-        // ----------------------------------------------------
-        // 3. Body Rotation & Continuous Angular Velocity Tracking
-        // ----------------------------------------------------
+        // Decay hit expressions smoothly
+        if (hitExpressionSurprised > 0) {
+          hitExpressionSurprised = Math.max(0, hitExpressionSurprised - delta * 3.5);
+        }
+        if (hitExpressionHappy > 0) {
+          hitExpressionHappy = Math.max(0, hitExpressionHappy - delta * 3.5);
+        }
+
+        // Horizontal rotation auto-reset logic:
+        // As soon as user releases press-hold, spring targetBodyRotationY smoothly back to 0
         if (!isHoldingOnBody) {
-          targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, 0, delta * 3.8);
+          targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, 0, delta * 5.5);
         }
 
         currentBodyRotationY = THREE.MathUtils.lerp(currentBodyRotationY, targetBodyRotationY, delta * 12.0);
@@ -469,14 +466,11 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         const instantaneousAngularVel = delta > 0.0001 ? rotDelta / delta : 0;
         smoothedAngularVelocity = THREE.MathUtils.lerp(smoothedAngularVelocity, instantaneousAngularVel, Math.min(delta * 12.0, 1.0));
 
-        // Maintain stable root position without zoom effect
+        // Maintain stable root position & apply rotation
         vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
         vrm.scene.rotation.set(0, currentBodyRotationY, 0);
 
-        // ----------------------------------------------------
-        // 4. Full Body Physical Skeletal Layer (Spine, Chest, Hips, Arms, Shoulders)
-        // Layered directly onto the humanoid skeleton so ALL body parts react to rotation & impact
-        // ----------------------------------------------------
+        // Full Body Physical Skeletal Layer (Spine, Chest, Hips, Arms, Shoulders)
         const humanoid = vrm.humanoid;
         if (humanoid) {
           const spineNode = humanoid.getNormalizedBoneNode('spine');
@@ -490,7 +484,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           const leftLowerArmNode = humanoid.getNormalizedBoneNode('leftLowerArm');
           const rightLowerArmNode = humanoid.getNormalizedBoneNode('rightLowerArm');
 
-          // Spine & Chest torsional lag when rotating, and physical flinch when clicked
+          // Spine & Chest torsional lag and click recoil
           if (spineNode) {
             spineNode.rotation.y += -smoothedAngularVelocity * 0.14 + clickImpulseRoll * 0.25;
             spineNode.rotation.x += clickImpulsePitch * 0.35;
@@ -505,7 +499,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
             upperChestNode.rotation.x += clickImpulsePitch * 0.25;
           }
 
-          // Hips weight shift on rotation and physical shock absorption on click
+          // Hips weight shift and shock absorption
           if (hipsNode) {
             hipsNode.position.y += clickImpulseHipsY * 0.4;
             hipsNode.position.x += -smoothedAngularVelocity * 0.012;
@@ -513,7 +507,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
             hipsNode.rotation.x += clickImpulsePitch * 0.15;
           }
 
-          // Shoulders & Arms inertial swing, centrifugal flare, and click impact jolt
+          // Shoulders & Arms inertial swing and click impact jolt
           const armInertiaY = -smoothedAngularVelocity * 0.28;
           const armCentrifugal = Math.min(Math.abs(smoothedAngularVelocity) * 0.14, 0.28);
 
@@ -537,10 +531,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           }
         }
 
-        // ----------------------------------------------------
-        // 5. Spring Bone Dynamic Force Injection for All Secondary Physics Parts
-        // (Hair, ribbons, cloth, jacket, skirts, accessories)
-        // ----------------------------------------------------
+        // Spring Bone Dynamic Force Injection (Hair, ribbons, skirts)
         if (vrm.springBoneManager?.joints && Math.abs(smoothedAngularVelocity) > 0.04) {
           const rotInertiaX = smoothedAngularVelocity * 0.007;
           const rotCentrifugalZ = Math.abs(smoothedAngularVelocity) * 0.005;
@@ -552,27 +543,21 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           });
         }
 
-        // ----------------------------------------------------
-        // 6. Update VRM spring bones, hair & cloth physics
-        // ----------------------------------------------------
+        // Update VRM secondary physics
         vrm.update(delta);
 
-        // ----------------------------------------------------
-        // 4. Update LipSync & Viseme Engine (thresholded, zero quivering)
-        // ----------------------------------------------------
+        // Update LipSync & Viseme Engine
         lipSyncManager.update(delta, elapsed);
         const visemes = lipSyncManager.getVisemes();
-        const emotion = lipSyncManager.getEmotion();
         const speakingNow = isSpeakingRef.current || lipSyncManager.getIsSpeaking();
 
-        // Smoothly interpolate speech facing factor (1 when speaking, 0 when silent)
         speechFacingFactor = THREE.MathUtils.lerp(
           speechFacingFactor,
           speakingNow ? 1.0 : 0.0,
           delta * 6.0
         );
 
-        // Occasional Smile: 1/4 chance every 15 seconds, stays 5 seconds
+        // Occasional Smile
         smileCheckTimer += delta;
         if (smileCheckTimer >= SMILE_CHECK_INTERVAL) {
           smileCheckTimer = 0;
@@ -590,15 +575,13 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           }
         }
 
-        // Idle: (relaxed: 0.25, happy: 0)
-        // Smile: (relaxed: 0.35, happy: 0.25)
         const targetRelaxed = isSmiling ? 0.35 : 0.25;
         const targetHappy = isSmiling ? 0.25 : 0.0;
 
         currentRelaxed = THREE.MathUtils.lerp(currentRelaxed, targetRelaxed, delta * 3.5);
         currentHappy = THREE.MathUtils.lerp(currentHappy, targetHappy, delta * 3.5);
 
-        // Dynamic Lip-Sync Visemes (aa, ih, ou, ee, oh) - lips move as usual
+        // Expression Manager Updates
         if (vrm.expressionManager) {
           vrm.expressionManager.setValue('aa', visemes.aa);
           vrm.expressionManager.setValue('ih', visemes.ih);
@@ -606,17 +589,14 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           vrm.expressionManager.setValue('ee', visemes.ee);
           vrm.expressionManager.setValue('oh', visemes.oh);
 
-          // Smoothly animated facial expression
           vrm.expressionManager.setValue('relaxed', currentRelaxed);
-          vrm.expressionManager.setValue('happy', currentHappy);
-          vrm.expressionManager.setValue('surprised', 0);
+          vrm.expressionManager.setValue('happy', Math.min(1.0, currentHappy + hitExpressionHappy));
+          vrm.expressionManager.setValue('surprised', Math.min(1.0, hitExpressionSurprised));
           vrm.expressionManager.setValue('sad', 0);
           vrm.expressionManager.setValue('angry', 0);
         }
 
-        // ----------------------------------------------------
-        // 5. Natural Blinking (preset: 'blink')
-        // ----------------------------------------------------
+        // Blinking
         blinkTimer += delta;
         if (!isBlinking && blinkTimer > nextBlinkInterval) {
           isBlinking = true;
@@ -637,9 +617,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           }
         }
 
-        // ----------------------------------------------------
-        // 6. Eye Saccades (Realistic Micro-Glances)
-        // ----------------------------------------------------
+        // Eye Saccades
         saccadeTimer += delta;
         if (saccadeTimer > nextSaccadeInterval) {
           saccadeTimer = 0;
@@ -648,32 +626,23 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           saccadeOffsetY = (Math.random() - 0.5) * 0.015;
         }
 
-        // ----------------------------------------------------
-        // 7. Head & Neck Tracking with Smooth Speech-Centering
-        // When speaking, smoothly animates towards facing the relative center directly forward
-        // When not speaking, follows dynamic 3D-to-2D projected mouse cursor
-        // ----------------------------------------------------
+        // Head & Neck Gaze Tracking
         const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
         const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
 
         if (headNode && cameraRef.current) {
-          // Dynamic real-time 3D world position of head & eye center
           const headWorldPos = new THREE.Vector3();
           headNode.getWorldPosition(headWorldPos);
-          headWorldPos.y += 0.055; // vertical offset to eye level
+          headWorldPos.y += 0.055;
 
-          // Project 3D head coordinate to 2D canvas Normalized Device Coordinates (NDC) [-1, 1]
           const headScreenPos = headWorldPos.project(cameraRef.current);
 
-          // Calculate true relative delta between cursor location and her face on screen
           const deltaX = mouseRef.current.x - headScreenPos.x;
           const deltaY = mouseRef.current.y - headScreenPos.y;
 
-          // When speaking, cursor influence scales down so head centers directly forward:
           const activeDeltaX = deltaX * (1.0 - speechFacingFactor);
           const activeDeltaY = deltaY * (1.0 - speechFacingFactor);
 
-          // Subtle lifelike speech micro-nodding cadence while talking
           const speechNodX = speechFacingFactor * Math.sin(elapsed * 4.5) * 0.02;
 
           const targetRotY = THREE.MathUtils.clamp(activeDeltaX * 0.75, -0.85, 0.85) + saccadeOffsetX * (1.0 - speechFacingFactor * 0.6);
@@ -709,8 +678,8 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     window.addEventListener('resize', handleResize);
 
-    // 9. Pointer movement for head and gaze tracking + body rotation
-    const handlePointerMove = (e: MouseEvent) => {
+    // 9. Pointer movement for gaze tracking & drag rotation
+    const handlePointerMove = (e: PointerEvent) => {
       const rect = container.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
@@ -719,11 +688,11 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       if (isHoldingOnBody) {
         const deltaX = e.clientX - lastClientX;
         lastClientX = e.clientX;
-        targetBodyRotationY += deltaX * 0.009;
+        targetBodyRotationY += deltaX * 0.012;
       }
     };
 
-    // 10. Pointer Down on 3D Model: Trigger pushback force and begin rotation hold
+    // 10. Pointer Down on 3D Model: Detect Body Region & initiate rotation drag
     const handlePointerDown = (e: PointerEvent) => {
       if (!container || !cameraRef.current || !vrmRef.current) return;
       const rect = container.getBoundingClientRect();
@@ -743,21 +712,72 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         const hitPoint = intersects[0].point.clone();
         vrmRef.current.scene.worldToLocal(hitPoint);
 
-        const isUpperBody = hitPoint.y > 0.85;
-        const hitX = hitPoint.x;
+        const localY = hitPoint.y;
+        const localX = hitPoint.x;
 
-        // Physical impact impulses applied to skeletal body bones (NOT camera zoom)
-        clickImpulseVelocityPitch = isUpperBody ? -4.5 : -2.8;
-        clickImpulseVelocityRoll = THREE.MathUtils.clamp(-hitX * 8.5, -3.2, 3.2);
-        clickImpulseVelocityHipsY = isUpperBody ? -0.07 : -0.11;
-        clickImpulseVelocityArms = 3.2;
-        clickFlinchBlink = 0.85;
+        // Check bone/mesh name hints and local height
+        const objName = (intersects[0].object.name || '').toLowerCase();
+        const parentName = (intersects[0].object.parent?.name || '').toLowerCase();
+        const nameStr = `${objName} ${parentName}`;
 
-        // Inject physical impulse into all spring bone joints (hair, ribbons, clothing, etc.)
+        let hitRegion: 'head' | 'chest' | 'stomach' | 'skirt' | 'legs' = 'stomach';
+
+        if (nameStr.includes('head') || nameStr.includes('hair') || nameStr.includes('face') || localY >= 1.22) {
+          hitRegion = 'head';
+        } else if (nameStr.includes('chest') || nameStr.includes('bust') || nameStr.includes('arm') || nameStr.includes('shoulder') || (localY >= 0.92 && localY < 1.22)) {
+          hitRegion = 'chest';
+        } else if (nameStr.includes('spine') || nameStr.includes('waist') || nameStr.includes('stomach') || (localY >= 0.68 && localY < 0.92)) {
+          hitRegion = 'stomach';
+        } else if (nameStr.includes('skirt') || nameStr.includes('hip') || (localY >= 0.40 && localY < 0.68)) {
+          hitRegion = 'skirt';
+        } else {
+          hitRegion = 'legs';
+        }
+
+        // Apply specific physical responses & facial expressions per region
+        if (hitRegion === 'head') {
+          clickImpulseVelocityPitch = -2.2;
+          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 12.0, -3.5, 3.5);
+          clickImpulseVelocityHipsY = -0.02;
+          clickImpulseVelocityArms = 1.2;
+          clickFlinchBlink = 1.0;
+          hitExpressionSurprised = 0.8;
+          hitExpressionHappy = 0.4;
+        } else if (hitRegion === 'chest') {
+          clickImpulseVelocityPitch = -6.0;
+          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 10.0, -4.5, 4.5);
+          clickImpulseVelocityHipsY = -0.06;
+          clickImpulseVelocityArms = 6.0;
+          clickFlinchBlink = 0.9;
+          hitExpressionSurprised = 1.0;
+        } else if (hitRegion === 'stomach') {
+          clickImpulseVelocityPitch = -4.0;
+          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 8.0, -3.0, 3.0);
+          clickImpulseVelocityHipsY = -0.12;
+          clickImpulseVelocityArms = 3.5;
+          clickFlinchBlink = 0.6;
+          hitExpressionSurprised = 0.5;
+        } else if (hitRegion === 'skirt') {
+          clickImpulseVelocityPitch = -1.5;
+          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 14.0, -5.0, 5.0);
+          clickImpulseVelocityHipsY = 0.10;
+          clickImpulseVelocityArms = 2.0;
+          clickFlinchBlink = 0.4;
+          hitExpressionSurprised = 0.3;
+        } else { // legs
+          clickImpulseVelocityPitch = 3.0;
+          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 6.0, -2.5, 2.5);
+          clickImpulseVelocityHipsY = 0.16;
+          clickImpulseVelocityArms = 1.5;
+          clickFlinchBlink = 0.3;
+          hitExpressionSurprised = 0.4;
+        }
+
+        // Secondary spring bone force injection
         if (vrmRef.current.springBoneManager?.joints) {
-          const impulseX = clickImpulseVelocityRoll * 0.009;
-          const impulseY = clickImpulseVelocityHipsY * 0.02;
-          const impulseZ = clickImpulseVelocityPitch * 0.012;
+          const impulseX = clickImpulseVelocityRoll * 0.01;
+          const impulseY = clickImpulseVelocityHipsY * 0.025;
+          const impulseZ = clickImpulseVelocityPitch * 0.015;
           vrmRef.current.springBoneManager.joints.forEach((joint: any) => {
             if (joint._prevTail) {
               joint._prevTail.x += impulseX;
@@ -771,7 +791,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       }
     };
 
-    // 11. Pointer Up: Release hold, trigger smooth recovery to forward idle
+    // 11. Pointer Up: Release rotation hold, trigger auto-reset
     const handlePointerUp = () => {
       if (isHoldingOnBody) {
         isHoldingOnBody = false;
@@ -779,7 +799,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       }
     };
 
-    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('pointermove', handlePointerMove);
     container.addEventListener('pointerdown', handlePointerDown);
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerUp);
@@ -788,7 +808,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       isDisposed = true;
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('pointermove', handlePointerMove);
       container.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
@@ -805,7 +825,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       ref={containerRef}
       className={`relative flex-1 w-full h-full overflow-hidden select-none flex items-center justify-center ${THEME_COLORS.tokens.vrmCanvasBg}`}
     >
-      {/* Background Soft Studio Vignette (Pure neutral, zero yellow) */}
+      {/* Background Soft Studio Vignette */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute bottom-0 inset-x-0 h-40 bg-gradient-to-t from-black/[0.03] dark:from-white/[0.015] to-transparent" />
       </div>
@@ -813,7 +833,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       {/* 3D WebGL Canvas */}
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full outline-none" />
 
-      {/* Download / Caching Progress Overlay (only displayed if initial download is still ongoing) */}
+      {/* Download / Caching Progress Overlay */}
       {!isLoaded && !loadError && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 bg-white/70 dark:bg-[#0f1117]/80 backdrop-blur-md animate-in fade-in duration-200">
           <div className="flex flex-col items-center max-w-xs w-full text-center space-y-4">
