@@ -32,12 +32,12 @@ export const THEME_COLORS = {
     elevatedLight: '#ffffff',
     elevatedDark: '#161822',
     panelDark: '#1a1c28',
-    accent: '#22d3ee', // sky-400 (cute pastel sky base)
-    accentLight: '#67e8f9', // sky-300
-    accentDark: '#06b6d4', // sky-500
-    accentDeep: '#0891b2', // sky-600
-    accentBadgeTextLight: '#0e7490', // sky-700
-    accentBadgeTextDark: '#a5f3fc', // sky-200
+    accent: '#55d2f6', // sky-400 (angelic cute cyan-sky base)
+    accentLight: '#8ce0fa', // sky-300
+    accentDark: '#22bdec', // sky-500
+    accentDeep: '#0f9bc7', // sky-600
+    accentBadgeTextLight: '#117ba2', // sky-700
+    accentBadgeTextDark: '#bcebfc', // sky-200
     success: '#10b981', // emerald-500
     successDark: '#059669', // emerald-600
     successLight: '#34d399', // emerald-400
@@ -55,7 +55,7 @@ export const THEME_COLORS = {
       to: '#171a26',
     },
     lighting: {
-      ambient: 0xe0f7fa, // pastel sky tint for soft outdoor daylight
+      ambient: 0xe2f8fd, // angelic soft cyan-sky glow
       key: 0xffffff,
       fill: 0xf0f4f8,
       rim: 0xffffff,
@@ -195,6 +195,8 @@ export const AI_PROFILE = {
 export const VRM_CONFIG = {
   modelUrl: 'https://muxai.vercel.app/hana_v1.0_vrm1.vrm',
   animationUrl: 'https://muxai.vercel.app/mixamo_idle.fbx',
+  fallAnimationUrl: 'https://muxai.vercel.app/mixamo_fall.fbx',
+  getupAnimationUrl: 'https://muxai.vercel.app/mixamo_getup.fbx',
   cacheKey: 'hana_vrm_cache_v1',
   candidateModelUrls: [
     '/api/vrm',
@@ -205,6 +207,16 @@ export const VRM_CONFIG = {
     '/api/animation/idle',
     'https://ai.mux8.com/mixamo_idle.fbx',
     'https://muxai.vercel.app/mixamo_idle.fbx',
+  ],
+  candidateFallAnimationUrls: [
+    '/api/animation/fall',
+    'https://ai.mux8.com/mixamo_fall.fbx',
+    'https://muxai.vercel.app/mixamo_fall.fbx',
+  ],
+  candidateGetupAnimationUrls: [
+    '/api/animation/getup',
+    'https://ai.mux8.com/mixamo_getup.fbx',
+    'https://muxai.vercel.app/mixamo_getup.fbx',
   ],
   camera: {
     fov: 28,
@@ -362,6 +374,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   preferredDevice: 'auto',
   hapticFeedback: true,
   soundEffects: true,
+  visualSubtitles: true,
   telemetryExpanded: true,
   autoScroll: true,
   bannerCycling: true,

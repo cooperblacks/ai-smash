@@ -49,8 +49,10 @@ import { MessageList } from './components/MessageList';
 import { SettingsModal } from './components/SettingsModal';
 import { TwitterProfileModal } from './components/TwitterProfileModal';
 import { VRMCanvas } from './components/VRMCanvas';
+import { VRMSubtitles } from './components/VRMSubtitles';
 import { SplashScreen } from './components/SplashScreen';
 import { lipSyncManager } from './lib/lipSync';
+import { preloadVRMAssetsBehindTheScenes } from './lib/vrmCache';
 import { AlertCircle } from 'lucide-react';
 
 export default function App() {
@@ -107,11 +109,30 @@ export default function App() {
   const [isVoiceLoaded, setIsVoiceLoaded] = useState(false);
   const [isSplashTimeout, setIsSplashTimeout] = useState(false);
 
+  // 3D Mode Voice Subtitle State
+  const [subtitleState, setSubtitleState] = useState<{
+    isActive: boolean;
+    text: string;
+    charIndex: number;
+    currentWord: string;
+  }>({
+    isActive: false,
+    text: '',
+    charIndex: 0,
+    currentWord: '',
+  });
+
+  // Pain sound facial expression mood state for 3D model
+  const [isPainSoundActive, setIsPainSoundActive] = useState(false);
+
   useEffect(() => {
     // Preload voice engine
     waitForPersonaVoice(VOICE_CONFIG.preloadTimeoutMs)
       .then(() => setIsVoiceLoaded(true))
       .catch(() => setIsVoiceLoaded(true));
+
+    // During the loading phase of splash screen, also load up the 3D model behind the scenes according to its usual loading scheme
+    preloadVRMAssetsBehindTheScenes();
 
     // Fallback: If voice engine takes longer than timeout, proceed through splash screen
     const timer = setTimeout(() => {
@@ -154,13 +175,28 @@ export default function App() {
   // Effective sound enabled (in 3D view, she will always have sound enabled)
   const isSoundActive = userSettings.soundEffects || is3DMode;
 
+  // Track active speech for pausing & resuming during model clicks
+  const currentSpeechInfoRef = useRef<{
+    msgId: string;
+    text: string;
+    charIndex: number;
+  } | null>(null);
+
+  const isPainSoundActiveRef = useRef(false);
+  const pausedSpeechResumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Voice synthesis with priority order queue sourced from VOICE_CONFIG
   const speakAssistantMessage = useCallback(
-    async (msgId: string, text: string) => {
+    async (msgId: string, text: string, isResuming = false) => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
       if (!isSoundActive) return;
 
-      window.speechSynthesis.cancel();
+      // When pain sound is playing, defer assistant synthesis
+      if (isPainSoundActiveRef.current) return;
+
+      if (!isResuming) {
+        window.speechSynthesis.cancel();
+      }
 
       // Wait until voice synthesis engine is fully ready/loaded so the female voice queue is activated
       const voice = await waitForPersonaVoice(VOICE_CONFIG.waitVoiceTimeoutMs);
@@ -172,10 +208,17 @@ export default function App() {
       }
 
       // Check if user disabled sound while waiting
-      if (!isSoundActive) return;
+      if (!isSoundActive || isPainSoundActiveRef.current) return;
 
       setCurrentlySpeakingMsgId(msgId);
+      currentSpeechInfoRef.current = { msgId, text, charIndex: 0 };
       lipSyncManager.startSpeech(text);
+      setSubtitleState({
+        isActive: true,
+        text,
+        charIndex: 0,
+        currentWord: '',
+      });
 
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.pitch = VOICE_CONFIG.pitch;
@@ -184,18 +227,49 @@ export default function App() {
 
       utterance.onboundary = (event) => {
         const charIndex = event.charIndex || 0;
-        const charLength = event.charLength || 5;
+        let charLength = event.charLength || 0;
+        if (!charLength) {
+          const match = text.slice(charIndex).match(/^\S+/);
+          charLength = match ? match[0].length : 5;
+        }
         const word = text.slice(charIndex, charIndex + charLength);
         lipSyncManager.onBoundary(word);
+
+        if (currentSpeechInfoRef.current) {
+          currentSpeechInfoRef.current.charIndex = charIndex;
+        }
+
+        setSubtitleState((prev) => ({
+          ...prev,
+          isActive: true,
+          text,
+          charIndex,
+          currentWord: word,
+        }));
       };
 
       utterance.onend = () => {
+        if (currentSpeechInfoRef.current?.msgId === msgId) {
+          currentSpeechInfoRef.current = null;
+        }
         setCurrentlySpeakingMsgId(null);
         lipSyncManager.endSpeech();
+        setSubtitleState((prev) => ({
+          ...prev,
+          isActive: false,
+          charIndex: text.length,
+        }));
       };
       utterance.onerror = () => {
+        if (currentSpeechInfoRef.current?.msgId === msgId) {
+          currentSpeechInfoRef.current = null;
+        }
         setCurrentlySpeakingMsgId(null);
         lipSyncManager.endSpeech();
+        setSubtitleState((prev) => ({
+          ...prev,
+          isActive: false,
+        }));
       };
 
       window.speechSynthesis.speak(utterance);
@@ -203,11 +277,283 @@ export default function App() {
     [isSoundActive]
   );
 
+  // Play pain sounds via current voice bank when 3D model is clicked,
+  // pausing the whole voice synthesis until the pain sound is complete.
+  const handleModelClick = useCallback(
+    async (hitRegion: 'head' | 'chest' | 'stomach' | 'skirt' | 'legs') => {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+      if (!isSoundActive) return;
+
+      // Guard against rapid duplicate triggers
+      if (isPainSoundActiveRef.current) return;
+      isPainSoundActiveRef.current = true;
+      setIsPainSoundActive(true);
+
+      if (pausedSpeechResumeTimeoutRef.current) {
+        clearTimeout(pausedSpeechResumeTimeoutRef.current);
+      }
+
+      // Check if an assistant message is currently speaking and record remaining portion to resume after pain sound
+      let pausedSpeech: { msgId: string; remainingText: string } | null = null;
+      if (currentSpeechInfoRef.current && currentlySpeakingMsgId) {
+        const { msgId, text, charIndex } = currentSpeechInfoRef.current;
+        const remaining = text.slice(charIndex).trim();
+        if (remaining.length > 5) {
+          pausedSpeech = { msgId, remainingText: remaining };
+        }
+      }
+
+      // Pause/cancel ongoing voice synthesis to clear audio channel for the pain sound
+      window.speechSynthesis.cancel();
+      lipSyncManager.endSpeech();
+
+      // Retrieve current voice from persona voice bank
+      const voice = await waitForPersonaVoice(VOICE_CONFIG.waitVoiceTimeoutMs);
+      if (!voice) {
+        isPainSoundActiveRef.current = false;
+        setIsPainSoundActive(false);
+        return;
+      }
+
+      // Special expressive pain words and phrases
+      const PAIN_SOUNDS_BY_REGION: Record<string, string[]> = {
+        head: ['Ouch! My head...', 'Ow! Watch out!', 'Owie! That hurts!'],
+        chest: ["Kyaa! That hurts!", "Eek! Don't do that!", 'Ouch! Cut it out!'],
+        stomach: ['Ugh... oof!', 'Ouchie!', 'Ngh... stop!'],
+        skirt: ['Kyaa! No!', 'Eek! What are you doing?!', 'Ouch! Hey!'],
+        legs: ['Ow, ow, ow!', 'Ouch! That stings!', 'Owie!'],
+      };
+
+      const regionList = PAIN_SOUNDS_BY_REGION[hitRegion] || ['Ouch!', 'Kyaa!', 'Owie!', 'Ow!'];
+      const painPhrase = regionList[Math.floor(Math.random() * regionList.length)];
+
+      lipSyncManager.startSpeech(painPhrase);
+      setSubtitleState({
+        isActive: userSettings.visualSubtitles !== false,
+        text: painPhrase,
+        charIndex: 0,
+        currentWord: painPhrase,
+      });
+
+      const utterance = new SpeechSynthesisUtterance(painPhrase);
+      utterance.voice = voice;
+      utterance.pitch = Math.min(2.0, VOICE_CONFIG.pitch * 1.25);
+      utterance.rate = Math.min(2.0, VOICE_CONFIG.rate * 1.2);
+
+      utterance.onboundary = (e) => {
+        const charIndex = e.charIndex || 0;
+        const word = painPhrase.slice(charIndex);
+        lipSyncManager.onBoundary(word);
+      };
+
+      const finishPainSound = () => {
+        isPainSoundActiveRef.current = false;
+        setIsPainSoundActive(false);
+        lipSyncManager.endSpeech();
+
+        // If there was an assistant message interrupted, resume speaking the remaining text
+        if (pausedSpeech && isSoundActive) {
+          pausedSpeechResumeTimeoutRef.current = setTimeout(() => {
+            speakAssistantMessage(pausedSpeech.msgId, pausedSpeech.remainingText, true);
+          }, 350);
+        } else {
+          setSubtitleState((prev) => ({ ...prev, isActive: false }));
+        }
+      };
+
+      utterance.onend = finishPainSound;
+      utterance.onerror = finishPainSound;
+
+      window.speechSynthesis.speak(utterance);
+    },
+    [isSoundActive, currentlySpeakingMsgId, userSettings.visualSubtitles, speakAssistantMessage]
+  );
+
+  // Streaming speech synthesis state for real-time 3D voice reactions
+  const streamSpeechStateRef = useRef<{
+    msgId: string;
+    queuedCharIndex: number;
+    activeUtteranceCount: number;
+    isStreamComplete: boolean;
+    fullText: string;
+    isProcessing: boolean;
+  } | null>(null);
+
+  const processStreamingSpeechQueue = useCallback(async () => {
+    const state = streamSpeechStateRef.current;
+    if (!state || state.isProcessing) return;
+    if (!isSoundActive || isPainSoundActiveRef.current) return;
+
+    state.isProcessing = true;
+
+    try {
+      while (true) {
+        if (!streamSpeechStateRef.current || isPainSoundActiveRef.current || !isSoundActive) {
+          break;
+        }
+
+        const unqueued = state.fullText.slice(state.queuedCharIndex);
+        if (!unqueued || unqueued.trim().length === 0) {
+          break;
+        }
+
+        let chunkToSpeak = '';
+        let advanceLen = 0;
+
+        if (state.isStreamComplete) {
+          // Stream is finished: consume all remaining text
+          const trimmed = unqueued.trim();
+          if (trimmed.length > 0) {
+            chunkToSpeak = trimmed;
+            advanceLen = unqueued.length;
+          }
+        } else {
+          // Sentence boundaries: . ! ? or newline
+          const sentenceMatch = unqueued.match(/^([\s\S]*?[.!?\n]+)(\s+|$)/);
+          if (sentenceMatch) {
+            chunkToSpeak = sentenceMatch[1].trim();
+            advanceLen = sentenceMatch[0].length;
+          } else if (unqueued.length > 35) {
+            // Clause boundaries for longer clauses: , ; : or em-dash
+            const clauseMatch = unqueued.match(/^([\s\S]*?[,;:\u2014]+)(\s+|$)/);
+            if (clauseMatch) {
+              chunkToSpeak = clauseMatch[1].trim();
+              advanceLen = clauseMatch[0].length;
+            } else if (unqueued.length > 55) {
+              // Whitespace boundary if no punctuation is found in 55 chars
+              const wordMatch = unqueued.match(/^([\s\S]*?\s+)/);
+              if (wordMatch) {
+                chunkToSpeak = wordMatch[1].trim();
+                advanceLen = wordMatch[0].length;
+              }
+            }
+          }
+        }
+
+        if (!chunkToSpeak || advanceLen === 0) {
+          break;
+        }
+
+        state.queuedCharIndex += advanceLen;
+
+        const voice = await waitForPersonaVoice(VOICE_CONFIG.waitVoiceTimeoutMs);
+        if (!voice || !isSoundActive || isPainSoundActiveRef.current || !streamSpeechStateRef.current) {
+          break;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(chunkToSpeak);
+        utterance.pitch = VOICE_CONFIG.pitch;
+        utterance.rate = VOICE_CONFIG.rate;
+        utterance.voice = voice;
+
+        state.activeUtteranceCount++;
+
+        utterance.onstart = () => {
+          setCurrentlySpeakingMsgId(state.msgId);
+          lipSyncManager.startSpeech(chunkToSpeak);
+          setSubtitleState({
+            isActive: userSettings.visualSubtitles !== false,
+            text: chunkToSpeak,
+            charIndex: 0,
+            currentWord: chunkToSpeak.split(/\s+/)[0] || '',
+          });
+        };
+
+        utterance.onboundary = (event) => {
+          const charIndex = event.charIndex || 0;
+          let charLength = event.charLength || 0;
+          if (!charLength) {
+            const m = chunkToSpeak.slice(charIndex).match(/^\S+/);
+            charLength = m ? m[0].length : 5;
+          }
+          const word = chunkToSpeak.slice(charIndex, charIndex + charLength);
+          lipSyncManager.onBoundary(word);
+
+          if (currentSpeechInfoRef.current) {
+            currentSpeechInfoRef.current.charIndex = state.queuedCharIndex;
+          }
+
+          setSubtitleState((prev) => ({
+            ...prev,
+            isActive: userSettings.visualSubtitles !== false,
+            text: chunkToSpeak,
+            charIndex,
+            currentWord: word,
+          }));
+        };
+
+        const handleChunkEnd = () => {
+          if (!streamSpeechStateRef.current) return;
+          const curState = streamSpeechStateRef.current;
+          curState.activeUtteranceCount = Math.max(0, curState.activeUtteranceCount - 1);
+
+          if (
+            curState.activeUtteranceCount === 0 &&
+            curState.isStreamComplete &&
+            curState.queuedCharIndex >= curState.fullText.length
+          ) {
+            setCurrentlySpeakingMsgId(null);
+            lipSyncManager.endSpeech();
+            currentSpeechInfoRef.current = null;
+            setSubtitleState((prev) => ({
+              ...prev,
+              isActive: false,
+              charIndex: prev.text.length,
+            }));
+            streamSpeechStateRef.current = null;
+          }
+        };
+
+        utterance.onend = handleChunkEnd;
+        utterance.onerror = handleChunkEnd;
+
+        window.speechSynthesis.speak(utterance);
+      }
+    } finally {
+      if (streamSpeechStateRef.current) {
+        streamSpeechStateRef.current.isProcessing = false;
+      }
+    }
+  }, [isSoundActive, userSettings.visualSubtitles]);
+
+  // Queue streaming speech chunks as tokens arrive from the LLM
+  const queueStreamingSpeechChunk = useCallback(
+    (msgId: string, fullText: string, isFinal = false) => {
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+      if (!isSoundActive || isPainSoundActiveRef.current) return;
+
+      if (!streamSpeechStateRef.current || streamSpeechStateRef.current.msgId !== msgId) {
+        window.speechSynthesis.cancel();
+        streamSpeechStateRef.current = {
+          msgId,
+          queuedCharIndex: 0,
+          activeUtteranceCount: 0,
+          isStreamComplete: false,
+          fullText: '',
+          isProcessing: false,
+        };
+      }
+
+      const state = streamSpeechStateRef.current;
+      state.fullText = fullText;
+      if (isFinal) {
+        state.isStreamComplete = true;
+      }
+
+      processStreamingSpeechQueue();
+    },
+    [isSoundActive, processStreamingSpeechQueue]
+  );
+
   const handleToggleSpeak = (msgId: string, content: string) => {
     if (currentlySpeakingMsgId === msgId) {
+      currentSpeechInfoRef.current = null;
+      streamSpeechStateRef.current = null;
+      if (pausedSpeechResumeTimeoutRef.current) clearTimeout(pausedSpeechResumeTimeoutRef.current);
       window.speechSynthesis?.cancel();
       setCurrentlySpeakingMsgId(null);
       lipSyncManager.endSpeech();
+      setSubtitleState((prev) => ({ ...prev, isActive: false }));
     } else {
       speakAssistantMessage(msgId, content);
     }
@@ -503,8 +849,11 @@ export default function App() {
   // ----------------------------------------------------
   const handleNewChat = () => {
     if (isGenerating) stopCurrentGeneration();
+    currentSpeechInfoRef.current = null;
+    if (pausedSpeechResumeTimeoutRef.current) clearTimeout(pausedSpeechResumeTimeoutRef.current);
     window.speechSynthesis?.cancel();
     setCurrentlySpeakingMsgId(null);
+    setSubtitleState((prev) => ({ ...prev, isActive: false }));
     const newConv: Conversation = {
       id: `conv_${Date.now()}`,
       title: 'Direct Message',
@@ -524,8 +873,11 @@ export default function App() {
 
   const handleSelectConversation = (id: string) => {
     if (isGenerating) stopCurrentGeneration();
+    currentSpeechInfoRef.current = null;
+    if (pausedSpeechResumeTimeoutRef.current) clearTimeout(pausedSpeechResumeTimeoutRef.current);
     window.speechSynthesis?.cancel();
     setCurrentlySpeakingMsgId(null);
+    setSubtitleState((prev) => ({ ...prev, isActive: false }));
     setActiveConvId(id);
     saveActiveConversationId(id);
     setStreamingText('');
@@ -578,9 +930,13 @@ export default function App() {
     isGeneratingRef.current = false;
     setIsGenerating(false);
 
+    currentSpeechInfoRef.current = null;
+    streamSpeechStateRef.current = null;
+    if (pausedSpeechResumeTimeoutRef.current) clearTimeout(pausedSpeechResumeTimeoutRef.current);
     window.speechSynthesis?.cancel();
     setCurrentlySpeakingMsgId(null);
     lipSyncManager.endSpeech();
+    setSubtitleState((prev) => ({ ...prev, isActive: false }));
 
     // Preserve the partial message generated so far as a completed message
     const partialText = streamingTextRef.current.trim();
@@ -614,10 +970,6 @@ export default function App() {
       });
 
       refreshCacheStatuses();
-
-      if (isSoundActive) {
-        speakAssistantMessage(stoppedAssistantMessage.id, partialText);
-      }
     }
 
     setStreamingText('');
@@ -675,6 +1027,8 @@ export default function App() {
       statusText: 'Formulating reply...',
     }));
 
+    const assistantMsgId = `msg_asst_${Date.now()}`;
+
     try {
       const assistantText = await streamPersonaResponse({
         model: activeModel,
@@ -688,6 +1042,11 @@ export default function App() {
           if (!hasPlayedReceiveAudio.current && isSoundActive) {
             soundManager.playReceive();
             hasPlayedReceiveAudio.current = true;
+          }
+
+          // Let 3D mode AI access real-time message text as soon as it begins to arrive to reduce delay
+          if (isSoundActive) {
+            queueStreamingSpeechChunk(assistantMsgId, fullText, false);
           }
         },
         onTelemetry: (stats) => {
@@ -713,8 +1072,13 @@ export default function App() {
         return;
       }
 
+      // Finalize any remaining unqueued text for real-time speech
+      if (isSoundActive) {
+        queueStreamingSpeechChunk(assistantMsgId, assistantText, true);
+      }
+
       const assistantMessage: Message = {
-        id: `msg_asst_${Date.now()}`,
+        id: assistantMsgId,
         role: 'assistant',
         content: assistantText,
         timestamp: Date.now(),
@@ -728,9 +1092,6 @@ export default function App() {
       streamingTextRef.current = '';
       setDownloadProgress(null);
       refreshCacheStatuses();
-
-      // Automatically speak out assistant message synced to its speaker button / 3D thought bubble
-      speakAssistantMessage(assistantMessage.id, assistantText);
     } catch (err: unknown) {
       if (!isGeneratingRef.current) {
         return;
@@ -830,6 +1191,7 @@ export default function App() {
     if (newPartial.soundEffects === false && !is3DMode) {
       window.speechSynthesis?.cancel();
       setCurrentlySpeakingMsgId(null);
+      setSubtitleState((prev) => ({ ...prev, isActive: false }));
     }
     setUserSettings((prev) => {
       const updated = { ...prev, ...newPartial };
@@ -843,6 +1205,7 @@ export default function App() {
     if (!nextVal && !is3DMode) {
       window.speechSynthesis?.cancel();
       setCurrentlySpeakingMsgId(null);
+      setSubtitleState((prev) => ({ ...prev, isActive: false }));
     }
     handleUpdateSettings({ soundEffects: nextVal });
   };
@@ -899,26 +1262,55 @@ export default function App() {
         )}
 
         {/* Central Display: 3D VRM Mode OR Message Thread Canvas */}
-        {is3DMode ? (
-          <VRMCanvas
-            isSpeaking={currentlySpeakingMsgId !== null}
-          />
-        ) : (
-          <MessageList
-            messages={currentConversation ? currentConversation.messages : []}
-            isGenerating={isGenerating}
-            streamingText={streamingText}
-            activeModel={activeModel}
-            onSelectStarter={handleSendMessage}
-            onRetryUserMessage={handleRetryUserMessage}
-            onEditUserMessage={handleEditUserMessage}
-            currentlySpeakingId={currentlySpeakingMsgId}
-            onToggleSpeak={handleToggleSpeak}
-            onOpenProfile={() => setIsProfileOpen(true)}
-            searchQuery={searchQuery}
-            currentMatchMessageId={searchMatches[currentMatchIndex] || null}
-          />
-        )}
+        <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
+          {/* 3D VRM Canvas: Loaded behind the scenes from app startup, active when is3DMode */}
+          <div
+            className={`absolute inset-0 transition-opacity duration-300 ${
+              is3DMode ? 'opacity-100 pointer-events-auto z-10' : 'opacity-0 pointer-events-none -z-10'
+            }`}
+          >
+            <VRMCanvas
+              isSpeaking={currentlySpeakingMsgId !== null}
+              onModelClick={handleModelClick}
+              isPainSoundPlaying={isPainSoundActive}
+            />
+          </div>
+
+          {/* Message Thread Canvas */}
+          <div
+            className={`absolute inset-0 flex flex-col transition-opacity duration-300 ${
+              !is3DMode ? 'opacity-100 pointer-events-auto z-10' : 'opacity-0 pointer-events-none -z-10'
+            }`}
+          >
+            <MessageList
+              messages={currentConversation ? currentConversation.messages : []}
+              isGenerating={isGenerating}
+              streamingText={streamingText}
+              activeModel={activeModel}
+              onSelectStarter={handleSendMessage}
+              onRetryUserMessage={handleRetryUserMessage}
+              onEditUserMessage={handleEditUserMessage}
+              currentlySpeakingId={currentlySpeakingMsgId}
+              onToggleSpeak={handleToggleSpeak}
+              onOpenProfile={() => setIsProfileOpen(true)}
+              searchQuery={searchQuery}
+              currentMatchMessageId={searchMatches[currentMatchIndex] || null}
+            />
+          </div>
+
+          {/* Subtitle-like system when 3D mode is enabled: every word spoken aloud is shown above the chat input panel in front of the 3D model */}
+          {is3DMode && userSettings.visualSubtitles !== false && (
+            <div className="absolute bottom-2 inset-x-0 z-30 flex justify-center pointer-events-none">
+              <VRMSubtitles
+                isActive={subtitleState.isActive}
+                text={subtitleState.text}
+                charIndex={subtitleState.charIndex}
+                currentWord={subtitleState.currentWord}
+                onDismiss={() => setSubtitleState((prev) => ({ ...prev, isActive: false }))}
+              />
+            </div>
+          )}
+        </div>
 
         {/* Server Issue Fallback Notification (Above Status Bar) */}
         {serverFallbackNotice && (

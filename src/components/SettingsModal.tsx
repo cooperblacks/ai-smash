@@ -146,13 +146,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
                 <button
                   onClick={() => onUpdateSettings({ soundEffects: !userSettings.soundEffects })}
-                  className={`w-10 h-6 rounded-full transition-colors relative ${
+                  className={`w-10 h-6 rounded-full transition-colors relative cursor-pointer ${
                     userSettings.soundEffects ? 'bg-neutral-900 dark:bg-sky-500' : 'bg-neutral-200 dark:bg-neutral-700'
                   }`}
                 >
                   <span
                     className={`block w-4 h-4 rounded-full bg-white transition-transform absolute top-1 left-1 shadow-xs ${
                       userSettings.soundEffects ? 'translate-x-4' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-black/[0.05] dark:border-white/[0.06]">
+                <div>
+                  <span className="text-xs text-neutral-800 dark:text-neutral-200 block font-medium">Visual Subtitles</span>
+                  <span className="text-[11px] text-neutral-500 dark:text-neutral-400">(3D Mode) Show what {AI_PROFILE.name} is speaking</span>
+                </div>
+                <button
+                  onClick={() => onUpdateSettings({ visualSubtitles: userSettings.visualSubtitles === false ? true : false })}
+                  className={`w-10 h-6 rounded-full transition-colors relative cursor-pointer ${
+                    userSettings.visualSubtitles !== false ? 'bg-neutral-900 dark:bg-sky-500' : 'bg-neutral-200 dark:bg-neutral-700'
+                  }`}
+                >
+                  <span
+                    className={`block w-4 h-4 rounded-full bg-white transition-transform absolute top-1 left-1 shadow-xs ${
+                      userSettings.visualSubtitles !== false ? 'translate-x-4' : ''
                     }`}
                   />
                 </button>

@@ -47,15 +47,16 @@ export function saveActiveConversationId(id: string): void {
 export function loadUserSettings(): UserSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { ...DEFAULT_USER_SETTINGS, soundEffects: true };
+    if (!raw) return { ...DEFAULT_USER_SETTINGS, soundEffects: true, visualSubtitles: true };
     const parsed = JSON.parse(raw);
     return {
       ...DEFAULT_USER_SETTINGS,
       ...parsed,
       soundEffects: parsed.soundEffects !== undefined ? Boolean(parsed.soundEffects) : true,
+      visualSubtitles: parsed.visualSubtitles !== undefined ? Boolean(parsed.visualSubtitles) : true,
     };
   } catch {
-    return { ...DEFAULT_USER_SETTINGS, soundEffects: true };
+    return { ...DEFAULT_USER_SETTINGS, soundEffects: true, visualSubtitles: true };
   }
 }
 
