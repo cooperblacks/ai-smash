@@ -2,6 +2,10 @@
 
 > A private, responsive conversational platform combining in-browser Small Language Models (SLMs), cloud AI endpoints, and an interactive 3D humanoid avatar with full-body physics.
 
+![](https://muxai.vercel.app/aismash_banner.png)
+
+based on a derivative of the [MuxAI](https://github.com/muxai/muxai-platform) platform.
+
 ---
 
 ## 🏷️ Tech Stack & Concepts
