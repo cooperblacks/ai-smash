@@ -374,15 +374,13 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     // Speech facing factor
     let speechFacingFactor = 0;
 
-    // Body continuous rotation holding & auto-reset dynamics
+    // Simplified v1-style body continuous rotation holding & auto-reset dynamics
     let isHoldingOnBody = false;
     let lastClientX = 0;
     let targetBodyRotationY = 0;
     let currentBodyRotationY = 0;
-    let prevBodyRotationY = 0;
-    let smoothedAngularVelocity = 0;
 
-    // Physical impact impulse parameters
+    // Physical impact impulse parameters (Region click jolts)
     let clickImpulsePitch = 0;
     let clickImpulseVelocityPitch = 0;
     let clickImpulseRoll = 0;
@@ -421,7 +419,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           mixerRef.current.update(delta);
         }
 
-        // Damped Spring Physics for Physical Impact
+        // Damped Spring Physics for Physical Impact Jolts
         const springK = 140.0;
         const springDamping = 16.0;
 
@@ -453,24 +451,21 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           hitExpressionHappy = Math.max(0, hitExpressionHappy - delta * 3.5);
         }
 
-        // Horizontal rotation auto-reset logic:
-        // As soon as user releases press-hold, spring targetBodyRotationY smoothly back to 0
+        // ----------------------------------------------------
+        // Simplified v1 Rotational Logic:
+        // Smooth lerp reset to 0 when not holding
+        // ----------------------------------------------------
         if (!isHoldingOnBody) {
-          targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, 0, delta * 5.5);
+          targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, 0, delta * 3.8);
         }
 
         currentBodyRotationY = THREE.MathUtils.lerp(currentBodyRotationY, targetBodyRotationY, delta * 12.0);
 
-        const rotDelta = currentBodyRotationY - prevBodyRotationY;
-        prevBodyRotationY = currentBodyRotationY;
-        const instantaneousAngularVel = delta > 0.0001 ? rotDelta / delta : 0;
-        smoothedAngularVelocity = THREE.MathUtils.lerp(smoothedAngularVelocity, instantaneousAngularVel, Math.min(delta * 12.0, 1.0));
-
-        // Maintain stable root position & apply rotation
+        // Apply position and rotation directly to scene
         vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
         vrm.scene.rotation.set(0, currentBodyRotationY, 0);
 
-        // Full Body Physical Skeletal Layer (Spine, Chest, Hips, Arms, Shoulders)
+        // Skeletal click impact layer (without angular momentum drag)
         const humanoid = vrm.humanoid;
         if (humanoid) {
           const spineNode = humanoid.getNormalizedBoneNode('spine');
@@ -484,66 +479,45 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           const leftLowerArmNode = humanoid.getNormalizedBoneNode('leftLowerArm');
           const rightLowerArmNode = humanoid.getNormalizedBoneNode('rightLowerArm');
 
-          // Spine & Chest torsional lag and click recoil
           if (spineNode) {
-            spineNode.rotation.y += -smoothedAngularVelocity * 0.14 + clickImpulseRoll * 0.25;
+            spineNode.rotation.y += clickImpulseRoll * 0.25;
             spineNode.rotation.x += clickImpulsePitch * 0.35;
           }
           if (chestNode) {
-            chestNode.rotation.y += -smoothedAngularVelocity * 0.20 + clickImpulseRoll * 0.35;
+            chestNode.rotation.y += clickImpulseRoll * 0.35;
             chestNode.rotation.x += clickImpulsePitch * 0.45;
-            chestNode.rotation.z += -smoothedAngularVelocity * 0.07 + clickImpulseRoll * 0.2;
+            chestNode.rotation.z += clickImpulseRoll * 0.2;
           }
           if (upperChestNode) {
-            upperChestNode.rotation.y += -smoothedAngularVelocity * 0.16 + clickImpulseRoll * 0.25;
+            upperChestNode.rotation.y += clickImpulseRoll * 0.25;
             upperChestNode.rotation.x += clickImpulsePitch * 0.25;
           }
 
-          // Hips weight shift and shock absorption
           if (hipsNode) {
             hipsNode.position.y += clickImpulseHipsY * 0.4;
-            hipsNode.position.x += -smoothedAngularVelocity * 0.012;
-            hipsNode.rotation.z += -smoothedAngularVelocity * 0.035 + clickImpulseRoll * 0.15;
+            hipsNode.rotation.z += clickImpulseRoll * 0.15;
             hipsNode.rotation.x += clickImpulsePitch * 0.15;
           }
 
-          // Shoulders & Arms inertial swing and click impact jolt
-          const armInertiaY = -smoothedAngularVelocity * 0.28;
-          const armCentrifugal = Math.min(Math.abs(smoothedAngularVelocity) * 0.14, 0.28);
-
           if (leftShoulderNode && rightShoulderNode) {
-            leftShoulderNode.rotation.y += -smoothedAngularVelocity * 0.10 + clickImpulseRoll * 0.12;
-            rightShoulderNode.rotation.y += -smoothedAngularVelocity * 0.10 + clickImpulseRoll * 0.12;
+            leftShoulderNode.rotation.y += clickImpulseRoll * 0.12;
+            rightShoulderNode.rotation.y += clickImpulseRoll * 0.12;
             leftShoulderNode.rotation.z += clickImpulseArms * 0.08;
             rightShoulderNode.rotation.z -= clickImpulseArms * 0.08;
           }
 
           if (leftUpperArmNode && rightUpperArmNode) {
-            leftUpperArmNode.rotation.y += armInertiaY;
-            rightUpperArmNode.rotation.y += armInertiaY;
-            leftUpperArmNode.rotation.z += armCentrifugal + clickImpulseArms * 0.22;
-            rightUpperArmNode.rotation.z -= armCentrifugal + clickImpulseArms * 0.22;
+            leftUpperArmNode.rotation.z += clickImpulseArms * 0.22;
+            rightUpperArmNode.rotation.z -= clickImpulseArms * 0.22;
           }
 
           if (leftLowerArmNode && rightLowerArmNode) {
-            leftLowerArmNode.rotation.x += armCentrifugal * 0.4 + clickImpulseArms * 0.15;
-            rightLowerArmNode.rotation.x += armCentrifugal * 0.4 + clickImpulseArms * 0.15;
+            leftLowerArmNode.rotation.x += clickImpulseArms * 0.15;
+            rightLowerArmNode.rotation.x += clickImpulseArms * 0.15;
           }
         }
 
-        // Spring Bone Dynamic Force Injection (Hair, ribbons, skirts)
-        if (vrm.springBoneManager?.joints && Math.abs(smoothedAngularVelocity) > 0.04) {
-          const rotInertiaX = smoothedAngularVelocity * 0.007;
-          const rotCentrifugalZ = Math.abs(smoothedAngularVelocity) * 0.005;
-          vrm.springBoneManager.joints.forEach((joint: any) => {
-            if (joint._prevTail) {
-              joint._prevTail.x += rotInertiaX * delta;
-              joint._prevTail.z += rotCentrifugalZ * delta;
-            }
-          });
-        }
-
-        // Update VRM secondary physics
+        // Update VRM secondary physics (spring bones)
         vrm.update(delta);
 
         // Update LipSync & Viseme Engine
@@ -678,7 +652,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     window.addEventListener('resize', handleResize);
 
-    // 9. Pointer movement for gaze tracking & drag rotation
+    // 9. Pointer movement for gaze tracking & drag rotation (v1 rotational multiplier)
     const handlePointerMove = (e: PointerEvent) => {
       const rect = container.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -688,7 +662,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       if (isHoldingOnBody) {
         const deltaX = e.clientX - lastClientX;
         lastClientX = e.clientX;
-        targetBodyRotationY += deltaX * 0.012;
+        targetBodyRotationY += deltaX * 0.009;
       }
     };
 
