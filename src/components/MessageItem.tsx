@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Copy, Check, RotateCcw, Volume2, CheckCheck, Pencil } from 'lucide-react';
 import { Message } from '../types';
-import { AI_PROFILE } from '../constants';
+import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
 
 interface MessageItemProps {
   message: Message;
@@ -41,7 +41,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
+    setTimeout(() => setCopied(false), UI_CONFIG.copyNotificationDurationMs);
   };
 
   const handleSaveEdit = () => {
@@ -72,8 +72,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             key={index}
             className={`px-0.5 rounded-xs transition-all ${
               isCurrentSearchMatch
-                ? 'bg-amber-400 text-neutral-950 font-bold ring-2 ring-amber-500 shadow-xs'
-                : 'bg-amber-200 dark:bg-amber-500/40 text-neutral-900 dark:text-amber-200 font-medium'
+                ? THEME_COLORS.tokens.searchMarkCurrent
+                : THEME_COLORS.tokens.searchMarkOther
             }`}
           >
             {part}
@@ -97,7 +97,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           <button
             type="button"
             onClick={onOpenProfile}
-            className="w-8 h-8 rounded-full overflow-hidden ring-1 ring-black/10 dark:ring-white/10 shadow-xs hover:ring-2 hover:ring-amber-500/50 hover:scale-105 active:scale-95 transition-all cursor-pointer block"
+            className={`w-8 h-8 rounded-full overflow-hidden shadow-xs ${THEME_COLORS.tokens.avatarRing} hover:scale-105 active:scale-95 transition-all cursor-pointer block`}
             title={`View ${AI_PROFILE.name}'s Profile`}
           >
             <img
@@ -111,13 +111,13 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
       {/* Message Bubble & Content Container */}
       <div className={`flex flex-col max-w-[85%] sm:max-w-[75%] ${isUser ? 'items-end' : 'items-start'}`}>
-        {/* Timestamp header for Serafina */}
+        {/* Timestamp header for assistant */}
         {!isUser && (
           <div className="flex items-center gap-2 mb-1 text-xs">
             <button
               type="button"
               onClick={onOpenProfile}
-              className="font-semibold text-neutral-800 dark:text-neutral-200 hover:text-amber-600 dark:hover:text-amber-400 transition-colors cursor-pointer text-left"
+              className={`font-semibold text-neutral-800 dark:text-neutral-200 ${THEME_COLORS.tokens.accentTextHover} transition-colors cursor-pointer text-left`}
               title={`View ${AI_PROFILE.name}'s Profile`}
             >
               {AI_PROFILE.name}
@@ -130,11 +130,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
 
         {/* Message Container */}
         {isEditing ? (
-          <div className="w-full min-w-[260px] p-2 rounded-2xl bg-white dark:bg-[#1a1c28] border border-neutral-300 dark:border-neutral-700 shadow-md">
+          <div className={`w-full min-w-[260px] p-2 rounded-2xl ${THEME_COLORS.tokens.modalSectionCard} shadow-md`}>
             <textarea
               value={editText}
               onChange={(e) => setEditText(e.target.value)}
-              className="w-full p-2 text-sm text-neutral-900 dark:text-white bg-neutral-50 dark:bg-[#13151f] rounded-xl border border-neutral-200 dark:border-neutral-700 focus:outline-none focus:border-amber-400 resize-none"
+              className={`w-full p-2 text-sm ${THEME_COLORS.tokens.modalInputBg} rounded-xl focus:outline-none resize-none`}
               rows={3}
             />
             <div className="flex items-center justify-end gap-1.5 mt-2">
@@ -149,7 +149,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               </button>
               <button
                 onClick={handleSaveEdit}
-                className="px-3 py-1 rounded-lg text-xs bg-neutral-900 dark:bg-amber-500 dark:text-neutral-950 text-white font-medium hover:bg-neutral-800 dark:hover:bg-amber-600 transition-colors"
+                className={`px-3 py-1 rounded-lg text-xs ${THEME_COLORS.tokens.modalPrimaryButton} transition-colors`}
               >
                 Save &amp; Resend
               </button>
@@ -159,8 +159,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           <div
             className={`relative px-4 py-2.5 rounded-2xl text-[14.5px] leading-relaxed transition-all ${
               isUser
-                ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 font-normal rounded-tr-sm shadow-xs selection:bg-amber-400 selection:text-black'
-                : 'bg-white text-neutral-800 dark:bg-[#1c1f2e] dark:text-neutral-100 rounded-tl-sm border border-black/[0.08] dark:border-white/[0.08] shadow-xs'
+                ? THEME_COLORS.tokens.userBubble
+                : THEME_COLORS.tokens.assistantBubble
             }`}
           >
             {/* Text Content with highlighted search matches */}
@@ -196,7 +196,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1 rounded-md hover:bg-neutral-200/70 dark:hover:bg-white/[0.08] hover:text-neutral-700 dark:hover:text-neutral-200 text-xs transition-colors"
               title="Copy message"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.successText}`} /> : <Copy className="w-3.5 h-3.5" />}
             </button>
 
             {/* Edit Button */}
@@ -218,7 +218,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               className="p-1 rounded-md hover:bg-neutral-200/70 dark:hover:bg-white/[0.08] hover:text-neutral-700 dark:hover:text-neutral-200 text-xs transition-colors"
               title="Copy message"
             >
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? <Check className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.successText}`} /> : <Copy className="w-3.5 h-3.5" />}
             </button>
 
             {/* Speaker Button synchronized with active voice narration */}
@@ -226,15 +226,15 @@ export const MessageItem: React.FC<MessageItemProps> = ({
               onClick={() => onToggleSpeak?.(message.id, message.content)}
               className={`p-1 rounded-md text-xs transition-colors flex items-center gap-1 ${
                 isSpeaking
-                  ? 'text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60 ring-1 ring-amber-300 dark:ring-amber-700'
+                  ? THEME_COLORS.tokens.activeSpeakingBadge
                   : 'hover:bg-neutral-200/70 dark:hover:bg-white/[0.08] hover:text-neutral-700 dark:hover:text-neutral-200'
               }`}
               title={isSpeaking ? 'Stop narration' : `Listen to ${AI_PROFILE.name}`}
             >
               {isSpeaking ? (
                 <>
-                  <Volume2 className="w-3.5 h-3.5 animate-pulse text-amber-600 dark:text-amber-400" />
-                  <span className="text-[10px] font-mono font-medium text-amber-800 dark:text-amber-300">Playing</span>
+                  <Volume2 className={`w-3.5 h-3.5 animate-pulse ${THEME_COLORS.tokens.accentText}`} />
+                  <span className={`text-[10px] font-mono font-medium ${THEME_COLORS.tokens.accentText}`}>Playing</span>
                 </>
               ) : (
                 <Volume2 className="w-3.5 h-3.5" />

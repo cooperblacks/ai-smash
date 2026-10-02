@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, HardDrive, Check, Sparkles, ArrowDownCircle, Cloud, Globe, Edit2, Youtube, Download } from 'lucide-react';
 import { ModelSpec, ModelCacheInfo } from '../types';
 import { AVAILABLE_MODELS } from '../lib/models';
-import { OLLAMA_CONFIG } from '../constants';
+import { OLLAMA_CONFIG, THEME_COLORS } from '../constants';
 import { pingOllama } from '../lib/ollama';
 import { loadCustomOllamaUrl, saveCustomOllamaUrl } from '../lib/storage';
 
@@ -128,15 +128,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen(!isOpen)}
-        className="group flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-100 hover:bg-neutral-200/80 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] border border-black/[0.06] dark:border-white/[0.08] active:scale-95 text-xs text-neutral-800 dark:text-neutral-200 transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs"
+        className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-full ${THEME_COLORS.tokens.dropdownTrigger} border active:scale-95 text-xs transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs`}
         title="Switch Model"
       >
         {isOllamaActive ? (
-          <Cloud className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 group-hover:scale-105 transition-transform" />
+          <Cloud className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.successText} group-hover:scale-105 transition-transform`} />
         ) : isCurrentDownloaded ? (
-          <HardDrive className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 group-hover:scale-105 transition-transform" />
+          <HardDrive className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.successText} group-hover:scale-105 transition-transform`} />
         ) : (
-          <ArrowDownCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-105 transition-transform" />
+          <ArrowDownCircle className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.accentText} group-hover:scale-105 transition-transform`} />
         )}
 
         <span className="font-medium tracking-tight truncate max-w-[120px] sm:max-w-[160px]">
@@ -152,10 +152,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 w-80 sm:w-92 max-h-[420px] overflow-y-auto rounded-2xl bg-white dark:bg-[#161822] border border-black/10 dark:border-white/[0.1] shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+        <div className={`absolute bottom-full left-0 mb-2 w-80 sm:w-92 max-h-[420px] overflow-y-auto rounded-2xl ${THEME_COLORS.tokens.dropdownBg} shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100`}>
           <div className="px-3 py-2 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <Sparkles className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.accentText}`} />
               Select AI model
             </span>
           </div>
@@ -178,10 +178,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   key={model.id}
                   className={`w-full rounded-xl transition-all border ${
                     isSelected
-                      ? 'bg-amber-50/80 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700/60'
+                      ? THEME_COLORS.tokens.dropdownItemActive
                       : isOptionDisabled
                       ? 'bg-neutral-50/50 dark:bg-white/[0.02] border-transparent opacity-65'
-                      : 'hover:bg-neutral-50 dark:hover:bg-white/[0.05] border-transparent'
+                      : THEME_COLORS.tokens.dropdownItemDefault
                   }`}
                 >
                   <button
@@ -210,7 +210,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       {isOllamaOption ? (
                         isOnline ? (
                           <div
-                            className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-600 dark:text-emerald-400"
+                            className={`w-7 h-7 rounded-lg ${THEME_COLORS.tokens.successIconBox} flex items-center justify-center`}
                             title="Ollama Server Online"
                           >
                             <Cloud className="w-4 h-4 fill-emerald-500/20" />
@@ -229,7 +229,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         )
                       ) : isDownloaded ? (
                         <div
-                          className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-600 dark:text-emerald-400"
+                          className={`w-7 h-7 rounded-lg ${THEME_COLORS.tokens.successIconBox} flex items-center justify-center`}
                           title="Offline Ready (Stored in Browser)"
                         >
                           <HardDrive className="w-4 h-4" />
@@ -250,7 +250,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         <span className="text-xs font-semibold truncate flex items-center gap-1.5 text-neutral-900 dark:text-white">
                           {model.name}
                           {model.isDefault && (
-                            <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 font-mono">
+                            <span className={`text-[9px] px-1 py-0.2 rounded ${THEME_COLORS.tokens.accentBadge}`}>
                               DEFAULT
                             </span>
                           )}
@@ -258,7 +258,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                             <span
                               className={`text-[9px] px-1 py-0.2 rounded font-mono font-medium ${
                                 isOnline
-                                  ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                  ? THEME_COLORS.tokens.successBadge
                                   : 'bg-neutral-200 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400'
                               }`}
                             >
@@ -301,7 +301,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     {/* Active Indicator Checkmark */}
                     {isSelected && (
                       <div className="shrink-0 self-center">
-                        <Check className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                        <Check className={`w-4 h-4 ${THEME_COLORS.tokens.accentText}`} />
                       </div>
                     )}
                   </button>
@@ -339,7 +339,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               e.stopPropagation();
                               handleSaveCustomUrl(e);
                             }}
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-neutral-900 dark:bg-amber-500 text-white dark:text-neutral-950 hover:bg-neutral-800 active:scale-95 transition-all cursor-pointer"
+                            className={`px-2.5 py-1 text-xs font-medium rounded-lg ${THEME_COLORS.tokens.modalPrimaryButton} active:scale-95 transition-all cursor-pointer`}
                           >
                             Save
                           </button>
@@ -366,7 +366,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               e.stopPropagation();
                               setIsEditingCustomUrl(true);
                             }}
-                            className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 hover:underline font-medium cursor-pointer"
+                            className={`flex items-center gap-1 text-xs ${THEME_COLORS.tokens.accentText} hover:underline font-medium cursor-pointer`}
                           >
                             <Edit2 className="w-3 h-3" />
                             <span>Edit URL</span>
@@ -396,7 +396,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                           className="flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[11px] font-medium bg-neutral-100 hover:bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 transition-colors shadow-xs active:scale-95 group cursor-pointer"
                           title="Download Google Colab / Jupyter Notebook (.ipynb)"
                         >
-                          <Download className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                          <Download className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.accentText} shrink-0 group-hover:scale-110 transition-transform`} />
                           <span>Download .ipynb</span>
                         </a>
                       </div>

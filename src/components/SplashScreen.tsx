@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { THEME_COLORS, SPLASH_CONFIG, UI_CONFIG } from '../constants';
 
 interface SplashScreenProps {
   isReady: boolean;
@@ -20,7 +21,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
       // Slight delay so the user experiences the smooth completion transition
       const timer = setTimeout(() => {
         setShouldFadeOut(true);
-      }, 350);
+      }, UI_CONFIG.splashCompletionDelayMs);
       return () => clearTimeout(timer);
     }
   }, [isReady, shouldFadeOut]);
@@ -31,7 +32,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
       const timer = setTimeout(() => {
         setIsRendered(false);
         onFadeComplete();
-      }, 700);
+      }, UI_CONFIG.splashFadeDurationMs);
       return () => clearTimeout(timer);
     }
   }, [shouldFadeOut, onFadeComplete]);
@@ -42,28 +43,28 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
     <div
       className={`fixed inset-0 z-50 flex flex-col justify-between items-center px-6 py-8 select-none transition-opacity duration-700 ease-out ${
         shouldFadeOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
-      } ${
-        theme === 'dark'
-          ? 'bg-[#0f1117] text-white'
-          : 'bg-[#f8f9fc] text-neutral-900'
-      }`}
+      } ${THEME_COLORS.tokens.appBg} ${THEME_COLORS.tokens.appText}`}
+      style={{
+        backgroundColor: theme === 'dark' ? THEME_COLORS.hex.bgDark : THEME_COLORS.hex.bgLight,
+        color: theme === 'dark' ? THEME_COLORS.hex.textDark : THEME_COLORS.hex.textLight,
+      }}
     >
       {/* Top Balanced Spacer */}
       <div className="h-10 w-full" />
 
-      {/* Centered Region: Logo, "MuxAI", and fast-spinning loader */}
+      {/* Centered Region: Logo, Title, and fast-spinning loader */}
       <div className="flex flex-col items-center justify-center text-center animate-in fade-in zoom-in-95 duration-500">
         <div className="relative group">
           <img
-            src="https://ai.mux8.com/logo0.png"
-            alt="MuxAI"
+            src={SPLASH_CONFIG.logoUrl}
+            alt={SPLASH_CONFIG.title}
             className="w-24 h-24 sm:w-28 sm:h-28 object-contain drop-shadow-xl transition-transform duration-300 group-hover:scale-105"
             draggable={false}
           />
         </div>
 
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mt-5 font-['Plus_Jakarta_Sans',sans-serif]">
-          MuxAI
+          {SPLASH_CONFIG.title}
         </h1>
 
         {/* Fast-spinning loader */}
@@ -74,7 +75,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
             aria-label="Loading assets"
           />
           <p className="text-xs font-mono text-neutral-400 dark:text-neutral-500 tracking-wide mt-1">
-            Initializing voice engine & consultant...
+            {SPLASH_CONFIG.subtitle}
           </p>
         </div>
       </div>
@@ -82,41 +83,19 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
       {/* Footer Links */}
       <footer className="w-full text-center text-xs text-neutral-500 dark:text-neutral-400 font-sans tracking-wide">
         <span className="opacity-80">Other links:</span>{' '}
-        <a
-          href="https://muxai.vercel.app"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium hover:text-amber-500 transition-colors underline-offset-2 hover:underline"
-        >
-          MuxAI
-        </a>
-        {' '}&bull;{' '}
-        <a
-          href="https://serafina.mux8.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium hover:text-amber-500 transition-colors underline-offset-2 hover:underline"
-        >
-          Serafina
-        </a>
-        {' '}&bull;{' '}
-        <a
-          href="https://mux8.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium hover:text-amber-500 transition-colors underline-offset-2 hover:underline"
-        >
-          HuanMux
-        </a>
-        {' '}&bull;{' '}
-        <a
-          href="https://senturisk.web.app"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium hover:text-amber-500 transition-colors underline-offset-2 hover:underline"
-        >
-          Senturisk
-        </a>
+        {SPLASH_CONFIG.footerLinks.map((link, idx) => (
+          <React.Fragment key={link.url}>
+            {idx > 0 && ' • '}
+            <a
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`font-medium ${THEME_COLORS.tokens.accentTextHover} transition-colors underline-offset-2 hover:underline`}
+            >
+              {link.label}
+            </a>
+          </React.Fragment>
+        ))}
       </footer>
     </div>
   );

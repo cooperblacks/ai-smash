@@ -43,7 +43,7 @@ class SoundEffects {
     }
   }
 
-  // Gentle low chime when Serafina's first token arrives
+  // Gentle low chime when assistant's first token arrives
   playReceive() {
     try {
       this.initCtx();
@@ -52,7 +52,7 @@ class SoundEffects {
       const gain = this.ctx.createGain();
 
       osc.type = 'sine';
-      // Low warm frequency matching Serafina's contralto
+      // Low warm frequency matching persona voice tone
       osc.frequency.setValueAtTime(320, this.ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(240, this.ctx.currentTime + 0.12);
 
@@ -79,34 +79,56 @@ function isLikelyMaleVoice(voice: SpeechSynthesisVoice): boolean {
   return VOICE_CONFIG.maleKeywords.some((kw) => name.includes(kw));
 }
 
+function isExcludedVoice(voice: SpeechSynthesisVoice): boolean {
+  const name = (voice.name || '').toLowerCase();
+  const lang = (voice.lang || '').toLowerCase();
+  return (
+    name.includes('russian') ||
+    name.includes('русский') ||
+    name.includes('ukrainian') ||
+    name.includes('україн') ||
+    lang.startsWith('ru') ||
+    lang.startsWith('uk')
+  );
+}
+
 function findVoiceFromList(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   if (!voices || voices.length === 0) return null;
 
-  // 1. Priority order queue sourced from VOICE_CONFIG.priorityQueue
+  // Filter out all male and excluded (Russian/Ukrainian) voices
+  const eligibleVoices = voices.filter((v) => !isLikelyMaleVoice(v) && !isExcludedVoice(v));
+  if (eligibleVoices.length === 0) return null;
+
+  // 1. Highest quality check: Prioritize modern neural, natural, enhanced, and premium female voices regardless of language
+  const qualityKeywords = ['natural', 'neural', 'enhanced', 'premium', 'high quality'];
+  for (const qk of qualityKeywords) {
+    const qualityMatch = eligibleVoices.find((v) => {
+      const name = (v.name || '').toLowerCase();
+      return name.includes(qk);
+    });
+    if (qualityMatch) return qualityMatch;
+  }
+
+  // 2. Priority order queue sourced from VOICE_CONFIG.priorityQueue
   for (const keyword of VOICE_CONFIG.priorityQueue) {
     const kw = keyword.toLowerCase();
-    const match = voices.find((v) => {
+    const match = eligibleVoices.find((v) => {
       const name = (v.name || '').toLowerCase();
       const lang = (v.lang || '').toLowerCase();
-      // Ensure we don't pick an explicitly male voice even if keyword matches
-      return (name.includes(kw) || lang.includes(kw)) && !isLikelyMaleVoice(v);
+      return name.includes(kw) || lang.includes(kw);
     });
     if (match) return match;
   }
 
-  // 2. Fallback: Universal female voice option sourced from VOICE_CONFIG.femaleKeywords
-  const universalFemale = voices.find((v) => {
+  // 3. Fallback: Universal female voice option sourced from VOICE_CONFIG.femaleKeywords
+  const universalFemale = eligibleVoices.find((v) => {
     const name = (v.name || '').toLowerCase();
-    return VOICE_CONFIG.femaleKeywords.some((kw) => name.includes(kw)) && !isLikelyMaleVoice(v);
+    return VOICE_CONFIG.femaleKeywords.some((kw) => name.includes(kw));
   });
   if (universalFemale) return universalFemale;
 
-  // 3. Fallback: Any English/General voice that is NOT male
-  const anyNonMale = voices.find((v) => !isLikelyMaleVoice(v));
-  if (anyNonMale) return anyNonMale;
-
-  // If only male voices exist in system, return null so we skip the male voice
-  return null;
+  // 4. Fallback: First eligible non-male, non-excluded voice
+  return eligibleVoices[0] || null;
 }
 
 // Prompt browser to initialize voices immediately
@@ -123,7 +145,7 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
  * then returns the preferred female voice from the priority queue.
  * Skips male voices completely.
  */
-export async function waitForSerafinaVoice(timeoutMs = 2500): Promise<SpeechSynthesisVoice | null> {
+export async function waitForPersonaVoice(timeoutMs = VOICE_CONFIG.preloadTimeoutMs): Promise<SpeechSynthesisVoice | null> {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
 
   const currentVoices = window.speechSynthesis.getVoices();
@@ -182,7 +204,7 @@ export async function waitForSerafinaVoice(timeoutMs = 2500): Promise<SpeechSynt
 /**
  * Synchronous voice resolver using currently cached voices.
  */
-export function getSerafinaVoice(): SpeechSynthesisVoice | null {
+export function getPersonaVoice(): SpeechSynthesisVoice | null {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
   const voices = window.speechSynthesis.getVoices();
   return findVoiceFromList(voices);

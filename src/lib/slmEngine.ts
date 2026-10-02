@@ -1,6 +1,7 @@
 import { pipeline, env, TextStreamer } from '@huggingface/transformers';
 import { ModelSpec, DownloadProgress, HardwareDevice, Message } from '../types';
-import { getPersonaPrompt, cleanSerafinaResponse } from './prompts';
+import { TOKEN_CONFIG, OLLAMA_CONFIG } from '../constants';
+import { getPersonaPrompt, cleanModelResponse } from './prompts';
 import { streamOllama } from './ollama';
 import { loadCustomOllamaUrl } from './storage';
 
@@ -36,6 +37,11 @@ export function isModelCurrentlyLoaded(modelId: string): boolean {
 
 export function getActiveModelId(): string | null {
   return activeModelId;
+}
+
+export function resetActiveGenerator(): void {
+  activeGenerator = null;
+  activeModelId = null;
 }
 
 /**
@@ -174,14 +180,14 @@ export async function loadModelPipeline(
 }
 
 /**
- * Stream conversational completion from Serafina
+ * Stream conversational completion from persona model
  */
-export async function streamSerafinaResponse({
+export async function streamPersonaResponse({
   model,
   history,
   userMessage,
   devicePref,
-  maxTokens = 512,
+  maxTokens = TOKEN_CONFIG.defaultTokens,
   onToken,
   onTelemetry,
   onProgress,
@@ -255,7 +261,7 @@ export async function streamSerafinaResponse({
               }
               tokenCount++;
               accumulatedText += data.text;
-              onToken(data.text, cleanSerafinaResponse(accumulatedText));
+              onToken(data.text, cleanModelResponse(accumulatedText));
 
               const now = performance.now();
               const elapsedSec = (now - startTime) / 1000;
@@ -275,7 +281,7 @@ export async function streamSerafinaResponse({
       }
     }
 
-    const cleanedFinal = cleanSerafinaResponse(accumulatedText);
+    const cleanedFinal = cleanModelResponse(accumulatedText);
     return cleanedFinal;
   }
 
@@ -283,7 +289,7 @@ export async function streamSerafinaResponse({
   if (model.family === 'ollama') {
     const endpointUrl = model.isCustomOllama
       ? loadCustomOllamaUrl()
-      : (model.endpointUrl || 'https://trout-egotism-decorator.ngrok-free.dev/');
+      : (model.endpointUrl || OLLAMA_CONFIG.muxAiEndpoint);
 
     const targetModel = model.detectedModel || model.customModel || '';
 
@@ -329,7 +335,7 @@ export async function streamSerafinaResponse({
       }
       tokenCount++;
       accumulatedText += piece;
-      onToken(piece, cleanSerafinaResponse(accumulatedText));
+      onToken(piece, cleanModelResponse(accumulatedText));
 
       const now = performance.now();
       const elapsedSec = (now - startTime) / 1000;
@@ -346,7 +352,7 @@ export async function streamSerafinaResponse({
 
   try {
     await generator(conversationMessages, {
-      max_new_tokens: Math.min(maxTokens || (model.isSmallModel ? 256 : 512), 2048),
+      max_new_tokens: Math.min(maxTokens || (model.isSmallModel ? 256 : TOKEN_CONFIG.defaultTokens), TOKEN_CONFIG.sliderMax),
       temperature: 0.75,
       top_p: 0.9,
       do_sample: true,
@@ -361,7 +367,7 @@ export async function streamSerafinaResponse({
     }
   }
 
-  const finalResult = cleanSerafinaResponse(accumulatedText);
+  const finalResult = cleanModelResponse(accumulatedText);
   return finalResult;
 }
 

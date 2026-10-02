@@ -1,27 +1,29 @@
-import { SYSTEM_PROMPTS } from '../constants';
+import { SYSTEM_PROMPTS, AI_PROFILE } from '../constants';
 
 /**
- * Serafina persona definition sourced from central constants.
+ * Persona definition sourced from central constants.
  */
-export const SERAFINA_FULL_PROMPT = SYSTEM_PROMPTS.full;
-export const SERAFINA_ABRIDGED_PROMPT = SYSTEM_PROMPTS.abridged;
+export const PERSONA_FULL_PROMPT = SYSTEM_PROMPTS.full;
+export const PERSONA_ABRIDGED_PROMPT = SYSTEM_PROMPTS.abridged;
 
 /**
  * Returns the best prompt formulation depending on model size and capabilities.
  */
 export function getPersonaPrompt(isSmallModel: boolean): string {
-  return isSmallModel ? SERAFINA_ABRIDGED_PROMPT : SERAFINA_FULL_PROMPT;
+  return isSmallModel ? PERSONA_ABRIDGED_PROMPT : PERSONA_FULL_PROMPT;
 }
 
 /**
  * Filter and post-process response to ensure no asterisks or leaked system instructions slip through.
  */
-export function cleanSerafinaResponse(rawText: string): string {
+export function cleanModelResponse(rawText: string): string {
   if (!rawText) return '';
   let cleaned = rawText;
 
-  // Strip accidental assistant tags or role indicators often outputted by SLMs
-  cleaned = cleaned.replace(/^(assistant|model|seraphina|serafina):\s*/i, '');
+  // Strip accidental assistant tags or role indicators dynamically matching configured name
+  const namePattern = [AI_PROFILE.name, AI_PROFILE.alternateName].filter(Boolean).join('|');
+  const prefixRegex = new RegExp(`^(assistant|model|${namePattern}):\\s*`, 'i');
+  cleaned = cleaned.replace(prefixRegex, '');
   
   // Remove markdown action roleplay tags (*smiles*, *leans back*, (chuckles), etc.)
   cleaned = cleaned.replace(/\*[^*]*\*/g, '');

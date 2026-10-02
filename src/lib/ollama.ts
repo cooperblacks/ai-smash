@@ -1,6 +1,6 @@
 import { Message } from '../types';
-import { SYSTEM_PROMPTS } from '../constants';
-import { cleanSerafinaResponse } from './prompts';
+import { SYSTEM_PROMPTS, OLLAMA_CONFIG, TOKEN_CONFIG } from '../constants';
+import { cleanModelResponse } from './prompts';
 
 export interface OllamaPingResult {
   online: boolean;
@@ -177,7 +177,7 @@ interface StreamOllamaOptions {
  * Works seamlessly in client-side / static deployments (e.g. Firebase Hosting).
  */
 async function streamDirectOllama(options: StreamOllamaOptions): Promise<string> {
-  const { url, model = '', history, userMessage, maxTokens = 512, onToken, onTelemetry } = options;
+  const { url, model = '', history, userMessage, maxTokens = TOKEN_CONFIG.defaultTokens, onToken, onTelemetry } = options;
   const startTime = Date.now();
   let firstTokenTime: number | null = null;
   let tokenCount = 0;
@@ -190,9 +190,9 @@ async function streamDirectOllama(options: StreamOllamaOptions): Promise<string>
   ];
 
   let targetModel = (model || '').trim();
-  if (!targetModel || targetModel === 'serafina') {
+  if (!targetModel) {
     const ping = await pingOllama(url);
-    targetModel = ping.modelName || 'Hudson/llama3.1-uncensored:8b';
+    targetModel = ping.modelName || OLLAMA_CONFIG.defaultFallbackModel;
   }
 
   const endpointUrl = buildOllamaUrl(url, '/api/chat');
@@ -244,7 +244,7 @@ async function streamDirectOllama(options: StreamOllamaOptions): Promise<string>
           }
           tokenCount++;
           accumulated += token;
-          onToken(token, cleanSerafinaResponse(accumulated));
+          onToken(token, cleanModelResponse(accumulated));
 
           const elapsedSec = (Date.now() - (firstTokenTime || startTime)) / 1000;
           const tokensPerSec = elapsedSec > 0 ? tokenCount / elapsedSec : 0;
@@ -261,16 +261,16 @@ async function streamDirectOllama(options: StreamOllamaOptions): Promise<string>
     }
   }
 
-  return cleanSerafinaResponse(accumulated);
+  return cleanModelResponse(accumulated);
 }
 
 /**
- * Streams response from an Ollama instance utilizing the full Seraphina prompt to the maximum.
+ * Streams response from an Ollama instance utilizing the full persona prompt to the maximum.
  * Tries server proxy first, and automatically falls back to direct client-side streaming
  * if the server proxy is unavailable or running on a static host.
  */
 export async function streamOllama(options: StreamOllamaOptions): Promise<string> {
-  const { url, model = '', history, userMessage, maxTokens = 512, onToken, onTelemetry } = options;
+  const { url, model = '', history, userMessage, maxTokens = TOKEN_CONFIG.defaultTokens, onToken, onTelemetry } = options;
   const startTime = Date.now();
   let firstTokenTime: number | null = null;
   let tokenCount = 0;
@@ -340,7 +340,7 @@ export async function streamOllama(options: StreamOllamaOptions): Promise<string
             }
             tokenCount++;
             accumulated += parsed.text;
-            onToken(parsed.text, cleanSerafinaResponse(accumulated));
+            onToken(parsed.text, cleanModelResponse(accumulated));
 
             const elapsedSec = (Date.now() - (firstTokenTime || startTime)) / 1000;
             const tokensPerSec = elapsedSec > 0 ? tokenCount / elapsedSec : 0;
@@ -357,7 +357,7 @@ export async function streamOllama(options: StreamOllamaOptions): Promise<string
       }
     }
 
-    return cleanSerafinaResponse(accumulated);
+    return cleanModelResponse(accumulated);
   } catch (proxyError) {
     // If backend proxy request network-failed, try direct Ollama streaming
     return await streamDirectOllama(options);

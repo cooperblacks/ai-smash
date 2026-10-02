@@ -1,21 +1,12 @@
 import { Conversation, UserSettings } from '../types';
 import { AVAILABLE_MODELS } from './models';
-import { OLLAMA_CONFIG } from '../constants';
+import { APP_INFO, OLLAMA_CONFIG, DEFAULT_USER_SETTINGS } from '../constants';
 
-const CONVERSATIONS_KEY = 'serafina_conversations_v1';
-const SETTINGS_KEY = 'serafina_user_settings_v1';
-const ACTIVE_CONV_KEY = 'serafina_active_conv_id';
+export { DEFAULT_USER_SETTINGS };
 
-export const DEFAULT_USER_SETTINGS: UserSettings = {
-  userName: 'You',
-  preferredDevice: 'auto',
-  hapticFeedback: true,
-  soundEffects: true,
-  telemetryExpanded: true,
-  autoScroll: true,
-  bannerCycling: true,
-  maxTokens: 512,
-};
+const CONVERSATIONS_KEY = APP_INFO.storageKeys.conversations;
+const SETTINGS_KEY = APP_INFO.storageKeys.userSettings;
+const ACTIVE_CONV_KEY = APP_INFO.storageKeys.activeConversation;
 
 // ----------------------------------------------------
 // Conversation Persistence
@@ -198,21 +189,138 @@ export async function deleteModelFromCache(hfRepo: string): Promise<boolean> {
 }
 
 /**
- * Clear all downloaded models and cache
+ * Clear all downloaded models, browser cache, and storage stuff
+ * except conversations, messages, theme, and sound settings.
  */
 export async function clearAllTransformersCaches(): Promise<boolean> {
-  if (typeof window === 'undefined' || !('caches' in window)) return false;
+  let success = true;
 
-  try {
-    const keys = await window.caches.keys();
-    for (const key of keys) {
-      if (key.includes('transformer') || key.includes('onnx') || key.includes('huggingface')) {
-        await window.caches.delete(key);
+  // 1. Clear all CacheStorage (Cache API) entries completely
+  if (typeof window !== 'undefined' && 'caches' in window) {
+    try {
+      const keys = await window.caches.keys();
+      await Promise.all(keys.map((key) => window.caches.delete(key)));
+    } catch (err) {
+      console.error('Failed to clear Cache API:', err);
+      success = false;
+    }
+  }
+
+  // 2. Clear all IndexedDB databases (transformers.js, onnx models, wasm binaries, etc.)
+  if (typeof window !== 'undefined' && 'indexedDB' in window) {
+    try {
+      if (typeof window.indexedDB.databases === 'function') {
+        const dbs = await window.indexedDB.databases();
+        for (const db of dbs) {
+          if (db.name) {
+            try {
+              window.indexedDB.deleteDatabase(db.name);
+            } catch {
+              // Ignore single db deletion failure
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to enumerate IndexedDB databases:', err);
+    }
+
+    // Explicitly delete known model and asset database names
+    const commonDbNames = [
+      'transformers-cache',
+      'onnx',
+      'onnxruntime-web',
+      'localforage',
+      'transformers',
+      'huggingface',
+      'ort-wasm-simd-threaded',
+    ];
+    for (const dbName of commonDbNames) {
+      try {
+        window.indexedDB.deleteDatabase(dbName);
+      } catch {
+        // Ignore
       }
     }
-    return true;
-  } catch (err) {
-    console.error('Failed to clear transformers cache:', err);
-    return false;
   }
+
+  // 3. Clear Session Storage
+  if (typeof window !== 'undefined' && 'sessionStorage' in window) {
+    try {
+      window.sessionStorage.clear();
+    } catch (err) {
+      console.warn('Failed to clear sessionStorage:', err);
+    }
+  }
+
+  // 4. Clear LocalStorage EXCEPT:
+  // - conversations & messages
+  // - theme
+  // - sound settings
+  if (typeof window !== 'undefined' && 'localStorage' in window) {
+    try {
+      // Read current values to preserve
+      const convKey = APP_INFO.storageKeys.conversations;
+      const activeConvKey = APP_INFO.storageKeys.activeConversation;
+      const themeKey = APP_INFO.storageKeys.theme;
+      const settingsKey = APP_INFO.storageKeys.userSettings;
+
+      // Find any conversations key currently stored
+      const existingConvKey = [convKey, ...Object.keys(localStorage)].find((k) => k.includes('conversations')) || convKey;
+      const preservedConversations = localStorage.getItem(existingConvKey) || '';
+      const preservedActiveConv = localStorage.getItem(activeConvKey) || '';
+      const preservedTheme = localStorage.getItem(themeKey) || '';
+
+      // Preserve sound settings from user settings
+      let preservedSoundEffects = true;
+      try {
+        const currentSettings = loadUserSettings();
+        if (typeof currentSettings.soundEffects === 'boolean') {
+          preservedSoundEffects = currentSettings.soundEffects;
+        }
+      } catch {
+        preservedSoundEffects = true;
+      }
+
+      // Collect all keys to remove (everything except the preserved keys)
+      const preservedKeySet = new Set([
+        convKey,
+        existingConvKey,
+        activeConvKey,
+        themeKey,
+        settingsKey,
+      ]);
+
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && !preservedKeySet.has(k)) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+
+      // Reset user settings back to default, while preserving sound setting
+      const cleanedSettings: UserSettings = {
+        ...DEFAULT_USER_SETTINGS,
+        soundEffects: preservedSoundEffects,
+      };
+      localStorage.setItem(settingsKey, JSON.stringify(cleanedSettings));
+
+      if (preservedConversations) {
+        localStorage.setItem(convKey, preservedConversations);
+      }
+      if (preservedActiveConv) {
+        localStorage.setItem(activeConvKey, preservedActiveConv);
+      }
+      if (preservedTheme) {
+        localStorage.setItem(themeKey, preservedTheme);
+      }
+    } catch (err) {
+      console.error('Failed to clear localStorage items:', err);
+      success = false;
+    }
+  }
+
+  return success;
 }

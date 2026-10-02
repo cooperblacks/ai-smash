@@ -83,7 +83,7 @@ export const AVAILABLE_MODELS: ModelSpec[] = [
     approxParams: 'Full Power',
     defaultDtype: 'fp16',
     isSmallModel: false,
-    description: 'High-capability cloud Ollama server hosted via MuxAI. Leverages full Seraphina prompt.',
+    description: 'High-capability cloud Ollama server hosted via MuxAI. Leverages full persona system prompt.',
     speedRating: 'Deep',
     endpointUrl: OLLAMA_CONFIG.muxAiEndpoint,
   },

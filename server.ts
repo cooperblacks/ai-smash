@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { SYSTEM_PROMPTS, APP_INFO } from './src/constants/index.ts';
+import { SYSTEM_PROMPTS, APP_INFO, VRM_CONFIG, OLLAMA_CONFIG } from './src/constants/index.ts';
 
 dotenv.config();
 
@@ -15,7 +15,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(express.json({ limit: '10mb' }));
 
-const SERAFINA_SYSTEM_PROMPT = SYSTEM_PROMPTS.full;
+const DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPTS.full;
 
 // Health check
 app.get('/api/health', (_req: Request, res: Response) => {
@@ -26,12 +26,12 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// Proxy endpoint for Seraphina VRM 3D asset to bypass CORS redirect blocks
+// Proxy endpoint for VRM 3D asset to bypass CORS redirect blocks
 app.get('/api/vrm', async (_req: Request, res: Response) => {
   try {
     const targetUrls = [
-      'https://ai.mux8.com/seraphina_v1.2_vrm1.vrm',
-      'https://muxai.vercel.app/seraphina_v1.2_vrm1.vrm',
+      VRM_CONFIG.modelUrl,
+      ...VRM_CONFIG.candidateModelUrls.filter((u) => !u.startsWith('/api')),
     ];
 
     let vrmResp: globalThis.Response | null = null;
@@ -53,7 +53,7 @@ app.get('/api/vrm', async (_req: Request, res: Response) => {
 
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     const contentLength = vrmResp.headers.get('content-length');
     if (contentLength) {
       res.setHeader('Content-Length', contentLength);
@@ -80,9 +80,10 @@ app.get('/api/vrm', async (_req: Request, res: Response) => {
 // Proxy endpoint for Mixamo idle animation FBX asset
 app.get('/api/animation/idle', async (_req: Request, res: Response) => {
   try {
+    // Proxy endpoint for Mixamo idle animation FBX asset
     const targetUrls = [
-      'https://ai.mux8.com/mixamo_idle.fbx',
-      'https://muxai.vercel.app/mixamo_idle.fbx',
+      VRM_CONFIG.animationUrl,
+      ...VRM_CONFIG.candidateAnimationUrls.filter((u) => !u.startsWith('/api')),
     ];
 
     let fbxResp: globalThis.Response | null = null;
@@ -274,10 +275,10 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Target Ollama URL is required' });
     }
 
-    // Resolve target model: if user model is unspecified or defaults to 'serafina',
+    // Resolve target model: if unspecified,
     // auto-fetch available models from the target Ollama instance to use the actual model in VRAM
     let resolvedModel = (model || '').trim();
-    if (!resolvedModel || resolvedModel === 'serafina') {
+    if (!resolvedModel) {
       try {
         const tagsResp = await fetch(buildServerOllamaUrl(baseUrl, '/api/tags'), {
           method: 'GET',
@@ -288,19 +289,14 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
           const data = (await tagsResp.json()) as { models?: Array<{ name?: string; model?: string }> };
           const availModels = (data?.models || []).map((m) => m.name || m.model || '').filter(Boolean);
           if (availModels.length > 0) {
-            // If serafina exists, use it; otherwise pick the first loaded model (e.g. Hudson/llama3.1-uncensored:8b)
-            if (availModels.includes('serafina')) {
-              resolvedModel = 'serafina';
-            } else {
-              resolvedModel = availModels[0];
-            }
+            resolvedModel = availModels[0];
           }
         }
       } catch {
         // Keep resolvedModel or fallback
       }
 
-      if (!resolvedModel || resolvedModel === 'serafina') {
+      if (!resolvedModel) {
         try {
           const v1Resp = await fetch(buildServerOllamaUrl(baseUrl, '/v1/models'), {
             method: 'GET',
@@ -321,7 +317,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
     }
 
     if (!resolvedModel) {
-      resolvedModel = 'serafina';
+      resolvedModel = OLLAMA_CONFIG.defaultFallbackModel;
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -338,7 +334,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
 
     // Full system prompt according to Ollama system instructions protocol
     const formattedMessages = [
-      { role: 'system', content: systemPrompt || SERAFINA_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt || DEFAULT_SYSTEM_PROMPT },
       ...cleanedHistory,
     ];
 
@@ -440,7 +436,7 @@ app.post('/api/chat', async (req: Request, res: Response) => {
       model: 'gemini-3.8-flash',
       contents: formattedContents,
       config: {
-        systemInstruction: systemPrompt || SERAFINA_SYSTEM_PROMPT,
+        systemInstruction: systemPrompt || DEFAULT_SYSTEM_PROMPT,
         temperature: 0.85,
         maxOutputTokens: outputTokens,
       },
@@ -483,7 +479,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Serafina server running on http://0.0.0.0:${PORT}`);
+    console.log(`${APP_INFO.name} server running on http://0.0.0.0:${PORT}`);
   });
 }
 

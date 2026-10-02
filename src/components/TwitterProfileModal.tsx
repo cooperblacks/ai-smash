@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Link as LinkIcon, Calendar, MessageCircle, BadgeCheck, Instagram } from 'lucide-react';
-import { AI_PROFILE } from '../constants';
+import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
 
 const DiscordIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
   <svg
@@ -25,7 +25,7 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
     if (!isOpen) return;
     const interval = setInterval(() => {
       setCurrentBannerIndex((prev) => (prev + 1) % AI_PROFILE.banners.length);
-    }, 4500);
+    }, UI_CONFIG.profileBannerIntervalMs);
     return () => clearInterval(interval);
   }, [isOpen]);
 
@@ -37,7 +37,7 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-lg bg-white dark:bg-[#161822] rounded-3xl shadow-2xl border border-black/[0.08] dark:border-white/[0.1] overflow-hidden animate-in zoom-in-95 duration-150"
+        className={`relative w-full max-w-lg ${THEME_COLORS.tokens.modalBg} rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Banner Area with Crossfade */}
@@ -102,7 +102,7 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-1.5 rounded-full bg-neutral-900 hover:bg-neutral-800 dark:bg-amber-500 dark:hover:bg-amber-600 dark:text-neutral-950 text-white font-medium text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer"
+                className={`px-4 py-1.5 rounded-full ${THEME_COLORS.tokens.modalPrimaryButton} text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer`}
                 title="Direct Message"
               >
                 <MessageCircle className="w-3.5 h-3.5" />
@@ -117,7 +117,7 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
               <h2 className="text-xl font-bold text-neutral-900 dark:text-white tracking-tight">
                 {AI_PROFILE.name}
               </h2>
-              <BadgeCheck className="w-5 h-5 text-amber-500 fill-amber-500/20" />
+              <BadgeCheck className={`w-5 h-5 ${THEME_COLORS.tokens.accentText} fill-amber-500/20`} />
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 font-mono">
               {AI_PROFILE.handle}
@@ -135,7 +135,7 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
               href={AI_PROFILE.stats.websiteUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 hover:underline font-medium transition-colors"
+              className={`flex items-center gap-1.5 ${THEME_COLORS.tokens.accentText} hover:underline font-medium transition-colors`}
             >
               <LinkIcon className="w-3.5 h-3.5 shrink-0" />
               <span>{AI_PROFILE.stats.website}</span>
@@ -167,16 +167,16 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
             {/* Social Links: Instagram & Discord on the bottom right corner */}
             <div className="flex items-center gap-1.5 shrink-0">
               <a
-                href="https://instagram.com/serafina.oc"
+                href={AI_PROFILE.socials.instagram}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="Serafina on Instagram (@serafina.oc)"
+                title={`${AI_PROFILE.name} on Instagram`}
                 className="p-1.5 rounded-full text-neutral-500 hover:text-[#E4405F] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all active:scale-95"
               >
                 <Instagram className="w-4 h-4" />
               </a>
               <a
-                href="https://discord.com/oauth2/authorize?client_id=1536094288142794792"
+                href={AI_PROFILE.socials.discord}
                 target="_blank"
                 rel="noopener noreferrer"
                 title="Connect on Discord"

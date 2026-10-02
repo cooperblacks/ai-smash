@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { Search, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { THEME_COLORS } from '../constants';
 
 interface SearchBarProps {
   isOpen: boolean;
@@ -47,7 +48,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="w-full bg-white/95 dark:bg-[#13151f]/95 border-b border-black/[0.06] dark:border-white/[0.08] backdrop-blur-md px-3 sm:px-6 py-2 z-10 animate-in slide-in-from-top-2 duration-150 shadow-xs">
+    <div className={`w-full ${THEME_COLORS.tokens.searchBarBg} backdrop-blur-md px-3 sm:px-6 py-2 z-10 animate-in slide-in-from-top-2 duration-150 shadow-xs`}>
       <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
         {/* Search input with icon */}
         <div className="relative flex-1 flex items-center max-w-md">
@@ -59,7 +60,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
             onChange={(e) => onSearchChange(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Find in conversation..."
-            className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-neutral-100/80 dark:bg-[#1c1f2e] border border-neutral-200 dark:border-neutral-700 text-xs text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-amber-400 focus:bg-white dark:focus:bg-[#1c1f2e] transition-all"
+            className={`w-full pl-9 pr-3 py-1.5 rounded-xl ${THEME_COLORS.tokens.searchInputBg} text-xs transition-all`}
           />
         </div>
 

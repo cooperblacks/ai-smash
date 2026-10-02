@@ -22,14 +22,23 @@ import {
   loadCustomOllamaUrl,
 } from './lib/storage';
 import {
-  streamSerafinaResponse,
+  streamPersonaResponse,
   stopCurrentGeneration,
   detectBestHardwareDevice,
   loadModelPipeline,
+  resetActiveGenerator,
 } from './lib/slmEngine';
-import { soundManager, waitForSerafinaVoice } from './lib/audio';
+import { soundManager, waitForPersonaVoice } from './lib/audio';
 import { pingOllama } from './lib/ollama';
-import { APP_INFO, AI_PROFILE, VOICE_CONFIG, OLLAMA_CONFIG } from './constants';
+import {
+  APP_INFO,
+  AI_PROFILE,
+  VOICE_CONFIG,
+  OLLAMA_CONFIG,
+  THEME_COLORS,
+  UI_CONFIG,
+  TOKEN_CONFIG,
+} from './constants';
 import { Header } from './components/Header';
 import { SearchBar } from './components/SearchBar';
 import { Sidebar } from './components/Sidebar';
@@ -100,14 +109,14 @@ export default function App() {
 
   useEffect(() => {
     // Preload voice engine
-    waitForSerafinaVoice(2500)
+    waitForPersonaVoice(VOICE_CONFIG.preloadTimeoutMs)
       .then(() => setIsVoiceLoaded(true))
       .catch(() => setIsVoiceLoaded(true));
 
-    // Fallback: If voice engine takes > 20s, automatically proceed through splash screen
+    // Fallback: If voice engine takes longer than timeout, proceed through splash screen
     const timer = setTimeout(() => {
       setIsSplashTimeout(true);
-    }, 20000);
+    }, UI_CONFIG.splashFallbackTimeoutMs);
 
     return () => clearTimeout(timer);
   }, []);
@@ -146,7 +155,7 @@ export default function App() {
   const isSoundActive = userSettings.soundEffects || is3DMode;
 
   // Voice synthesis with priority order queue sourced from VOICE_CONFIG
-  const speakSerafinaMessage = useCallback(
+  const speakAssistantMessage = useCallback(
     async (msgId: string, text: string) => {
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
       if (!isSoundActive) return;
@@ -154,7 +163,7 @@ export default function App() {
       window.speechSynthesis.cancel();
 
       // Wait until voice synthesis engine is fully ready/loaded so the female voice queue is activated
-      const voice = await waitForSerafinaVoice(2000);
+      const voice = await waitForPersonaVoice(VOICE_CONFIG.waitVoiceTimeoutMs);
 
       // Skip male voice if no female voice is loaded/ready
       if (!voice) {
@@ -200,7 +209,7 @@ export default function App() {
       setCurrentlySpeakingMsgId(null);
       lipSyncManager.endSpeech();
     } else {
-      speakSerafinaMessage(msgId, content);
+      speakAssistantMessage(msgId, content);
     }
   };
 
@@ -279,13 +288,13 @@ export default function App() {
       isFading: false,
     });
 
-    // Stays for 6 seconds, then fades away smoothly
+    // Stays for configured duration, then fades away smoothly
     serverFallbackTimerRef.current = setTimeout(() => {
       setServerFallbackNotice((prev) => (prev ? { ...prev, isFading: true } : null));
       serverFallbackFadeTimerRef.current = setTimeout(() => {
         setServerFallbackNotice(null);
-      }, 600);
-    }, 6000);
+      }, UI_CONFIG.serverFallbackFadeDurationMs);
+    }, UI_CONFIG.serverFallbackNoticeDurationMs);
   }, []);
 
   useEffect(() => {
@@ -469,7 +478,7 @@ export default function App() {
             if ((!newTitle || newTitle === 'Direct Message') && newMessages.length > 0) {
               const firstUserMsg = newMessages.find((m) => m.role === 'user');
               if (firstUserMsg) {
-                newTitle = firstUserMsg.content.slice(0, 32);
+                newTitle = firstUserMsg.content.slice(0, UI_CONFIG.titleTruncateLength);
               }
             }
             return {
@@ -607,7 +616,7 @@ export default function App() {
       refreshCacheStatuses();
 
       if (isSoundActive) {
-        speakSerafinaMessage(stoppedAssistantMessage.id, partialText);
+        speakAssistantMessage(stoppedAssistantMessage.id, partialText);
       }
     }
 
@@ -622,7 +631,7 @@ export default function App() {
     telemetry.totalLatencyMs,
     refreshCacheStatuses,
     isSoundActive,
-    speakSerafinaMessage,
+    speakAssistantMessage,
   ]);
 
   // ----------------------------------------------------
@@ -667,12 +676,12 @@ export default function App() {
     }));
 
     try {
-      const assistantText = await streamSerafinaResponse({
+      const assistantText = await streamPersonaResponse({
         model: activeModel,
         history: updatedWithUser,
         userMessage: trimmed,
         devicePref: userSettings.preferredDevice,
-        maxTokens: userSettings.maxTokens || 512,
+        maxTokens: userSettings.maxTokens || TOKEN_CONFIG.defaultTokens,
         onToken: (_piece, fullText) => {
           streamingTextRef.current = fullText;
           setStreamingText(fullText);
@@ -720,8 +729,8 @@ export default function App() {
       setDownloadProgress(null);
       refreshCacheStatuses();
 
-      // Automatically speak out Serafina's message synced to its speaker button / 3D thought bubble
-      speakSerafinaMessage(assistantMessage.id, assistantText);
+      // Automatically speak out assistant message synced to its speaker button / 3D thought bubble
+      speakAssistantMessage(assistantMessage.id, assistantText);
     } catch (err: unknown) {
       if (!isGeneratingRef.current) {
         return;
@@ -810,7 +819,10 @@ export default function App() {
 
   const handleClearAllCache = async () => {
     await clearAllTransformersCaches();
+    resetActiveGenerator();
     await refreshCacheStatuses();
+    const reloaded = loadUserSettings();
+    setUserSettings(reloaded);
   };
 
   const handleUpdateSettings = (newPartial: Partial<UserSettings>) => {
@@ -836,7 +848,7 @@ export default function App() {
   };
 
   return (
-    <div className={`flex h-screen w-screen overflow-hidden bg-[#f8f9fc] dark:bg-[#0f1117] text-[#1e2029] dark:text-[#f1f2f6] font-sans antialiased transition-colors ${theme === 'dark' ? 'dark' : ''}`}>
+    <div className={`flex h-screen w-screen overflow-hidden ${THEME_COLORS.tokens.appBg} ${THEME_COLORS.tokens.appText} font-sans antialiased transition-colors ${theme === 'dark' ? 'dark' : ''}`}>
       {/* Sidebar (Conversations History) */}
       <Sidebar
         isOpen={isSidebarOpen}
@@ -851,7 +863,7 @@ export default function App() {
       />
 
       {/* Main Viewport */}
-      <main className="flex-1 flex flex-col h-full min-w-0 relative bg-[#f8f9fc] dark:bg-[#0f1117] transition-colors">
+      <main className={`flex-1 flex flex-col h-full min-w-0 relative ${THEME_COLORS.tokens.appBg} transition-colors`}>
         {/* Top Header with 3D Mode Toggle Button between Search and Sound */}
         <Header
           isGenerating={isGenerating}
@@ -914,9 +926,9 @@ export default function App() {
             <div
               className={`px-3.5 py-1.5 rounded-full text-xs font-medium flex items-center gap-2 shadow-sm transition-all duration-500 border z-30 ${
                 serverFallbackNotice.isFading ? 'opacity-0 -translate-y-1' : 'opacity-100 translate-y-0'
-              } bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700/60 backdrop-blur-md animate-in fade-in slide-in-from-bottom-1`}
+              } ${THEME_COLORS.tokens.fallbackNoticeBg} backdrop-blur-md animate-in fade-in slide-in-from-bottom-1`}
             >
-              <AlertCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+              <AlertCircle className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.accentText} shrink-0`} />
               <span>{serverFallbackNotice.message}</span>
             </div>
           </div>
@@ -942,7 +954,7 @@ export default function App() {
           activeModel={activeModel}
           cacheStatuses={cacheStatuses}
           onSelectModel={handleSelectModel}
-          maxTokens={userSettings.maxTokens || 512}
+          maxTokens={userSettings.maxTokens || TOKEN_CONFIG.defaultTokens}
           onChangeMaxTokens={(val) => handleUpdateSettings({ maxTokens: val })}
           ollamaStatus={ollamaStatus}
           onUpdateCustomUrl={handleUpdateCustomUrl}

@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, HardDrive, Trash2, ArrowDownCircle, CheckCircle2, Cpu, User, RefreshCw } from 'lucide-react';
 import { ModelSpec, ModelCacheInfo, UserSettings } from '../types';
 import { AVAILABLE_MODELS } from '../lib/models';
-import { APP_INFO, AI_PROFILE } from '../constants';
+import { APP_INFO, AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -29,13 +29,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [isClearingAll, setIsClearingAll] = useState(false);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current);
+    };
+  }, []);
 
   if (!isOpen) return null;
 
   const showNotification = (msg: string) => {
     setSuccessMsg(msg);
-    setTimeout(() => setSuccessMsg(null), 2500);
+    setTimeout(() => setSuccessMsg(null), UI_CONFIG.settingsNotificationDurationMs);
   };
 
   const handleDelete = async (model: ModelSpec) => {
@@ -49,14 +57,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleClearAll = async () => {
-    if (confirm('Delete all downloaded offline SLM models from browser storage?')) {
-      try {
-        setIsClearingAll(true);
-        await onClearAllCache();
-        showNotification('All downloaded models removed from browser.');
-      } finally {
-        setIsClearingAll(false);
-      }
+    if (!confirmClearAll) {
+      setConfirmClearAll(true);
+      if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current);
+      confirmTimeoutRef.current = setTimeout(() => {
+        setConfirmClearAll(false);
+      }, 4000);
+      return;
+    }
+
+    try {
+      setIsClearingAll(true);
+      setConfirmClearAll(false);
+      if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current);
+      await onClearAllCache();
+      showNotification('Cleared all browser cache and storage.');
+    } catch (err) {
+      console.error('Failed to clear cache:', err);
+      showNotification('Error clearing cache.');
+    } finally {
+      setIsClearingAll(false);
     }
   };
 
@@ -69,12 +89,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/40 backdrop-blur-sm animate-in fade-in duration-120">
-      <div className="relative w-full max-w-2xl max-h-[90vh] bg-white dark:bg-[#161822] border border-neutral-200 dark:border-white/[0.1] rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+      <div className={`relative w-full max-w-2xl max-h-[90vh] ${THEME_COLORS.tokens.modalBg} border rounded-3xl shadow-2xl overflow-hidden flex flex-col`}>
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between bg-neutral-50/70 dark:bg-white/[0.02]">
           <div>
             <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white tracking-tight flex items-center gap-2">
-              <HardDrive className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              <HardDrive className={`w-5 h-5 ${THEME_COLORS.tokens.accentText}`} />
               Settings &amp; Storage
             </h2>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
@@ -83,7 +103,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-full hover:bg-neutral-200/70 dark:hover:bg-white/[0.08] text-neutral-400 hover:text-neutral-700 dark:hover:text-white transition-colors"
+            className={`p-2 rounded-full ${THEME_COLORS.tokens.modalCloseButton} transition-colors`}
           >
             <X className="w-4 h-4" />
           </button>
@@ -105,7 +125,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <User className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
               User Personalization
             </h3>
-            <div className="p-3 sm:p-4 rounded-2xl bg-neutral-50 dark:bg-[#1a1c28] border border-neutral-200/80 dark:border-neutral-700/60 space-y-3">
+            <div className={`p-3 sm:p-4 rounded-2xl ${THEME_COLORS.tokens.modalSectionCard} space-y-3`}>
               <div>
                 <label className="text-xs text-neutral-700 dark:text-neutral-300 block mb-1 font-medium">
                   What should {AI_PROFILE.name} call you in the DM?
@@ -115,7 +135,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   value={userSettings.userName}
                   onChange={(e) => onUpdateSettings({ userName: e.target.value })}
                   placeholder="e.g. Alex, Sam, etc."
-                  className="w-full px-3 py-2 rounded-xl bg-white dark:bg-[#13151f] border border-neutral-200 dark:border-neutral-700 text-xs text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-amber-500"
+                  className={`w-full px-3 py-2 rounded-xl text-xs ${THEME_COLORS.tokens.modalInputBg} focus:outline-none`}
                 />
               </div>
 
@@ -155,8 +175,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClick={() => onUpdateSettings({ preferredDevice: device })}
                     className={`p-3 rounded-2xl border text-left transition-all ${
                       isSelected
-                        ? 'bg-amber-50/80 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-neutral-900 dark:text-amber-200 font-medium'
-                        : 'bg-neutral-50 dark:bg-[#1a1c28] border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100/70 dark:hover:bg-[#202332]'
+                        ? `${THEME_COLORS.tokens.dropdownItemActive} text-neutral-900 dark:text-amber-200 font-medium`
+                        : `${THEME_COLORS.tokens.modalSectionCard} text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100/70 dark:hover:bg-[#202332]`
                     }`}
                   >
                     <div className="font-semibold text-xs capitalize">{device === 'auto' ? 'Auto Detect' : device.toUpperCase()}</div>
@@ -178,16 +198,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <HardDrive className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
                 Browser SLM Weights Storage ({totalCachedMB} MB stored)
               </h3>
-              {totalCachedMB > 0 && (
+              <div className="flex items-center gap-2">
+                {confirmClearAll && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmClearAll(false);
+                      if (confirmTimeoutRef.current) clearTimeout(confirmTimeoutRef.current);
+                    }}
+                    className="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                )}
                 <button
+                  type="button"
                   onClick={handleClearAll}
                   disabled={isClearingAll}
-                  className="text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 flex items-center gap-1 font-mono transition-colors"
+                  className={`text-xs flex items-center gap-1.5 font-mono px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                    confirmClearAll
+                      ? 'bg-red-600 hover:bg-red-700 text-white font-medium shadow-xs animate-pulse'
+                      : 'text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/30'
+                  }`}
+                  title="Clear all browser cache and storage"
                 >
-                  <Trash2 className="w-3 h-3" />
-                  <span>Clear All Cache</span>
+                  {isClearingAll ? (
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3 h-3" />
+                  )}
+                  <span>
+                    {isClearingAll
+                      ? 'Clearing...'
+                      : confirmClearAll
+                      ? 'Confirm Clear All?'
+                      : 'Clear All Cache'}
+                  </span>
                 </button>
-              )}
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -200,13 +248,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 return (
                   <div
                     key={model.id}
-                    className="p-3 rounded-2xl bg-neutral-50 dark:bg-[#1a1c28] border border-neutral-200 dark:border-neutral-700 flex items-center justify-between gap-3 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors"
+                    className={`p-3 rounded-2xl ${THEME_COLORS.tokens.modalSectionCard} flex items-center justify-between gap-3 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div
                         className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
                           isDownloaded
-                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400'
+                            ? THEME_COLORS.tokens.successIconBox
                             : 'bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500 dark:text-neutral-400'
                         }`}
                       >
@@ -217,7 +265,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <div className="font-semibold text-xs text-neutral-900 dark:text-white flex items-center gap-2">
                           <span className="truncate">{model.name}</span>
                           {model.isDefault && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 font-mono">
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded ${THEME_COLORS.tokens.accentBadge}`}>
                               DEFAULT
                             </span>
                           )}
@@ -226,7 +274,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <span>{model.sizeLabel}</span>
                           <span>&bull;</span>
                           {isDownloaded ? (
-                            <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                            <span className={`${THEME_COLORS.tokens.successText} font-medium`}>
                               Downloaded ({sizeMB > 0 ? `${sizeMB} MB` : 'Cached'})
                             </span>
                           ) : (
@@ -242,7 +290,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <button
                           onClick={() => handleDelete(model)}
                           disabled={isThisDeleting}
-                          className="px-2.5 py-1 rounded-xl bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 active:scale-95 text-xs flex items-center gap-1.5 transition-all"
+                          className={`px-2.5 py-1 rounded-xl ${THEME_COLORS.tokens.dangerHoldBtn} hover:bg-red-100 dark:hover:bg-red-900/50 active:scale-95 text-xs flex items-center gap-1.5 transition-all`}
                           title="Delete from browser storage"
                         >
                           {isThisDeleting ? (
@@ -259,7 +307,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             showNotification(`Initiated download for ${model.name}...`);
                           }}
                           disabled={isDownloading}
-                          className="px-2.5 py-1 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-amber-500 dark:hover:bg-amber-600 dark:text-neutral-950 text-white font-medium active:scale-95 text-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
+                          className={`px-2.5 py-1 rounded-xl ${THEME_COLORS.tokens.modalPrimaryButton} active:scale-95 text-xs flex items-center gap-1.5 transition-all disabled:opacity-50`}
                           title="Preload model weights"
                         >
                           <ArrowDownCircle className="w-3.5 h-3.5" />
@@ -277,17 +325,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Modal Footer */}
         <div className="p-4 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/70 dark:bg-white/[0.02] flex items-center justify-between">
           <a
-            href="https://muxai.vercel.app"
+            href={AI_PROFILE.stats.websiteUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs text-neutral-400 dark:text-neutral-500 hover:text-amber-600 dark:hover:text-amber-400 font-mono transition-colors underline decoration-dotted underline-offset-2"
-            title="Visit MuxAI"
+            className={`text-xs text-neutral-400 dark:text-neutral-500 ${THEME_COLORS.tokens.accentTextHover} font-mono transition-colors underline decoration-dotted underline-offset-2`}
+            title={`Visit ${APP_INFO.author}`}
           >
             {APP_INFO.copyright}
           </a>
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-amber-500 dark:hover:bg-amber-600 dark:text-neutral-950 text-white font-medium text-xs active:scale-95 transition-all shadow-xs"
+            className={`px-4 py-2 rounded-xl ${THEME_COLORS.tokens.modalPrimaryButton} text-xs active:scale-95 transition-all shadow-xs cursor-pointer`}
           >
             Done
           </button>
