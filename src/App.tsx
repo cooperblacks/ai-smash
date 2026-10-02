@@ -317,11 +317,11 @@ export default function App() {
 
       // Special expressive pain words and phrases
       const PAIN_SOUNDS_BY_REGION: Record<string, string[]> = {
-        head: ['Ouch! My head...', 'Ow! Watch out!', 'Owie! That hurts!'],
-        chest: ["Kyaa! That hurts!", "Eek! Don't do that!", 'Ouch! Cut it out!'],
+        head: ['Ouch! My head...', 'Ow! Watch out!', 'Owie! That hurts!', 'My head... stop!', 'Ouch', 'Ah'],
+        chest: ["Hey! That hurts!", "Eek! Don't do that!", 'Ouch! Cut it out!', 'Stop being a pervert!', 'Please, no!'],
         stomach: ['Ugh... oof!', 'Ouchie!', 'Ngh... stop!'],
-        skirt: ['Kyaa! No!', 'Eek! What are you doing?!', 'Ouch! Hey!'],
-        legs: ['Ow, ow, ow!', 'Ouch! That stings!', 'Owie!'],
+        skirt: ['No!', 'What are you doing?!', 'Ouch! Hey!'],
+        legs: ['Ow, ow, ow!', 'Ouch! That stings!', 'Ow!'],
       };
 
       const regionList = PAIN_SOUNDS_BY_REGION[hitRegion] || ['Ouch!', 'Kyaa!', 'Owie!', 'Ow!'];
