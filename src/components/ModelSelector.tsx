@@ -152,7 +152,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className={`absolute bottom-full left-0 mb-2 w-80 sm:w-92 max-h-[420px] overflow-y-auto rounded-2xl ${THEME_COLORS.tokens.dropdownBg} shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100`}>
+        <div className={`absolute bottom-full left-0 mb-2 w-80 sm:w-92 max-h-[420px] overflow-y-auto rounded-2xl ${THEME_COLORS.tokens.dropdownBg} shadow-2xl p-1.5 z-0 animate-in fade-in zoom-in-95 duration-100`}>
           <div className="px-3 py-2 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
             <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
               <Sparkles className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.accentText}`} />
