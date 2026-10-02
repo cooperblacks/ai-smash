@@ -6,15 +6,19 @@
 
 based on a derivative of the [MuxAI](https://github.com/muxai/muxai-platform) platform.
 
+## Active web versions
+- [[🌐 Live deployment]](https://aismash.web.app)
+- [[🛠️ Beta deployment]](https://ai-smash.vercel.app)
+
 ---
 
-## 🏷️ Tech Stack & Concepts
+## Tech Stack & Concepts
 
 `React 19` `TypeScript` `Vite` `Tailwind CSS` `Three.js` `@pixiv/three-vrm` `@pixiv/three-vrm-springbone` `GLTFLoader` `Mixamo Retargeting` `Hugging Face Transformers.js` `ONNX Runtime Web` `WebGPU API` `WebAssembly (WASM)` `FP16 Half-Precision Quantization` `Q4 Quantization` `SpeechSynthesis API` `Web Audio API` `Phoneme-to-Viseme Lip Sync` `Damped Harmonic Spring Physics` `Verlet Integration` `Centrifugal & Rotational Inertia Dynamics` `Raycasting Interaction` `Ollama REST API` `Server-Sent Events (SSE)` `Express.js` `Google GenAI SDK` `IndexedDB API` `Cache API` `LocalStorage API` `Origin Private File System (OPFS)` `Responsive UI` `Offline-First Architecture` `Edge Computing`
 
 ---
 
-## 🌟 Overview
+## Overview
 
 This platform is a full-stack conversational application uniting persona-driven dialogue with on-device client-side Small Language Models (SLMs) and server-side LLMs. Built with React 19, TypeScript, Vite, Tailwind CSS, Three.js, `@pixiv/three-vrm`, and Hugging Face Transformers.js ONNX Web Runtime, the application can run entirely within your web browser with zero server dependency, or optionally connect to local/remote Ollama backend instances and cloud AI APIs.
 
@@ -22,7 +26,7 @@ The integrated 3D view features a humanoid VRM 1.0 avatar with retargeted Mixamo
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 - **In-Browser Edge SLM Neural Inference**: Execute lightweight Small Language Models (SmolLM2-135M, SmolLM2-360M, Qwen2.5-0.5B, MiniCPM5-2B, Llama-3.2-1B) directly in the client browser using Hugging Face Transformers.js and ONNX Runtime Web.
 - **WebGPU & WASM Hardware Acceleration**: Automatic device detection prioritizing WebGPU execution, graceful fallback to multi-threaded WebAssembly with FP16/Q4 quantization, and persistent model weight caching in browser storage.
@@ -35,7 +39,7 @@ The integrated 3D view features a humanoid VRM 1.0 avatar with retargeted Mixamo
 
 ---
 
-## 🧠 Architecture
+## Architecture
 
 ```
 edge-ai-platform/
@@ -78,7 +82,7 @@ edge-ai-platform/
 
 ---
 
-## 🔒 Privacy & Offline Capability
+## Privacy & Offline Capability
 
 - No conversational data, prompts, or images are transmitted to external tracking servers.
 - After the initial download, in-browser models run **100% offline** without an active internet connection.
@@ -88,6 +92,10 @@ edge-ai-platform/
 
 ---
 
-## 📄 License
+## License & Intellectual Property Notice
 
 Distributed under the [MIT License](LICENSE).
+
+- **Project License**: The source code and software implementation of AI Smash are distributed under the MIT License.
+
+- **Original Character & Intellectual Property (IP)**: **Hana / Yana**, including her name, character identity, persona directives, backstory, speech patterns, visual aesthetics, and associated creative lore, is an **Original Character (OC)** and the exclusive **Intellectual Property (IP)** of the creator. This project license applies solely to the software codebase, tools, and technical implementation. It does not grant ownership, trademark, or commercial character rights over Hana as an intellectual property.
