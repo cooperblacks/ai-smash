@@ -52,7 +52,7 @@ export const MaxTokensSelector: React.FC<MaxTokensSelectorProps> = ({
 
       {/* Drop-up Menu aligned to rightmost edge axis */}
       {isOpen && (
-        <div className={`absolute bottom-full right-0 mb-2 w-64 rounded-2xl ${THEME_COLORS.tokens.dropdownBg} shadow-2xl p-3 z-60 animate-in fade-in zoom-in-95 origin-bottom-right duration-100`}>
+        <div className={`absolute bottom-full right-0 mb-2 w-64 rounded-2xl ${THEME_COLORS.tokens.dropdownBg} shadow-2xl p-3 z-999 animate-in fade-in zoom-in-95 origin-bottom-right duration-100`}>
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-neutral-100 dark:border-neutral-800">
             <span className="text-xs font-semibold text-neutral-700 dark:text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
               <Sparkles className={`w-3 h-3 ${THEME_COLORS.tokens.accentText}`} />
