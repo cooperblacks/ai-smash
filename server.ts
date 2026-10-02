@@ -77,14 +77,28 @@ app.get('/api/vrm', async (_req: Request, res: Response) => {
   }
 });
 
-// Proxy endpoint for Mixamo idle animation FBX asset
-app.get('/api/animation/idle', async (_req: Request, res: Response) => {
+// Proxy endpoint for Mixamo animation FBX assets (idle, fall, getup)
+app.get(['/api/animation/:type', '/api/animation/idle'], async (req: Request, res: Response) => {
   try {
-    // Proxy endpoint for Mixamo idle animation FBX asset
-    const targetUrls = [
-      VRM_CONFIG.animationUrl,
-      ...VRM_CONFIG.candidateAnimationUrls.filter((u) => !u.startsWith('/api')),
-    ];
+    const animType = req.params.type || 'idle';
+    let targetUrls: string[] = [];
+
+    if (animType === 'fall') {
+      targetUrls = [
+        VRM_CONFIG.fallAnimationUrl,
+        ...VRM_CONFIG.candidateFallAnimationUrls.filter((u) => !u.startsWith('/api')),
+      ];
+    } else if (animType === 'getup') {
+      targetUrls = [
+        VRM_CONFIG.getupAnimationUrl,
+        ...VRM_CONFIG.candidateGetupAnimationUrls.filter((u) => !u.startsWith('/api')),
+      ];
+    } else {
+      targetUrls = [
+        VRM_CONFIG.animationUrl,
+        ...VRM_CONFIG.candidateAnimationUrls.filter((u) => !u.startsWith('/api')),
+      ];
+    }
 
     let fbxResp: globalThis.Response | null = null;
     for (const url of targetUrls) {
@@ -100,7 +114,7 @@ app.get('/api/animation/idle', async (_req: Request, res: Response) => {
     }
 
     if (!fbxResp || !fbxResp.body) {
-      return res.status(502).json({ error: 'Failed to fetch remote animation asset' });
+      return res.status(502).json({ error: `Failed to fetch remote animation asset ${animType}` });
     }
 
     res.setHeader('Content-Type', 'application/octet-stream');

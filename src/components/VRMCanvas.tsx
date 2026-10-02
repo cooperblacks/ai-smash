@@ -5,16 +5,21 @@ import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
 import { retargetAnimationFromUrl } from 'vrm-mixamo-retarget';
 import { VRM_CONFIG, AI_PROFILE, THEME_COLORS } from '../constants';
 import { lipSyncManager } from '../lib/lipSync';
+import { fetchVRMWithCache } from '../lib/vrmCache';
 import { Sparkles } from 'lucide-react';
 
 interface VRMCanvasProps {
   isSpeaking: boolean;
   onLoaded?: () => void;
+  onModelClick?: (hitRegion: 'head' | 'chest' | 'stomach' | 'skirt' | 'legs') => void;
+  isPainSoundPlaying?: boolean;
 }
 
 export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   isSpeaking,
   onLoaded,
+  onModelClick,
+  isPainSoundPlaying = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -37,112 +42,32 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     onLoadedRef.current = onLoaded;
   }, [onLoaded]);
 
+  const onModelClickRef = useRef(onModelClick);
+  useEffect(() => {
+    onModelClickRef.current = onModelClick;
+  }, [onModelClick]);
+
+  const isPainSoundPlayingRef = useRef(isPainSoundPlaying);
+  useEffect(() => {
+    isPainSoundPlayingRef.current = isPainSoundPlaying;
+  }, [isPainSoundPlaying]);
+
   // Three.js, VRM and Animation references
   const vrmRef = useRef<VRM | null>(null);
+  const hitProxyRef = useRef<THREE.Mesh | null>(null);
+  const raycasterRef = useRef(new THREE.Raycaster());
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const idleActionRef = useRef<THREE.AnimationAction | null>(null);
+  const fallActionRef = useRef<THREE.AnimationAction | null>(null);
+  const getupActionRef = useRef<THREE.AnimationAction | null>(null);
+  const isFallSequenceActiveRef = useRef(false);
+  const clickTimestampsRef = useRef<number[]>([]);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
 
   // Mouse look tracking
   const mouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  // Robust Fetch with Progress Tracking and Persistent Caching
-  const fetchVRMWithCache = useCallback(async (): Promise<ArrayBuffer> => {
-    const cacheName = VRM_CONFIG.cacheKey;
-    const candidateUrls = VRM_CONFIG.candidateModelUrls;
-
-    let cache: Cache | null = null;
-    try {
-      if ('caches' in window) {
-        cache = await window.caches.open(cacheName);
-        for (const url of candidateUrls) {
-          const cached = await cache.match(url);
-          if (cached) {
-            setLoadingStep(`Restoring ${AI_PROFILE.name} from local cache...`);
-            setDownloadProgress(100);
-            return await cached.arrayBuffer();
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Cache API check failed:', e);
-    }
-
-    setLoadingStep(`Downloading ${AI_PROFILE.name} 3D Avatar...`);
-    setDownloadProgress(0);
-
-    let lastError: Error | null = null;
-
-    for (const targetUrl of candidateUrls) {
-      try {
-        const response = await fetch(targetUrl, { cache: 'no-cache' });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const contentLength = Number(response.headers.get('content-length')) || 0;
-        const reader = response.body?.getReader();
-
-        if (!reader) {
-          const buffer = await response.arrayBuffer();
-          if (cache) {
-            try {
-              await cache.put(targetUrl, new Response(buffer));
-            } catch {
-              // Ignore cache storage error
-            }
-          }
-          return buffer;
-        }
-
-        const chunks: Uint8Array[] = [];
-        let receivedBytes = 0;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            chunks.push(value);
-            receivedBytes += value.length;
-            if (contentLength > 0) {
-              const percent = Math.min(99, Math.round((receivedBytes / contentLength) * 100));
-              setDownloadProgress(percent);
-            }
-          }
-        }
-
-        setDownloadProgress(100);
-        setLoadingStep('Parsing 3D avatar meshes & expressions...');
-
-        const totalBuffer = new Uint8Array(receivedBytes);
-        let position = 0;
-        for (const chunk of chunks) {
-          totalBuffer.set(chunk, position);
-          position += chunk.length;
-        }
-
-        const finalBuffer = totalBuffer.buffer;
-
-        // Persist to Cache API for instant reload
-        if (cache) {
-          try {
-            await cache.put(targetUrl, new Response(finalBuffer));
-            await cache.put(VRM_CONFIG.modelUrl, new Response(finalBuffer));
-          } catch {
-            // Ignore cache put error
-          }
-        }
-
-        return finalBuffer;
-      } catch (err: unknown) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        console.warn(`Attempt failed for ${targetUrl}:`, lastError.message);
-      }
-    }
-
-    throw lastError || new Error('Failed to download VRM model from all candidate endpoints.');
-  }, []);
 
   // Main Three.js Scene Setup & VRM Loader
   useEffect(() => {
@@ -245,7 +170,11 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    fetchVRMWithCache()
+    fetchVRMWithCache((pct, step) => {
+      if (isDisposed) return;
+      if (pct !== undefined) setDownloadProgress(pct);
+      if (step) setLoadingStep(step);
+    })
       .then((buffer) => {
         if (isDisposed) return;
 
@@ -306,39 +235,77 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
             vrmRef.current = vrm;
             scene.add(vrm.scene);
 
-            // Load and Retarget Mixamo Idle Animation
-            const animCandidateUrls = VRM_CONFIG.candidateAnimationUrls;
+            // Lightweight hit proxy collider for instant non-blocking raycasting
+            const hitProxyGeometry = new THREE.CylinderGeometry(0.26, 0.28, 1.55, 12);
+            hitProxyGeometry.translate(0, 0.77, 0);
+            const hitProxyMaterial = new THREE.MeshBasicMaterial({ visible: false });
+            const hitProxy = new THREE.Mesh(hitProxyGeometry, hitProxyMaterial);
+            hitProxy.name = 'hitProxyCollider';
+            vrm.scene.add(hitProxy);
+            hitProxyRef.current = hitProxy;
 
-            const loadMixamoIdle = async () => {
-              for (const animUrl of animCandidateUrls) {
+            // Load and Retarget Mixamo Animations (Idle, Fall, Getup)
+            const mixer = new THREE.AnimationMixer(vrm.scene);
+            mixerRef.current = mixer;
+
+            const loadAndRetargetClip = async (candidateUrls: string[], filterHeadNeck = false) => {
+              for (const animUrl of candidateUrls) {
                 try {
                   const clip = await retargetAnimationFromUrl(animUrl, vrm);
                   if (clip && !isDisposed) {
-                    const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
-                    const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
-                    const headPrefix = headNode?.name ? `${headNode.name}.` : '';
-                    const neckPrefix = neckNode?.name ? `${neckNode.name}.` : '';
+                    if (filterHeadNeck) {
+                      const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
+                      const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
+                      const headPrefix = headNode?.name ? `${headNode.name}.` : '';
+                      const neckPrefix = neckNode?.name ? `${neckNode.name}.` : '';
 
-                    clip.tracks = clip.tracks.filter((track) => {
-                      if (headPrefix && track.name.startsWith(headPrefix)) return false;
-                      if (neckPrefix && track.name.startsWith(neckPrefix)) return false;
-                      return true;
-                    });
-
-                    const mixer = new THREE.AnimationMixer(vrm.scene);
-                    mixerRef.current = mixer;
-                    const action = mixer.clipAction(clip);
-                    action.setLoop(THREE.LoopRepeat, Infinity);
-                    action.play();
-                    break;
+                      clip.tracks = clip.tracks.filter((track) => {
+                        if (headPrefix && track.name.startsWith(headPrefix)) return false;
+                        if (neckPrefix && track.name.startsWith(neckPrefix)) return false;
+                        return true;
+                      });
+                    }
+                    return clip;
                   }
                 } catch (animErr) {
                   console.warn(`Mixamo retarget failed for ${animUrl}:`, animErr);
                 }
               }
+              return null;
             };
 
-            loadMixamoIdle();
+            const loadAllAnimations = async () => {
+              // 1. Idle animation (filters head/neck for natural procedural mouse gaze)
+              const idleClip = await loadAndRetargetClip(VRM_CONFIG.candidateAnimationUrls, true);
+              if (idleClip && !isDisposed && mixerRef.current) {
+                const idleAction = mixerRef.current.clipAction(idleClip);
+                idleAction.setLoop(THREE.LoopRepeat, Infinity);
+                idleAction.play();
+                idleActionRef.current = idleAction;
+              }
+
+              // 2. Fall animation (full body keyframes for tumbling to floor)
+              loadAndRetargetClip(VRM_CONFIG.candidateFallAnimationUrls, false).then((fallClip) => {
+                if (fallClip && !isDisposed && mixerRef.current) {
+                  const fallAction = mixerRef.current.clipAction(fallClip);
+                  fallAction.setLoop(THREE.LoopOnce, 1);
+                  fallAction.clampWhenFinished = true;
+                  fallActionRef.current = fallAction;
+                }
+              });
+
+              // 3. Getup animation (full body keyframes for standing back up)
+              loadAndRetargetClip(VRM_CONFIG.candidateGetupAnimationUrls, false).then((getupClip) => {
+                if (getupClip && !isDisposed && mixerRef.current) {
+                  const getupAction = mixerRef.current.clipAction(getupClip);
+                  getupAction.setLoop(THREE.LoopOnce, 1);
+                  getupAction.clampWhenFinished = true;
+                  getupActionRef.current = getupAction;
+                }
+              });
+            };
+
+            loadAllAnimations();
 
             setIsLoaded(true);
             setDownloadProgress(null);
@@ -402,6 +369,103 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     let smileStayTimer = 0;
     let currentRelaxed = 0.25;
     let currentHappy = 0.0;
+    let currentAngry = 0.0;
+
+    // ----------------------------------------------------
+    // Fall & Get Up Multi-Click Sequence
+    // ----------------------------------------------------
+    let fallSequenceTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let getupFallbackTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const triggerFallSequence = () => {
+      if (isFallSequenceActiveRef.current) return;
+      const mixer = mixerRef.current;
+      const idleAction = idleActionRef.current;
+      const fallAction = fallActionRef.current;
+      const getupAction = getupActionRef.current;
+
+      if (!mixer || !fallAction || !getupAction || !idleAction) return;
+
+      isFallSequenceActiveRef.current = true;
+
+      if (fallSequenceTimeoutId) clearTimeout(fallSequenceTimeoutId);
+      if (getupFallbackTimeoutId) clearTimeout(getupFallbackTimeoutId);
+
+      // Reset any leftover click impulse forces so physics does not fight animation
+      clickImpulsePitch = 0;
+      clickImpulseVelocityPitch = 0;
+      clickImpulseRoll = 0;
+      clickImpulseVelocityRoll = 0;
+      clickImpulseHipsY = 0;
+      clickImpulseVelocityHipsY = 0;
+      clickImpulseArms = 0;
+      clickImpulseVelocityArms = 0;
+
+      // 1. Play mixamo_fall.fbx with smooth keyframe transition from current coordinates and points
+      fallAction.reset();
+      fallAction.setLoop(THREE.LoopOnce, 1);
+      fallAction.clampWhenFinished = true;
+      fallAction.crossFadeFrom(idleAction, 0.4, false);
+      fallAction.play();
+
+      let hasHandledFallEnd = false;
+      const handleFallComplete = () => {
+        if (hasHandledFallEnd || isDisposed) return;
+        hasHandledFallEnd = true;
+        mixer.removeEventListener('finished', onFallFinished);
+
+        // 2. Wait 2 seconds before playing mixamo_getup.fbx
+        fallSequenceTimeoutId = setTimeout(() => {
+          if (isDisposed) return;
+
+          // 3. Smooth keyframe transition to first frame of mixamo_getup.fbx
+          getupAction.reset();
+          getupAction.setLoop(THREE.LoopOnce, 1);
+          getupAction.clampWhenFinished = true;
+          getupAction.crossFadeFrom(fallAction, 0.45, false);
+          getupAction.play();
+
+          let hasHandledGetupEnd = false;
+          const handleGetupComplete = () => {
+            if (hasHandledGetupEnd || isDisposed) return;
+            hasHandledGetupEnd = true;
+            mixer.removeEventListener('finished', onGetupFinished);
+
+            // 4. At the end of get up animation, keyframe transition to default idle animation
+            idleAction.reset();
+            idleAction.setLoop(THREE.LoopRepeat, Infinity);
+            idleAction.crossFadeFrom(getupAction, 0.6, false);
+            idleAction.play();
+
+            setTimeout(() => {
+              isFallSequenceActiveRef.current = false;
+            }, 600);
+          };
+
+          const onGetupFinished = (e: any) => {
+            if (e.action === getupAction) {
+              handleGetupComplete();
+            }
+          };
+
+          mixer.addEventListener('finished', onGetupFinished);
+
+          const getupDuration = (getupAction.getClip()?.duration || 2.5) * 1000;
+          getupFallbackTimeoutId = setTimeout(handleGetupComplete, getupDuration + 150);
+        }, 2000); // 2 second pause on floor
+      };
+
+      const onFallFinished = (e: any) => {
+        if (e.action === fallAction) {
+          handleFallComplete();
+        }
+      };
+
+      mixer.addEventListener('finished', onFallFinished);
+
+      const fallDuration = (fallAction.getClip()?.duration || 2.0) * 1000;
+      setTimeout(handleFallComplete, fallDuration + 150);
+    };
 
     // 7. Render & Animation Loop
     const animate = () => {
@@ -467,7 +531,8 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
         // Skeletal click impact layer (without angular momentum drag)
         const humanoid = vrm.humanoid;
-        if (humanoid) {
+        const isFalling = isFallSequenceActiveRef.current;
+        if (humanoid && !isFalling) {
           const spineNode = humanoid.getNormalizedBoneNode('spine');
           const chestNode = humanoid.getNormalizedBoneNode('chest');
           const upperChestNode = humanoid.getNormalizedBoneNode('upperChest');
@@ -549,8 +614,17 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           }
         }
 
-        const targetRelaxed = isSmiling ? 0.35 : 0.25;
-        const targetHappy = isSmiling ? 0.25 : 0.0;
+        // Pain sound temporary angry/annoyed expression mood animation (also sustained while falling)
+        const isPainActive = isPainSoundPlayingRef.current || isFalling;
+        const targetAngry = isPainActive ? 0.95 : 0.0;
+        currentAngry = THREE.MathUtils.lerp(
+          currentAngry,
+          targetAngry,
+          delta * (isPainActive ? 12.0 : 4.5)
+        );
+
+        const targetRelaxed = isPainActive ? 0.0 : (isSmiling ? 0.35 : 0.25);
+        const targetHappy = isPainActive ? 0.0 : (isSmiling ? 0.25 : 0.0);
 
         currentRelaxed = THREE.MathUtils.lerp(currentRelaxed, targetRelaxed, delta * 3.5);
         currentHappy = THREE.MathUtils.lerp(currentHappy, targetHappy, delta * 3.5);
@@ -563,11 +637,13 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           vrm.expressionManager.setValue('ee', visemes.ee);
           vrm.expressionManager.setValue('oh', visemes.oh);
 
-          vrm.expressionManager.setValue('relaxed', currentRelaxed);
-          vrm.expressionManager.setValue('happy', Math.min(1.0, currentHappy + hitExpressionHappy));
+          // Suppress peaceful baseline expressions while angry/annoyed mood is active
+          const moodSuppression = Math.max(0, 1.0 - currentAngry * 1.2);
+          vrm.expressionManager.setValue('relaxed', currentRelaxed * moodSuppression);
+          vrm.expressionManager.setValue('happy', Math.min(1.0, currentHappy + hitExpressionHappy) * moodSuppression);
           vrm.expressionManager.setValue('surprised', Math.min(1.0, hitExpressionSurprised));
           vrm.expressionManager.setValue('sad', 0);
-          vrm.expressionManager.setValue('angry', 0);
+          vrm.expressionManager.setValue('angry', currentAngry);
         }
 
         // Blinking
@@ -604,7 +680,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
         const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
 
-        if (headNode && cameraRef.current) {
+        if (!isFalling && headNode && cameraRef.current) {
           const headWorldPos = new THREE.Vector3();
           headNode.getWorldPosition(headWorldPos);
           headWorldPos.y += 0.055;
@@ -673,10 +749,16 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
 
-      // Raycast against the VRM avatar scene
-      const raycaster = new THREE.Raycaster();
+      // Instant raycast against simple hit proxy collider (eliminates heavy CPU vertex skinning on high-poly meshes)
+      const raycaster = raycasterRef.current;
       raycaster.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
-      const intersects = raycaster.intersectObjects(vrmRef.current.scene.children, true);
+
+      let intersects: THREE.Intersection[] = [];
+      if (hitProxyRef.current) {
+        intersects = raycaster.intersectObject(hitProxyRef.current, false);
+      } else {
+        intersects = raycaster.intersectObjects(vrmRef.current.scene.children, true);
+      }
 
       if (intersects.length > 0) {
         isHoldingOnBody = true;
@@ -708,57 +790,58 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           hitRegion = 'legs';
         }
 
-        // Apply specific physical responses & facial expressions per region
-        if (hitRegion === 'head') {
-          clickImpulseVelocityPitch = -2.2;
-          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 12.0, -3.5, 3.5);
-          clickImpulseVelocityHipsY = -0.02;
-          clickImpulseVelocityArms = 1.2;
-          clickFlinchBlink = 1.0;
-          hitExpressionSurprised = 0.8;
-          hitExpressionHappy = 0.4;
-        } else if (hitRegion === 'chest') {
-          clickImpulseVelocityPitch = -6.0;
-          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 10.0, -4.5, 4.5);
-          clickImpulseVelocityHipsY = -0.06;
-          clickImpulseVelocityArms = 6.0;
-          clickFlinchBlink = 0.9;
-          hitExpressionSurprised = 1.0;
-        } else if (hitRegion === 'stomach') {
-          clickImpulseVelocityPitch = -4.0;
-          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 8.0, -3.0, 3.0);
-          clickImpulseVelocityHipsY = -0.12;
-          clickImpulseVelocityArms = 3.5;
-          clickFlinchBlink = 0.6;
-          hitExpressionSurprised = 0.5;
-        } else if (hitRegion === 'skirt') {
-          clickImpulseVelocityPitch = -1.5;
-          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 14.0, -5.0, 5.0);
-          clickImpulseVelocityHipsY = 0.10;
-          clickImpulseVelocityArms = 2.0;
-          clickFlinchBlink = 0.4;
-          hitExpressionSurprised = 0.3;
-        } else { // legs
-          clickImpulseVelocityPitch = 3.0;
-          clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 6.0, -2.5, 2.5);
-          clickImpulseVelocityHipsY = 0.16;
-          clickImpulseVelocityArms = 1.5;
-          clickFlinchBlink = 0.3;
-          hitExpressionSurprised = 0.4;
+        // Trigger pain sound and voice-synthesis pause callback
+        onModelClickRef.current?.(hitRegion);
+
+        // Detect 4 or more clicks within a 3-second window to trigger fall & getup sequence
+        const clickNow = performance.now();
+        clickTimestampsRef.current.push(clickNow);
+        clickTimestampsRef.current = clickTimestampsRef.current.filter((t) => clickNow - t <= 3000);
+
+        if (clickTimestampsRef.current.length >= 4 && !isFallSequenceActiveRef.current) {
+          clickTimestampsRef.current = [];
+          triggerFallSequence();
         }
 
-        // Secondary spring bone force injection
-        if (vrmRef.current.springBoneManager?.joints) {
-          const impulseX = clickImpulseVelocityRoll * 0.01;
-          const impulseY = clickImpulseVelocityHipsY * 0.025;
-          const impulseZ = clickImpulseVelocityPitch * 0.015;
-          vrmRef.current.springBoneManager.joints.forEach((joint: any) => {
-            if (joint._prevTail) {
-              joint._prevTail.x += impulseX;
-              joint._prevTail.y += impulseY;
-              joint._prevTail.z += impulseZ;
-            }
-          });
+        // Apply specific physical responses & facial expressions per region if not in fall sequence
+        if (!isFallSequenceActiveRef.current) {
+          if (hitRegion === 'head') {
+            clickImpulseVelocityPitch = -2.2;
+            clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 12.0, -3.5, 3.5);
+            clickImpulseVelocityHipsY = -0.02;
+            clickImpulseVelocityArms = 1.2;
+            clickFlinchBlink = 1.0;
+            hitExpressionSurprised = 0.8;
+            hitExpressionHappy = 0.4;
+          } else if (hitRegion === 'chest') {
+            clickImpulseVelocityPitch = -5.0;
+            clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 10.0, -4.0, 4.0);
+            clickImpulseVelocityHipsY = -0.06;
+            clickImpulseVelocityArms = 4.0;
+            clickFlinchBlink = 0.9;
+            hitExpressionSurprised = 1.0;
+          } else if (hitRegion === 'stomach') {
+            clickImpulseVelocityPitch = -3.5;
+            clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 8.0, -3.0, 3.0);
+            clickImpulseVelocityHipsY = -0.10;
+            clickImpulseVelocityArms = 2.5;
+            clickFlinchBlink = 0.6;
+            hitExpressionSurprised = 0.5;
+          } else if (hitRegion === 'skirt') {
+            clickImpulseVelocityPitch = -1.5;
+            clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 12.0, -4.0, 4.0);
+            clickImpulseVelocityHipsY = 0.08;
+            clickImpulseVelocityArms = 1.8;
+            clickFlinchBlink = 0.4;
+            hitExpressionSurprised = 0.3;
+          } else { // legs
+            clickImpulseVelocityPitch = 2.5;
+            clickImpulseVelocityRoll = THREE.MathUtils.clamp(-localX * 6.0, -2.5, 2.5);
+            clickImpulseVelocityHipsY = 0.12;
+            clickImpulseVelocityArms = 1.2;
+            clickFlinchBlink = 0.3;
+            hitExpressionSurprised = 0.4;
+          }
         }
 
         canvas.style.cursor = 'grabbing';
@@ -780,6 +863,9 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     return () => {
       isDisposed = true;
+      if (fallSequenceTimeoutId) clearTimeout(fallSequenceTimeoutId);
+      if (getupFallbackTimeoutId) clearTimeout(getupFallbackTimeoutId);
+      clickTimestampsRef.current = [];
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('pointermove', handlePointerMove);
@@ -792,7 +878,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         VRMUtils.deepDispose(vrmRef.current.scene);
       }
     };
-  }, [fetchVRMWithCache]);
+  }, []);
 
   return (
     <div

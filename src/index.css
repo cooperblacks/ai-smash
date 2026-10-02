@@ -1,6 +1,21 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Custom angelic, cute light cyan and sky blue palette for all Tailwind sky-* tokens */
+@theme {
+  --color-sky-50: #f0fbfd;
+  --color-sky-100: #dcf4fb;
+  --color-sky-200: #bcebfc;
+  --color-sky-300: #8ce0fa;
+  --color-sky-400: #55d2f6;
+  --color-sky-500: #22bdec;
+  --color-sky-600: #0f9bc7;
+  --color-sky-700: #117ba2;
+  --color-sky-800: #146381;
+  --color-sky-900: #16536b;
+  --color-sky-950: #093649;
+}
+
 @layer base {
   body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;

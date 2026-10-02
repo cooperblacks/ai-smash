@@ -80,4 +80,5 @@ export interface UserSettings {
   autoScroll: boolean;
   bannerCycling: boolean;
   maxTokens?: number;
+  visualSubtitles?: boolean;
 }
