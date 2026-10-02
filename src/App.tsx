@@ -1316,7 +1316,7 @@ export default function App() {
         {serverFallbackNotice && (
           <div className="flex justify-center px-4 mb-2">
             <div
-              className={`px-3.5 py-1.5 rounded-full text-xs font-medium flex items-center gap-2 shadow-sm transition-all duration-500 border z-0 ${
+              className={`px-3.5 py-1.5 rounded-full text-xs font-medium flex items-center gap-2 shadow-sm transition-all duration-500 border z-60 ${
                 serverFallbackNotice.isFading ? 'opacity-0 -translate-y-1' : 'opacity-100 translate-y-0'
               } ${THEME_COLORS.tokens.fallbackNoticeBg} backdrop-blur-md animate-in fade-in slide-in-from-bottom-1`}
             >
