@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <span
                 className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 ${THEME_COLORS.tokens.avatarBorder} ${
-                  isGenerating ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500'
+                  isGenerating ? 'bg-sky-400 animate-pulse' : 'bg-emerald-500'
                 }`}
               />
             </div>
@@ -157,7 +157,7 @@ export const Header: React.FC<HeaderProps> = ({
             aria-label="Toggle light/dark theme"
           >
             {theme === 'dark' ? (
-              <Sun className="w-4 h-4 text-amber-400 animate-in spin-in-180 duration-200" />
+              <Sun className="w-4 h-4 text-sky-400 animate-in spin-in-180 duration-200" />
             ) : (
               <Moon className="w-4 h-4 text-neutral-600 animate-in spin-in-180 duration-200" />
             )}

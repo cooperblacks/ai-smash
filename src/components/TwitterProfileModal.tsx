@@ -117,7 +117,7 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
               <h2 className="text-xl font-bold text-neutral-900 dark:text-white tracking-tight">
                 {AI_PROFILE.name}
               </h2>
-              <BadgeCheck className={`w-5 h-5 ${THEME_COLORS.tokens.accentText} fill-amber-500/20`} />
+              <BadgeCheck className={`w-5 h-5 ${THEME_COLORS.tokens.accentText} fill-sky-500/20`} />
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 font-mono">
               {AI_PROFILE.handle}

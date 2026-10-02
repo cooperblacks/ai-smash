@@ -284,7 +284,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                           <>
                             <span>RAM: --</span>
                             <span>&bull;</span>
-                            <span className="truncate max-w-[130px] font-medium text-amber-700 dark:text-amber-400">
+                            <span className="truncate max-w-[130px] font-medium text-sky-700 dark:text-sky-400">
                               {isMuxAiOption ? muxAiModelName : customModelName}
                             </span>
                           </>
@@ -330,7 +330,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               }
                             }}
                             placeholder="http://localhost:11434"
-                            className="flex-1 px-2 py-1 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-amber-500"
+                            className="flex-1 px-2 py-1 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-sky-500"
                             autoFocus
                           />
                           <button

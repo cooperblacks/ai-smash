@@ -147,7 +147,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <button
                   onClick={() => onUpdateSettings({ soundEffects: !userSettings.soundEffects })}
                   className={`w-10 h-6 rounded-full transition-colors relative ${
-                    userSettings.soundEffects ? 'bg-neutral-900 dark:bg-amber-500' : 'bg-neutral-200 dark:bg-neutral-700'
+                    userSettings.soundEffects ? 'bg-neutral-900 dark:bg-sky-500' : 'bg-neutral-200 dark:bg-neutral-700'
                   }`}
                 >
                   <span
@@ -175,7 +175,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClick={() => onUpdateSettings({ preferredDevice: device })}
                     className={`p-3 rounded-2xl border text-left transition-all ${
                       isSelected
-                        ? `${THEME_COLORS.tokens.dropdownItemActive} text-neutral-900 dark:text-amber-200 font-medium`
+                        ? `${THEME_COLORS.tokens.dropdownItemActive} text-neutral-900 dark:text-sky-200 font-medium`
                         : `${THEME_COLORS.tokens.modalSectionCard} text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100/70 dark:hover:bg-[#202332]`
                     }`}
                   >

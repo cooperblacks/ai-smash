@@ -32,12 +32,12 @@ export const THEME_COLORS = {
     elevatedLight: '#ffffff',
     elevatedDark: '#161822',
     panelDark: '#1a1c28',
-    accent: '#22d3ee', // cyan-400 (cute pastel cyan base)
-    accentLight: '#67e8f9', // cyan-300
-    accentDark: '#06b6d4', // cyan-500
-    accentDeep: '#0891b2', // cyan-600
-    accentBadgeTextLight: '#0e7490', // cyan-700
-    accentBadgeTextDark: '#a5f3fc', // cyan-200
+    accent: '#22d3ee', // sky-400 (cute pastel sky base)
+    accentLight: '#67e8f9', // sky-300
+    accentDark: '#06b6d4', // sky-500
+    accentDeep: '#0891b2', // sky-600
+    accentBadgeTextLight: '#0e7490', // sky-700
+    accentBadgeTextDark: '#a5f3fc', // sky-200
     success: '#10b981', // emerald-500
     successDark: '#059669', // emerald-600
     successLight: '#34d399', // emerald-400
@@ -55,7 +55,7 @@ export const THEME_COLORS = {
       to: '#171a26',
     },
     lighting: {
-      ambient: 0xe0f7fa, // pastel cyan tint for soft outdoor daylight
+      ambient: 0xe0f7fa, // pastel sky tint for soft outdoor daylight
       key: 0xffffff,
       fill: 0xf0f4f8,
       rim: 0xffffff,
@@ -73,63 +73,63 @@ export const THEME_COLORS = {
     headerBorder: 'border-b border-black/[0.06] dark:border-white/[0.08]',
     headerGradientMaskBottom: 'bg-gradient-to-b from-white/70 via-white/85 to-white dark:from-[#13151f]/70 dark:via-[#13151f]/85 dark:to-[#13151f]',
     headerGradientMaskX: 'bg-gradient-to-r from-white via-transparent to-white dark:from-[#13151f] dark:via-transparent dark:to-[#13151f]',
-    avatarRing: 'ring-1 ring-black/10 dark:ring-white/10 group-hover:ring-cyan-400/50',
+    avatarRing: 'ring-1 ring-black/10 dark:ring-white/10 group-hover:ring-sky-400/50',
     avatarBorder: 'border-white dark:border-[#13151f]',
 
     // Chat Composer & Input
     composerContainer: 'bg-white/95 dark:bg-[#13151f]/95 border-t border-black/[0.06] dark:border-white/[0.08]',
-    composerBox: 'bg-[#f4f5f8] dark:bg-[#1c1f2e] border border-black/[0.08] dark:border-white/[0.1] focus-within:border-cyan-300 focus-within:ring-2 focus-within:ring-cyan-400/20 focus-within:bg-white dark:focus-within:bg-[#1c1f2e]',
+    composerBox: 'bg-[#f4f5f8] dark:bg-[#1c1f2e] border border-black/[0.08] dark:border-white/[0.1] focus-within:border-sky-300 focus-within:ring-2 focus-within:ring-sky-400/20 focus-within:bg-white dark:focus-within:bg-[#1c1f2e]',
     textareaText: 'text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500',
-    sendButtonActive: 'bg-neutral-900 hover:bg-neutral-800 dark:bg-cyan-400 dark:hover:bg-cyan-300 dark:text-neutral-950 text-white',
+    sendButtonActive: 'bg-neutral-900 hover:bg-neutral-800 dark:bg-sky-400 dark:hover:bg-sky-300 dark:text-neutral-950 text-white',
     sendButtonDisabled: 'bg-black/5 dark:bg-white/5 text-neutral-300 dark:text-neutral-600',
-    stopButton: 'bg-cyan-400 hover:bg-cyan-300 text-neutral-950',
+    stopButton: 'bg-sky-400 hover:bg-sky-300 text-neutral-950',
 
     // Message Bubbles
-    userBubble: 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 font-normal rounded-tr-sm shadow-xs selection:bg-cyan-300 selection:text-black',
+    userBubble: 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 font-normal rounded-tr-sm shadow-xs selection:bg-sky-300 selection:text-black',
     assistantBubble: 'bg-white text-neutral-800 dark:bg-[#1c1f2e] dark:text-neutral-100 rounded-tl-sm border border-black/[0.08] dark:border-white/[0.08] shadow-xs',
     dateSeparatorText: 'text-neutral-400 dark:text-neutral-400 bg-[#f8f9fc] dark:bg-[#0f1117]',
     dateSeparatorLine: 'bg-black/[0.06] dark:bg-white/[0.08]',
     starterChip: 'bg-white dark:bg-[#161822] hover:bg-neutral-50 dark:hover:bg-[#1c1f2e] border border-black/[0.06] dark:border-white/[0.08] hover:border-black/15 dark:hover:border-white/15 text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white',
 
     // Search & Highlights
-    searchMarkCurrent: 'bg-cyan-300 text-neutral-950 font-bold ring-2 ring-cyan-400 shadow-xs',
-    searchMarkOther: 'bg-cyan-100 dark:bg-cyan-400/30 text-neutral-900 dark:text-cyan-200 font-medium',
+    searchMarkCurrent: 'bg-sky-300 text-neutral-950 font-bold ring-2 ring-sky-400 shadow-xs',
+    searchMarkOther: 'bg-sky-100 dark:bg-sky-400/30 text-neutral-900 dark:text-sky-200 font-medium',
     searchBarBg: 'bg-white/95 dark:bg-[#13151f]/95 border-b border-black/[0.06] dark:border-white/[0.08]',
-    searchInputBg: 'bg-neutral-100/80 dark:bg-[#1c1f2e] border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:border-cyan-300 focus:bg-white dark:focus:bg-[#1c1f2e]',
+    searchInputBg: 'bg-neutral-100/80 dark:bg-[#1c1f2e] border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:border-sky-300 focus:bg-white dark:focus:bg-[#1c1f2e]',
 
     // Sidebar & Conversations
     sidebarBg: 'bg-white dark:bg-[#13151f] border-r border-black/[0.08] dark:border-white/[0.08]',
     sidebarItemActive: 'bg-neutral-100 dark:bg-white/[0.1] text-neutral-900 dark:text-white font-semibold shadow-xs',
     sidebarItemInactive: 'text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-50 dark:hover:bg-white/[0.05]',
-    sidebarNewChatButton: 'bg-neutral-900 hover:bg-neutral-800 dark:bg-cyan-400 dark:hover:bg-cyan-300 dark:text-neutral-950 text-white',
-    sidebarSearchInput: 'bg-neutral-50 dark:bg-[#1c1f2e] border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:border-cyan-300 focus:bg-white dark:focus:bg-[#1c1f2e]',
+    sidebarNewChatButton: 'bg-neutral-900 hover:bg-neutral-800 dark:bg-sky-400 dark:hover:bg-sky-300 dark:text-neutral-950 text-white',
+    sidebarSearchInput: 'bg-neutral-50 dark:bg-[#1c1f2e] border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:border-sky-300 focus:bg-white dark:focus:bg-[#1c1f2e]',
 
     // Modals & Panels
     modalBg: 'bg-white dark:bg-[#161822] border-black/10 dark:border-white/[0.1]',
     modalSectionCard: 'bg-neutral-50 dark:bg-[#1a1c28] border border-neutral-200/80 dark:border-neutral-700/60',
-    modalInputBg: 'bg-white dark:bg-[#13151f] border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:border-cyan-400',
+    modalInputBg: 'bg-white dark:bg-[#13151f] border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:border-sky-400',
     modalCloseButton: 'hover:bg-neutral-200/70 dark:hover:bg-white/[0.08] text-neutral-400 hover:text-neutral-700 dark:hover:text-white',
-    modalPrimaryButton: 'bg-neutral-900 hover:bg-neutral-800 dark:bg-cyan-400 dark:hover:bg-cyan-300 dark:text-neutral-950 text-white font-medium',
+    modalPrimaryButton: 'bg-neutral-900 hover:bg-neutral-800 dark:bg-sky-400 dark:hover:bg-sky-300 dark:text-neutral-950 text-white font-medium',
 
     // Dropdowns & Selectors
     dropdownBg: 'bg-white dark:bg-[#161822] border-black/10 dark:border-white/[0.1]',
     dropdownTrigger: 'bg-neutral-100 hover:bg-neutral-200/80 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] border-black/[0.06] dark:border-white/[0.08] text-neutral-800 dark:text-neutral-200',
-    dropdownItemActive: 'bg-cyan-50/80 dark:bg-cyan-950/40 border-cyan-300 dark:border-cyan-700/60',
+    dropdownItemActive: 'bg-sky-50/80 dark:bg-sky-950/40 border-sky-300 dark:border-sky-700/60',
     dropdownItemDefault: 'hover:bg-neutral-50 dark:hover:bg-white/[0.05] border-transparent',
 
     // Telemetry & Status Bar
     telemetryBg: 'bg-[#f9fafb]/90 dark:bg-[#13151f]/90 border-t border-black/[0.06] dark:border-white/[0.08]',
     telemetryCard: 'bg-white dark:bg-[#161822] border-black/[0.06] dark:border-white/[0.08]',
-    fallbackNoticeBg: 'bg-cyan-50 dark:bg-cyan-950/60 text-cyan-900 dark:text-cyan-200 border-cyan-300 dark:border-cyan-700/60',
+    fallbackNoticeBg: 'bg-sky-50 dark:bg-sky-950/60 text-sky-900 dark:text-sky-200 border-sky-300 dark:border-sky-700/60',
 
     // Semantic States & Accents
-    accentText: 'text-cyan-600 dark:text-cyan-300',
-    accentTextHover: 'hover:text-cyan-600 dark:hover:text-cyan-300',
-    accentBg: 'bg-cyan-400',
-    accentBadge: 'bg-cyan-100 dark:bg-cyan-900/50 text-cyan-800 dark:text-cyan-200 font-mono',
-    activeSearchBadge: 'bg-cyan-100 dark:bg-cyan-950/60 text-cyan-900 dark:text-cyan-200 ring-1 ring-cyan-300 dark:ring-cyan-700',
-    activeSpeakingBadge: 'text-cyan-800 dark:text-cyan-200 bg-cyan-100 dark:bg-cyan-950/60 ring-1 ring-cyan-300 dark:ring-cyan-700',
-    active3DButton: 'bg-cyan-400 text-neutral-950 shadow-md ring-2 ring-cyan-300',
+    accentText: 'text-sky-600 dark:text-sky-300',
+    accentTextHover: 'hover:text-sky-600 dark:hover:text-sky-300',
+    accentBg: 'bg-sky-400',
+    accentBadge: 'bg-sky-100 dark:bg-sky-900/50 text-sky-800 dark:text-sky-200 font-mono',
+    activeSearchBadge: 'bg-sky-100 dark:bg-sky-950/60 text-sky-900 dark:text-sky-200 ring-1 ring-sky-300 dark:ring-sky-700',
+    activeSpeakingBadge: 'text-sky-800 dark:text-sky-200 bg-sky-100 dark:bg-sky-950/60 ring-1 ring-sky-300 dark:ring-sky-700',
+    active3DButton: 'bg-sky-400 text-neutral-950 shadow-md ring-2 ring-sky-300',
 
     successBadge: 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800',
     successText: 'text-emerald-600 dark:text-emerald-400',
@@ -335,7 +335,7 @@ export const UI_CONFIG = {
   deviceBadges: {
     webgpu: 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
     wasm: 'bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800',
-    ollama: 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800',
+    ollama: 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800',
     other: 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800',
   },
 };

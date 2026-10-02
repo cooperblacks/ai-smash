@@ -72,7 +72,7 @@ export const MaxTokensSelector: React.FC<MaxTokensSelectorProps> = ({
               step={TOKEN_CONFIG.sliderStep}
               value={maxTokens}
               onChange={(e) => onChangeMaxTokens(parseInt(e.target.value, 10))}
-              className="w-full h-1.5 bg-neutral-200 dark:bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-neutral-900 dark:accent-amber-500"
+              className="w-full h-1.5 bg-neutral-200 dark:bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-neutral-900 dark:accent-sky-500"
             />
             <div className="flex justify-between text-[10px] font-mono text-neutral-400 dark:text-neutral-500">
               <span>{TOKEN_CONFIG.sliderMin} T (Short)</span>
@@ -105,7 +105,7 @@ export const MaxTokensSelector: React.FC<MaxTokensSelectorProps> = ({
                 onClick={() => onChangeMaxTokens(val)}
                 className={`px-2 py-0.5 rounded-lg text-[10px] font-mono transition-all ${
                   maxTokens === val
-                    ? 'bg-neutral-900 dark:bg-amber-500 text-white dark:text-neutral-950 font-medium'
+                    ? 'bg-neutral-900 dark:bg-sky-500 text-white dark:text-neutral-950 font-medium'
                     : 'bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300'
                 }`}
               >

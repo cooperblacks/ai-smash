@@ -70,7 +70,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
         {/* Fast-spinning loader */}
         <div className="mt-8 flex flex-col items-center gap-3">
           <div
-            className="w-8 h-8 rounded-full border-[2.5px] border-amber-500/25 border-t-amber-500 animate-spin"
+            className="w-8 h-8 rounded-full border-[2.5px] border-sky-500/25 border-t-sky-500 animate-spin"
             style={{ animationDuration: '0.45s' }}
             aria-label="Loading assets"
           />

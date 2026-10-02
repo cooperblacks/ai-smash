@@ -30,8 +30,8 @@ export const TelemetryBar: React.FC<TelemetryBarProps> = ({
     <div className={`w-full ${THEME_COLORS.tokens.telemetryBg} backdrop-blur-md px-3 sm:px-4 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none`}>
       {/* Download indicator bar if downloading */}
       {isDownloading && (
-        <div className="mb-1.5 p-2 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col gap-1.5 transition-all">
-          <div className="flex items-center justify-between text-xs text-amber-900 dark:text-amber-200 font-medium">
+        <div className="mb-1.5 p-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 flex flex-col gap-1.5 transition-all">
+          <div className="flex items-center justify-between text-xs text-sky-900 dark:text-sky-200 font-medium">
             <span className="flex items-center gap-1.5">
               <ArrowDownCircle className={`w-3.5 h-3.5 animate-bounce ${THEME_COLORS.tokens.accentText}`} />
               <span>
@@ -39,13 +39,13 @@ export const TelemetryBar: React.FC<TelemetryBarProps> = ({
               </span>
             </span>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80 font-mono">
+              <span className="text-[11px] text-sky-700/80 dark:text-sky-300/80 font-mono">
                 {downloadProgress.fileName || 'Fetching tensors'}
               </span>
               {onCancelDownload && (
                 <button
                   onClick={onCancelDownload}
-                  className="px-1.5 py-0.5 rounded bg-amber-200/60 dark:bg-amber-800 hover:bg-amber-300 dark:hover:bg-amber-700 text-amber-900 dark:text-amber-100 text-[10px] transition-colors"
+                  className="px-1.5 py-0.5 rounded bg-sky-200/60 dark:bg-sky-800 hover:bg-sky-300 dark:hover:bg-sky-700 text-sky-900 dark:text-sky-100 text-[10px] transition-colors"
                 >
                   Cancel
                 </button>
@@ -53,7 +53,7 @@ export const TelemetryBar: React.FC<TelemetryBarProps> = ({
             </div>
           </div>
           {/* Progress bar */}
-          <div className="w-full h-1.5 bg-amber-200/50 dark:bg-amber-900/50 rounded-full overflow-hidden">
+          <div className="w-full h-1.5 bg-sky-200/50 dark:bg-sky-900/50 rounded-full overflow-hidden">
             <div
               className={`h-full ${THEME_COLORS.tokens.accentBg} rounded-full transition-all duration-150`}
               style={{ width: `${Math.max(5, downloadProgress.progress)}%` }}
