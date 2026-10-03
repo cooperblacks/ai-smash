@@ -93,6 +93,16 @@ app.get(['/api/animation/:type', '/api/animation/idle'], async (req: Request, re
         VRM_CONFIG.getupAnimationUrl,
         ...VRM_CONFIG.candidateGetupAnimationUrls.filter((u) => !u.startsWith('/api')),
       ];
+    } else if (animType === 'walk') {
+      targetUrls = [
+        VRM_CONFIG.walkAnimationUrl,
+        ...VRM_CONFIG.candidateWalkAnimationUrls.filter((u) => !u.startsWith('/api')),
+      ];
+    } else if (animType === 'wave') {
+      targetUrls = [
+        VRM_CONFIG.waveAnimationUrl,
+        ...VRM_CONFIG.candidateWaveAnimationUrls.filter((u) => !u.startsWith('/api')),
+      ];
     } else {
       targetUrls = [
         VRM_CONFIG.animationUrl,

@@ -7,6 +7,7 @@ import {
   DownloadProgress,
   TelemetryStats,
   UserSettings,
+  ThemeDefinition,
 } from './types';
 import { DEFAULT_MODEL_ID, getModelById } from './lib/models';
 import {
@@ -20,6 +21,10 @@ import {
   deleteModelFromCache,
   clearAllTransformersCaches,
   loadCustomOllamaUrl,
+  loadStoredCustomThemes,
+  saveStoredCustomThemes,
+  loadActiveThemeId,
+  saveActiveThemeId,
 } from './lib/storage';
 import {
   streamPersonaResponse,
@@ -38,10 +43,14 @@ import {
   THEME_COLORS,
   UI_CONFIG,
   TOKEN_CONFIG,
+  PRESET_THEMES,
+  getThemeById,
 } from './constants';
 import { Header } from './components/Header';
 import { SearchBar } from './components/SearchBar';
 import { Sidebar } from './components/Sidebar';
+import { ThemeSidebar } from './components/ThemeSidebar';
+import { CustomThemeModal } from './components/CustomThemeModal';
 import { TelemetryBar } from './components/TelemetryBar';
 import { ChatInput } from './components/ChatInput';
 import { OllamaStatusMap } from './components/ModelSelector';
@@ -51,11 +60,39 @@ import { TwitterProfileModal } from './components/TwitterProfileModal';
 import { VRMCanvas } from './components/VRMCanvas';
 import { VRMSubtitles } from './components/VRMSubtitles';
 import { SplashScreen } from './components/SplashScreen';
+import { LandingPage } from './components/LandingPage';
 import { lipSyncManager } from './lib/lipSync';
 import { preloadVRMAssetsBehindTheScenes } from './lib/vrmCache';
 import { AlertCircle } from 'lucide-react';
 
 export default function App() {
+  // ----------------------------------------------------
+  // SPA Routing: '/' -> Landing Page, '/app' -> Main Chat App
+  // ----------------------------------------------------
+  const [currentRoute, setCurrentRoute] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname;
+      return path.startsWith('/app') ? '/app' : '/';
+    }
+    return '/';
+  });
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname;
+      setCurrentRoute(path.startsWith('/app') ? '/app' : '/');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = (path: string) => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState(null, '', path);
+      setCurrentRoute(path.startsWith('/app') ? '/app' : '/');
+      window.scrollTo(0, 0);
+    }
+  };
   // ----------------------------------------------------
   // State Initialization
   // ----------------------------------------------------
@@ -69,32 +106,91 @@ export default function App() {
     return { ...loaded, soundEffects: loaded.soundEffects !== false };
   });
 
-  // Light / Dark Theme state (default: light, remembered via browser storage)
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem(APP_INFO.storageKeys.theme);
-      if (stored === 'dark' || stored === 'light') return stored;
-    }
-    return 'light';
-  });
+  // ----------------------------------------------------
+  // Multi-Theme System State (Presets + Custom Themes + Browser Storage)
+  // ----------------------------------------------------
+  const [customThemes, setCustomThemes] = useState<ThemeDefinition[]>(() => loadStoredCustomThemes());
+  const [activeThemeId, setActiveThemeId] = useState<string>(() => loadActiveThemeId());
+  const [isThemeSidebarOpen, setIsThemeSidebarOpen] = useState(false);
+  const [isCustomThemeModalOpen, setIsCustomThemeModalOpen] = useState(false);
 
+  // Active theme resolved from presets and stored custom themes
+  const activeTheme = useMemo(
+    () => getThemeById(activeThemeId, customThemes),
+    [activeThemeId, customThemes]
+  );
+
+  const theme: 'light' | 'dark' = activeTheme.isDark ? 'dark' : 'light';
+
+  // Apply active theme colors and dark class to document root
   useEffect(() => {
-    if (typeof document !== 'undefined') {
-      if (theme === 'dark') {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-      }
-    }
-    try {
-      localStorage.setItem(APP_INFO.storageKeys.theme, theme);
-    } catch {
-      // Ignore storage errors
-    }
-  }, [theme]);
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
 
-  const handleToggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+    if (activeTheme.isDark) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+
+    // Set CSS theme variables
+    root.style.setProperty('--theme-bg', activeTheme.colors.bg);
+    root.style.setProperty('--theme-surface', activeTheme.colors.surface);
+    root.style.setProperty('--theme-card', activeTheme.colors.card);
+    root.style.setProperty('--theme-border', activeTheme.colors.border);
+    root.style.setProperty('--theme-text', activeTheme.colors.text);
+    root.style.setProperty('--theme-text-muted', activeTheme.colors.textMuted);
+    root.style.setProperty('--theme-accent', activeTheme.colors.accent);
+    root.style.setProperty('--theme-accent-hover', activeTheme.colors.accentHover);
+    root.style.setProperty('--theme-accent-soft', activeTheme.colors.accentSoft);
+    root.style.setProperty('--theme-user-bubble', activeTheme.colors.userBubble);
+    root.style.setProperty('--theme-user-bubble-text', activeTheme.colors.userBubbleText);
+    root.style.setProperty('--theme-assistant-bubble', activeTheme.colors.assistantBubble);
+    root.style.setProperty('--theme-assistant-bubble-text', activeTheme.colors.assistantBubbleText);
+    root.style.setProperty(
+      '--theme-header-bg',
+      activeTheme.colors.headerBg || (activeTheme.isDark ? 'rgba(19, 21, 31, 0.88)' : 'rgba(255, 255, 255, 0.88)')
+    );
+
+    // Sync all Tailwind sky-* color variables directly with the active theme
+    root.style.setProperty('--color-sky-50', activeTheme.colors.accentSoft);
+    root.style.setProperty('--color-sky-100', activeTheme.colors.accentSoft);
+    root.style.setProperty('--color-sky-200', activeTheme.colors.accentSoft);
+    root.style.setProperty('--color-sky-300', activeTheme.colors.accent);
+    root.style.setProperty('--color-sky-400', activeTheme.colors.accent);
+    root.style.setProperty('--color-sky-500', activeTheme.colors.accentHover);
+    root.style.setProperty('--color-sky-600', activeTheme.colors.accentHover);
+    root.style.setProperty('--color-sky-700', activeTheme.colors.accentHover);
+    root.style.setProperty('--color-sky-800', activeTheme.colors.accentHover);
+    root.style.setProperty('--color-sky-900', activeTheme.colors.text);
+    root.style.setProperty('--color-sky-950', activeTheme.colors.card);
+
+    saveActiveThemeId(activeTheme.id);
+  }, [activeTheme]);
+
+  const handleSelectTheme = (themeId: string) => {
+    setActiveThemeId(themeId);
+  };
+
+  const handleSaveCustomTheme = (newTheme: ThemeDefinition) => {
+    setCustomThemes((prev) => {
+      const filtered = prev.filter((t) => t.id !== newTheme.id);
+      const updated = [newTheme, ...filtered];
+      saveStoredCustomThemes(updated);
+      return updated;
+    });
+    setActiveThemeId(newTheme.id);
+  };
+
+  const handleDeleteCustomTheme = (themeId: string) => {
+    setCustomThemes((prev) => {
+      const updated = prev.filter((t) => t.id !== themeId);
+      saveStoredCustomThemes(updated);
+      return updated;
+    });
+    if (activeThemeId === themeId) {
+      setActiveThemeId('classic-light');
+    }
   };
 
   const [input, setInput] = useState('');
@@ -1210,8 +1306,19 @@ export default function App() {
     handleUpdateSettings({ soundEffects: nextVal });
   };
 
+  // Render Landing Page at default root route '/'
+  if (currentRoute === '/') {
+    return <LandingPage onStartChat={() => navigateTo('/app')} />;
+  }
+
   return (
-    <div className={`flex h-screen w-screen overflow-hidden ${THEME_COLORS.tokens.appBg} ${THEME_COLORS.tokens.appText} font-sans antialiased transition-colors ${theme === 'dark' ? 'dark' : ''}`}>
+    <div
+      className={`flex h-screen w-screen overflow-hidden ${THEME_COLORS.tokens.appBg} ${THEME_COLORS.tokens.appText} font-sans antialiased transition-colors ${theme === 'dark' ? 'dark' : ''}`}
+      style={{
+        backgroundColor: 'var(--theme-bg)',
+        color: 'var(--theme-text)',
+      }}
+    >
       {/* Sidebar (Conversations History) */}
       <Sidebar
         isOpen={isSidebarOpen}
@@ -1225,9 +1332,26 @@ export default function App() {
         cacheStatuses={cacheStatuses}
       />
 
+      {/* Right Sidebar (Themes, Clothing, Hairstyle) */}
+      <ThemeSidebar
+        isOpen={isThemeSidebarOpen}
+        onClose={() => setIsThemeSidebarOpen(false)}
+        presetThemes={PRESET_THEMES}
+        customThemes={customThemes}
+        activeThemeId={activeTheme.id}
+        onSelectTheme={handleSelectTheme}
+        onDeleteCustomTheme={handleDeleteCustomTheme}
+        onOpenCreateModal={() => setIsCustomThemeModalOpen(true)}
+      />
+
       {/* Main Viewport */}
-      <main className={`flex-1 flex flex-col h-full min-w-0 relative ${THEME_COLORS.tokens.appBg} transition-colors`}>
-        {/* Top Header with 3D Mode Toggle Button between Search and Sound */}
+      <main
+        className={`flex-1 flex flex-col h-full min-w-0 relative ${THEME_COLORS.tokens.appBg} transition-colors`}
+        style={{
+          backgroundColor: 'var(--theme-bg)',
+        }}
+      >
+        {/* Top Header with 3D Mode Toggle Button between Search and Sound, Palette Theme Button, and Home Navigation */}
         <Header
           isGenerating={isGenerating}
           isSidebarOpen={isSidebarOpen}
@@ -1240,8 +1364,9 @@ export default function App() {
           onOpenSettings={() => setIsSettingsOpen(true)}
           soundEnabled={isSoundActive}
           onToggleSound={handleToggleNavbarSound}
-          theme={theme}
-          onToggleTheme={handleToggleTheme}
+          isThemeSidebarOpen={isThemeSidebarOpen}
+          onToggleThemeSidebar={() => setIsThemeSidebarOpen((prev) => !prev)}
+          onNavigateHome={() => navigateTo('/')}
         />
 
         {/* Quick Conversation Search Bar */}
@@ -1372,6 +1497,13 @@ export default function App() {
         userSettings={userSettings}
         onUpdateSettings={handleUpdateSettings}
         isDownloading={Boolean(downloadProgress && downloadProgress.status === 'downloading')}
+      />
+
+      {/* Custom Theme Pop-up Modal */}
+      <CustomThemeModal
+        isOpen={isCustomThemeModalOpen}
+        onClose={() => setIsCustomThemeModalOpen(false)}
+        onSave={handleSaveCustomTheme}
       />
 
       {/* App Launch Splash Screen */}

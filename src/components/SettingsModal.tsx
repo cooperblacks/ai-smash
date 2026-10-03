@@ -93,7 +93,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between bg-neutral-50/70 dark:bg-white/[0.02]">
           <div>
-            <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white tracking-tight flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white tracking-tight flex items-center gap-2 font-heading">
               <HardDrive className={`w-5 h-5 ${THEME_COLORS.tokens.accentText}`} />
               Settings &amp; Storage
             </h2>
@@ -147,8 +147,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <button
                   onClick={() => onUpdateSettings({ soundEffects: !userSettings.soundEffects })}
                   className={`w-10 h-6 rounded-full transition-colors relative cursor-pointer ${
-                    userSettings.soundEffects ? 'bg-neutral-900 dark:bg-sky-500' : 'bg-neutral-200 dark:bg-neutral-700'
+                    !userSettings.soundEffects ? 'bg-neutral-200 dark:bg-neutral-700' : ''
                   }`}
+                  style={userSettings.soundEffects ? { backgroundColor: 'var(--theme-accent)' } : undefined}
                 >
                   <span
                     className={`block w-4 h-4 rounded-full bg-white transition-transform absolute top-1 left-1 shadow-xs ${
@@ -166,8 +167,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <button
                   onClick={() => onUpdateSettings({ visualSubtitles: userSettings.visualSubtitles === false ? true : false })}
                   className={`w-10 h-6 rounded-full transition-colors relative cursor-pointer ${
-                    userSettings.visualSubtitles !== false ? 'bg-neutral-900 dark:bg-sky-500' : 'bg-neutral-200 dark:bg-neutral-700'
+                    userSettings.visualSubtitles === false ? 'bg-neutral-200 dark:bg-neutral-700' : ''
                   }`}
+                  style={userSettings.visualSubtitles !== false ? { backgroundColor: 'var(--theme-accent)' } : undefined}
                 >
                   <span
                     className={`block w-4 h-4 rounded-full bg-white transition-transform absolute top-1 left-1 shadow-xs ${
@@ -194,9 +196,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClick={() => onUpdateSettings({ preferredDevice: device })}
                     className={`p-3 rounded-2xl border text-left transition-all ${
                       isSelected
-                        ? `${THEME_COLORS.tokens.dropdownItemActive} text-neutral-900 dark:text-sky-200 font-medium`
+                        ? `${THEME_COLORS.tokens.dropdownItemActive} font-medium`
                         : `${THEME_COLORS.tokens.modalSectionCard} text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100/70 dark:hover:bg-[#202332]`
                     }`}
+                    style={
+                      isSelected
+                        ? {
+                            backgroundColor: 'var(--theme-accent-soft)',
+                            borderColor: 'var(--theme-accent)',
+                            color: 'var(--theme-text)',
+                          }
+                        : undefined
+                    }
                   >
                     <div className="font-semibold text-xs capitalize">{device === 'auto' ? 'Auto Detect' : device.toUpperCase()}</div>
                     <div className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-0.5">

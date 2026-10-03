@@ -115,7 +115,10 @@ export const MessageList: React.FC<MessageListProps> = ({
             {showDateSeparator && (
               <div className="w-full flex items-center my-4 select-none">
                 <div className={`flex-1 h-px ${THEME_COLORS.tokens.dateSeparatorLine}`} />
-                <span className={`px-3 text-[11px] font-mono font-medium ${THEME_COLORS.tokens.dateSeparatorText}`}>
+                <span
+                  className={`px-3 text-[11px] font-mono font-medium ${THEME_COLORS.tokens.dateSeparatorText}`}
+                  style={{ backgroundColor: 'var(--theme-bg)' }}
+                >
                   {currentDateStr}
                 </span>
                 <div className={`flex-1 h-px ${THEME_COLORS.tokens.dateSeparatorLine}`} />
@@ -154,7 +157,7 @@ export const MessageList: React.FC<MessageListProps> = ({
           </div>
 
           <div className="flex flex-col max-w-[85%] sm:max-w-[75%] items-start">
-            <div className={`relative px-4 py-2.5 rounded-2xl text-[14.5px] leading-relaxed ${THEME_COLORS.tokens.assistantBubble} shadow-xs`}>
+            <div className={`relative px-4 py-2.5 rounded-2xl text-[14.5px] leading-relaxed ${THEME_COLORS.tokens.assistantBubble} theme-assistant-bubble shadow-xs`}>
               {streamingText ? (
                 <div className="whitespace-pre-wrap break-words">
                   {streamingText}

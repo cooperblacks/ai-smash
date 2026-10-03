@@ -1,12 +1,58 @@
-import { Conversation, UserSettings } from '../types';
+import { Conversation, UserSettings, ThemeDefinition } from '../types';
 import { AVAILABLE_MODELS } from './models';
-import { APP_INFO, OLLAMA_CONFIG, DEFAULT_USER_SETTINGS } from '../constants';
+import { APP_INFO, OLLAMA_CONFIG, DEFAULT_USER_SETTINGS, DEFAULT_THEME_ID } from '../constants';
 
 export { DEFAULT_USER_SETTINGS };
 
 const CONVERSATIONS_KEY = APP_INFO.storageKeys.conversations;
 const SETTINGS_KEY = APP_INFO.storageKeys.userSettings;
 const ACTIVE_CONV_KEY = APP_INFO.storageKeys.activeConversation;
+const ACTIVE_THEME_KEY = APP_INFO.storageKeys.activeTheme;
+const CUSTOM_THEMES_KEY = APP_INFO.storageKeys.customThemes;
+
+// ----------------------------------------------------
+// Theme Persistence
+// ----------------------------------------------------
+
+export function loadStoredCustomThemes(): ThemeDefinition[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(CUSTOM_THEMES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error('Failed to load custom themes:', err);
+    return [];
+  }
+}
+
+export function saveStoredCustomThemes(themes: ThemeDefinition[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(themes));
+  } catch (err) {
+    console.error('Failed to save custom themes:', err);
+  }
+}
+
+export function loadActiveThemeId(): string {
+  if (typeof window === 'undefined') return DEFAULT_THEME_ID;
+  try {
+    return localStorage.getItem(ACTIVE_THEME_KEY) || DEFAULT_THEME_ID;
+  } catch {
+    return DEFAULT_THEME_ID;
+  }
+}
+
+export function saveActiveThemeId(themeId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(ACTIVE_THEME_KEY, themeId);
+  } catch (err) {
+    console.error('Failed to save active theme id:', err);
+  }
+}
 
 // ----------------------------------------------------
 // Conversation Persistence
@@ -290,6 +336,8 @@ export async function clearAllTransformersCaches(): Promise<boolean> {
         activeConvKey,
         themeKey,
         settingsKey,
+        ACTIVE_THEME_KEY,
+        CUSTOM_THEMES_KEY,
       ]);
 
       const keysToRemove: string[] = [];

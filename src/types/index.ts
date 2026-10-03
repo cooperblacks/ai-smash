@@ -82,3 +82,30 @@ export interface UserSettings {
   maxTokens?: number;
   visualSubtitles?: boolean;
 }
+
+export interface ThemeColors {
+  bg: string;
+  surface: string;
+  card: string;
+  border: string;
+  text: string;
+  textMuted: string;
+  accent: string;
+  accentHover: string;
+  accentSoft: string;
+  userBubble: string;
+  userBubbleText: string;
+  assistantBubble: string;
+  assistantBubbleText: string;
+  headerBg?: string;
+}
+
+export interface ThemeDefinition {
+  id: string;
+  name: string;
+  isDark: boolean;
+  colors: ThemeColors;
+  description?: string;
+  isCustom?: boolean;
+  createdAt?: number;
+}

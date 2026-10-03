@@ -159,8 +159,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           <div
             className={`relative px-4 py-2.5 rounded-2xl text-[14.5px] leading-relaxed transition-all ${
               isUser
-                ? THEME_COLORS.tokens.userBubble
-                : THEME_COLORS.tokens.assistantBubble
+                ? `${THEME_COLORS.tokens.userBubble} theme-user-bubble`
+                : `${THEME_COLORS.tokens.assistantBubble} theme-assistant-bubble`
             }`}
           >
             {/* Text Content with highlighted search matches */}

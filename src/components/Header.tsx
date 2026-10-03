@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Search, PanelLeft, Volume2, VolumeX, Sun, Moon, Box } from 'lucide-react';
+import { Settings as SettingsIcon, Search, PanelLeft, Volume2, VolumeX, Palette, Box, Home } from 'lucide-react';
 import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
 
 interface HeaderProps {
@@ -14,8 +14,9 @@ interface HeaderProps {
   onOpenSettings: () => void;
   soundEnabled: boolean;
   onToggleSound: () => void;
-  theme: 'light' | 'dark';
-  onToggleTheme: () => void;
+  isThemeSidebarOpen: boolean;
+  onToggleThemeSidebar: () => void;
+  onNavigateHome?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -30,8 +31,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   soundEnabled,
   onToggleSound,
-  theme,
-  onToggleTheme,
+  isThemeSidebarOpen,
+  onToggleThemeSidebar,
+  onNavigateHome,
 }) => {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
 
@@ -43,7 +45,13 @@ export const Header: React.FC<HeaderProps> = ({
   }, []);
 
   return (
-    <header className={`relative w-full ${THEME_COLORS.tokens.headerBorder} ${THEME_COLORS.tokens.headerBg} backdrop-blur-xl z-20 transition-all`}>
+    <header
+      className={`relative w-full ${THEME_COLORS.tokens.headerBorder} backdrop-blur-xl z-20 transition-all`}
+      style={{
+        backgroundColor: 'var(--theme-header-bg)',
+        borderColor: 'var(--theme-border)',
+      }}
+    >
       {/* Background Banner with Soft Light/Dark Crossfade */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-20 select-none">
         {AI_PROFILE.banners.map((imgUrl, index) => (
@@ -74,6 +82,17 @@ export const Header: React.FC<HeaderProps> = ({
             <PanelLeft className="w-4 h-4" />
           </button>
 
+          {onNavigateHome && (
+            <button
+              onClick={onNavigateHome}
+              title="Return to Home Landing Page"
+              className="p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08] active:scale-95 transition-all duration-100"
+              aria-label="Return to Home"
+            >
+              <Home className="w-4 h-4" />
+            </button>
+          )}
+
           {/* Clickable Profile Region: opens Twitter/X preview */}
           <button
             onClick={onOpenProfile}
@@ -90,8 +109,9 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <span
                 className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 ${THEME_COLORS.tokens.avatarBorder} ${
-                  isGenerating ? 'bg-sky-400 animate-pulse' : 'bg-emerald-500'
+                  isGenerating ? 'animate-pulse' : 'bg-emerald-500'
                 }`}
+                style={isGenerating ? { backgroundColor: 'var(--theme-accent)' } : undefined}
               />
             </div>
 
@@ -120,6 +140,7 @@ export const Header: React.FC<HeaderProps> = ({
                 ? THEME_COLORS.tokens.activeSearchBadge
                 : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08]'
             }`}
+            style={isSearchOpen ? { backgroundColor: 'var(--theme-accent-soft)', color: 'var(--theme-accent)', boxShadow: '0 0 0 1px var(--theme-accent)' } : undefined}
             title="Search conversation"
           >
             <Search className="w-4 h-4" />
@@ -133,6 +154,15 @@ export const Header: React.FC<HeaderProps> = ({
                 ? THEME_COLORS.tokens.active3DButton
                 : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08]'
             }`}
+            style={
+              is3DMode
+                ? {
+                    backgroundColor: 'var(--theme-accent)',
+                    color: 'var(--theme-user-bubble-text, #ffffff)',
+                    boxShadow: '0 0 10px var(--theme-accent-soft)',
+                  }
+                : undefined
+            }
             title={is3DMode ? 'Exit 3D VRM Mode' : 'Enter 3D VRM Mode'}
             aria-label="Toggle 3D mode"
           >
@@ -149,18 +179,20 @@ export const Header: React.FC<HeaderProps> = ({
             {soundEnabled ? <Volume2 className={`w-4 h-4 ${THEME_COLORS.tokens.accentText}`} /> : <VolumeX className="w-4 h-4" />}
           </button>
 
-          {/* Light / Dark Theme Button */}
+          {/* Palette Themes Button (opens right ThemeSidebar) */}
           <button
-            onClick={onToggleTheme}
-            className="p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08] active:scale-95 transition-all duration-100"
-            title={theme === 'dark' ? 'Switch to Light theme' : 'Switch to Dark theme'}
-            aria-label="Toggle light/dark theme"
+            data-theme-toggle="true"
+            onClick={onToggleThemeSidebar}
+            className={`p-2 rounded-xl active:scale-95 transition-all duration-100 ${
+              isThemeSidebarOpen
+                ? THEME_COLORS.tokens.activeSearchBadge
+                : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08]'
+            }`}
+            style={isThemeSidebarOpen ? { backgroundColor: 'var(--theme-accent-soft)', color: 'var(--theme-accent)', boxShadow: '0 0 0 1px var(--theme-accent)' } : undefined}
+            title="Appearance & Themes"
+            aria-label="Open themes & appearance sidebar"
           >
-            {theme === 'dark' ? (
-              <Sun className="w-4 h-4 text-sky-400 animate-in spin-in-180 duration-200" />
-            ) : (
-              <Moon className="w-4 h-4 text-neutral-600 animate-in spin-in-180 duration-200" />
-            )}
+            <Palette className="w-4 h-4" />
           </button>
 
           {/* Settings Button */}

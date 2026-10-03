@@ -61,10 +61,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   return (
-    <div className={`w-full ${THEME_COLORS.tokens.composerContainer} p-3 sm:p-4 backdrop-blur-xl`}>
+    <div
+      className={`w-full ${THEME_COLORS.tokens.composerContainer} p-3 sm:p-4 backdrop-blur-xl`}
+      style={{
+        backgroundColor: 'var(--theme-surface)',
+        borderColor: 'var(--theme-border)',
+      }}
+    >
       <form onSubmit={handleSubmit} className="max-w-4xl mx-auto flex flex-col gap-2">
         {/* Composer Container */}
-        <div className={`relative flex flex-col rounded-2xl ${THEME_COLORS.tokens.composerBox} transition-all duration-120 shadow-xs`}>
+        <div
+          className={`relative flex flex-col rounded-2xl ${THEME_COLORS.tokens.composerBox} transition-all duration-120 shadow-xs`}
+          style={{
+            backgroundColor: 'var(--theme-card)',
+            borderColor: 'var(--theme-border)',
+          }}
+        >
           {/* Text Area */}
           <textarea
             ref={textareaRef}
@@ -104,6 +116,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   type="button"
                   onClick={onStop}
                   className={`flex items-center justify-center w-8 h-8 rounded-full ${THEME_COLORS.tokens.stopButton} active:scale-90 transition-all shadow-sm`}
+                  style={{
+                    backgroundColor: 'var(--theme-accent)',
+                    color: 'var(--theme-user-bubble-text, #ffffff)',
+                  }}
                   title={`Pause ${AI_PROFILE.name}`}
                 >
                   <Square className="w-3.5 h-3.5 fill-current" />
@@ -117,6 +133,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                       ? `${THEME_COLORS.tokens.sendButtonActive} active:scale-90 shadow-sm`
                       : `${THEME_COLORS.tokens.sendButtonDisabled} cursor-not-allowed`
                   }`}
+                  style={
+                    input.trim()
+                      ? {
+                          backgroundColor: 'var(--theme-accent)',
+                          color: '#ffffff',
+                        }
+                      : undefined
+                  }
                   title="Send message (Enter)"
                 >
                   <ArrowUp className="w-4 h-4 stroke-[2.5]" />

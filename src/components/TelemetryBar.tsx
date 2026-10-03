@@ -30,8 +30,15 @@ export const TelemetryBar: React.FC<TelemetryBarProps> = ({
     <div className={`w-full ${THEME_COLORS.tokens.telemetryBg} backdrop-blur-md px-3 sm:px-4 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none`}>
       {/* Download indicator bar if downloading */}
       {isDownloading && (
-        <div className="mb-1.5 p-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800 flex flex-col gap-1.5 transition-all">
-          <div className="flex items-center justify-between text-xs text-sky-900 dark:text-sky-200 font-medium">
+        <div
+          className="mb-1.5 p-2 rounded-xl border flex flex-col gap-1.5 transition-all"
+          style={{
+            backgroundColor: 'var(--theme-accent-soft)',
+            borderColor: 'var(--theme-border)',
+            color: 'var(--theme-text)',
+          }}
+        >
+          <div className="flex items-center justify-between text-xs font-medium">
             <span className="flex items-center gap-1.5">
               <ArrowDownCircle className={`w-3.5 h-3.5 animate-bounce ${THEME_COLORS.tokens.accentText}`} />
               <span>
@@ -39,13 +46,17 @@ export const TelemetryBar: React.FC<TelemetryBarProps> = ({
               </span>
             </span>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-sky-700/80 dark:text-sky-300/80 font-mono">
+              <span className="text-[11px] font-mono opacity-80">
                 {downloadProgress.fileName || 'Fetching tensors'}
               </span>
               {onCancelDownload && (
                 <button
                   onClick={onCancelDownload}
-                  className="px-1.5 py-0.5 rounded bg-sky-200/60 dark:bg-sky-800 hover:bg-sky-300 dark:hover:bg-sky-700 text-sky-900 dark:text-sky-100 text-[10px] transition-colors"
+                  className="px-1.5 py-0.5 rounded text-[10px] font-medium transition-opacity hover:opacity-90"
+                  style={{
+                    backgroundColor: 'var(--theme-accent)',
+                    color: '#ffffff',
+                  }}
                 >
                   Cancel
                 </button>
@@ -53,10 +64,16 @@ export const TelemetryBar: React.FC<TelemetryBarProps> = ({
             </div>
           </div>
           {/* Progress bar */}
-          <div className="w-full h-1.5 bg-sky-200/50 dark:bg-sky-900/50 rounded-full overflow-hidden">
+          <div
+            className="w-full h-1.5 rounded-full overflow-hidden"
+            style={{ backgroundColor: 'var(--theme-card)' }}
+          >
             <div
               className={`h-full ${THEME_COLORS.tokens.accentBg} rounded-full transition-all duration-150`}
-              style={{ width: `${Math.max(5, downloadProgress.progress)}%` }}
+              style={{
+                width: `${Math.max(5, downloadProgress.progress)}%`,
+                backgroundColor: 'var(--theme-accent)',
+              }}
             />
           </div>
         </div>

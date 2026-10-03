@@ -1,34 +1,89 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Custom angelic, cute light cyan and sky blue palette for all Tailwind sky-* tokens */
+/* Dynamic theme mapping for Tailwind sky-* tokens to active theme accent colors */
 @theme {
-  --color-sky-50: #f0fbfd;
-  --color-sky-100: #dcf4fb;
-  --color-sky-200: #bcebfc;
-  --color-sky-300: #8ce0fa;
-  --color-sky-400: #55d2f6;
-  --color-sky-500: #22bdec;
-  --color-sky-600: #0f9bc7;
-  --color-sky-700: #117ba2;
-  --color-sky-800: #146381;
-  --color-sky-900: #16536b;
-  --color-sky-950: #093649;
+  --color-sky-50: var(--theme-accent-soft, #f0fbfd);
+  --color-sky-100: var(--theme-accent-soft, #dcf4fb);
+  --color-sky-200: var(--theme-accent-soft, #bcebfc);
+  --color-sky-300: var(--theme-accent, #8ce0fa);
+  --color-sky-400: var(--theme-accent, #55d2f6);
+  --color-sky-500: var(--theme-accent-hover, #22bdec);
+  --color-sky-600: var(--theme-accent-hover, #0f9bc7);
+  --color-sky-700: var(--theme-accent-hover, #117ba2);
+  --color-sky-800: var(--theme-accent-hover, #146381);
+  --color-sky-900: var(--theme-text, #16536b);
+  --color-sky-950: var(--theme-card, #093649);
+}
+
+:root {
+  --theme-bg: #f8f9fc;
+  --theme-surface: #ffffff;
+  --theme-card: #f4f5f8;
+  --theme-border: rgba(0, 0, 0, 0.08);
+  --theme-text: #1e2029;
+  --theme-text-muted: #64748b;
+  --theme-accent: #55d2f6;
+  --theme-accent-hover: #22bdec;
+  --theme-accent-soft: rgba(85, 210, 246, 0.15);
+  --theme-user-bubble: #1e2029;
+  --theme-user-bubble-text: #ffffff;
+  --theme-assistant-bubble: #ffffff;
+  --theme-assistant-bubble-text: #1e2029;
+  --theme-header-bg: rgba(255, 255, 255, 0.88);
+}
+
+.dark {
+  --theme-bg: #0f1117;
+  --theme-surface: #13151f;
+  --theme-card: #1c1f2e;
+  --theme-border: rgba(255, 255, 255, 0.08);
+  --theme-text: #f1f2f6;
+  --theme-text-muted: #94a3b8;
+  --theme-accent: #55d2f6;
+  --theme-accent-hover: #8ce0fa;
+  --theme-accent-soft: rgba(85, 210, 246, 0.18);
+  --theme-user-bubble: #ffffff;
+  --theme-user-bubble-text: #0f1117;
+  --theme-assistant-bubble: #1c1f2e;
+  --theme-assistant-bubble-text: #f1f2f6;
+  --theme-header-bg: rgba(19, 21, 31, 0.88);
 }
 
 @layer base {
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    background-color: #f8f9fc;
-    color: #1e2029;
+    font-family: 'Encode Sans Expanded', system-ui, -apple-system, sans-serif;
+    background-color: var(--theme-bg, #f8f9fc);
+    color: var(--theme-text, #1e2029);
   }
   .dark body, html.dark body {
-    background-color: #0f1117;
-    color: #f1f2f6;
+    background-color: var(--theme-bg, #0f1117);
+    color: var(--theme-text, #f1f2f6);
+  }
+  h1, h2, h3 {
+    font-family: 'Faculty Glyphic', serif, sans-serif;
+    letter-spacing: -0.01em;
+  }
+  .font-heading {
+    font-family: 'Faculty Glyphic', serif, sans-serif;
+  }
+  .font-body {
+    font-family: 'Encode Sans Expanded', system-ui, -apple-system, sans-serif;
   }
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', monospace;
   }
+}
+
+/* Dynamic theme bubbles */
+.theme-user-bubble {
+  background-color: var(--theme-user-bubble) !important;
+  color: var(--theme-user-bubble-text) !important;
+}
+.theme-assistant-bubble {
+  background-color: var(--theme-assistant-bubble) !important;
+  color: var(--theme-assistant-bubble-text) !important;
+  border-color: var(--theme-border) !important;
 }
 
 /* Custom sleek scrollbar for light theme */

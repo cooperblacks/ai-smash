@@ -884,6 +884,9 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     <div
       ref={containerRef}
       className={`relative flex-1 w-full h-full overflow-hidden select-none flex items-center justify-center ${THEME_COLORS.tokens.vrmCanvasBg}`}
+      style={{
+        backgroundColor: 'var(--theme-bg)',
+      }}
     >
       {/* Background Soft Studio Vignette */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">

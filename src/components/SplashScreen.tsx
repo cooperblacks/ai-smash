@@ -45,8 +45,8 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
         shouldFadeOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
       } ${THEME_COLORS.tokens.appBg} ${THEME_COLORS.tokens.appText}`}
       style={{
-        backgroundColor: theme === 'dark' ? THEME_COLORS.hex.bgDark : THEME_COLORS.hex.bgLight,
-        color: theme === 'dark' ? THEME_COLORS.hex.textDark : THEME_COLORS.hex.textLight,
+        backgroundColor: 'var(--theme-bg)',
+        color: 'var(--theme-text)',
       }}
     >
       {/* Top Balanced Spacer */}
@@ -63,15 +63,19 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
           />
         </div>
 
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mt-5 font-['Plus_Jakarta_Sans',sans-serif]">
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mt-5 font-heading">
           {SPLASH_CONFIG.title}
         </h1>
 
         {/* Fast-spinning loader */}
         <div className="mt-8 flex flex-col items-center gap-3">
           <div
-            className="w-8 h-8 rounded-full border-[2.5px] border-sky-500/25 border-t-sky-500 animate-spin"
-            style={{ animationDuration: '0.45s' }}
+            className="w-8 h-8 rounded-full border-[2.5px] animate-spin"
+            style={{
+              animationDuration: '0.45s',
+              borderColor: 'var(--theme-accent-soft)',
+              borderTopColor: 'var(--theme-accent)',
+            }}
             aria-label="Loading assets"
           />
           <p className="text-xs font-mono text-neutral-400 dark:text-neutral-500 tracking-wide mt-1">

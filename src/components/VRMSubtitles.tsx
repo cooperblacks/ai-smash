@@ -129,9 +129,13 @@ export const VRMSubtitles: React.FC<VRMSubtitlesProps> = ({
     <div className="w-full flex justify-center px-4 pb-1.5 z-20 pointer-events-none select-none">
       {/* Fixed-width & fixed-height container to eliminate horizontal jitter and jumping */}
       <div
-        className={`pointer-events-auto w-[92%] sm:w-[440px] px-4 py-2.5 rounded-2xl backdrop-blur-xl bg-white/92 dark:bg-[#13151f]/92 border border-sky-200/80 dark:border-sky-500/30 shadow-[0_8px_30px_rgba(85,210,246,0.18)] dark:shadow-[0_8px_30px_rgba(15,155,199,0.22)] transition-opacity duration-300 min-h-[74px] flex flex-col justify-between ${
+        className={`pointer-events-auto w-[92%] sm:w-[440px] px-4 py-2.5 rounded-2xl backdrop-blur-xl bg-white/92 dark:bg-[#13151f]/92 border transition-opacity duration-300 min-h-[74px] flex flex-col justify-between ${
           isActive ? 'opacity-100' : 'opacity-90'
         }`}
+        style={{
+          borderColor: 'var(--theme-border)',
+          boxShadow: '0 8px 30px var(--theme-accent-soft)',
+        }}
         role="region"
         aria-live="polite"
         aria-label="3D Voice Subtitles"
@@ -139,14 +143,20 @@ export const VRMSubtitles: React.FC<VRMSubtitlesProps> = ({
         {/* Header: Persona identity + Live Voice waves (without 'Spoken Voice' tag) */}
         <div className="flex items-center justify-between gap-3 pb-1 border-b border-black/[0.05] dark:border-white/[0.08]">
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded-full overflow-hidden ring-1 ring-sky-400/50 shrink-0">
+            <div
+              className="w-4 h-4 rounded-full overflow-hidden shrink-0"
+              style={{ boxShadow: '0 0 0 1px var(--theme-accent)' }}
+            >
               <img
                 src={AI_PROFILE.avatarUrl}
                 alt={AI_PROFILE.name}
                 className="w-full h-full object-cover"
               />
             </div>
-            <span className="text-xs font-bold text-sky-600 dark:text-sky-300 tracking-tight">
+            <span
+              className="text-xs font-bold tracking-tight"
+              style={{ color: 'var(--theme-accent)' }}
+            >
               {AI_PROFILE.name}
             </span>
           </div>
@@ -156,24 +166,24 @@ export const VRMSubtitles: React.FC<VRMSubtitlesProps> = ({
             {isActive ? (
               <div className="flex items-end gap-0.5 h-3 px-1">
                 <span
-                  className="w-0.5 bg-sky-500 dark:bg-sky-400 rounded-full animate-pulse"
-                  style={{ height: '55%', animationDuration: '380ms' }}
+                  className="w-0.5 rounded-full animate-pulse"
+                  style={{ height: '55%', animationDuration: '380ms', backgroundColor: 'var(--theme-accent)' }}
                 />
                 <span
-                  className="w-0.5 bg-sky-500 dark:bg-sky-400 rounded-full animate-pulse"
-                  style={{ height: '95%', animationDuration: '520ms' }}
+                  className="w-0.5 rounded-full animate-pulse"
+                  style={{ height: '95%', animationDuration: '520ms', backgroundColor: 'var(--theme-accent)' }}
                 />
                 <span
-                  className="w-0.5 bg-sky-500 dark:bg-sky-400 rounded-full animate-pulse"
-                  style={{ height: '40%', animationDuration: '320ms' }}
+                  className="w-0.5 rounded-full animate-pulse"
+                  style={{ height: '40%', animationDuration: '320ms', backgroundColor: 'var(--theme-accent)' }}
                 />
                 <span
-                  className="w-0.5 bg-sky-500 dark:bg-sky-400 rounded-full animate-pulse"
-                  style={{ height: '80%', animationDuration: '580ms' }}
+                  className="w-0.5 rounded-full animate-pulse"
+                  style={{ height: '80%', animationDuration: '580ms', backgroundColor: 'var(--theme-accent)' }}
                 />
               </div>
             ) : (
-              <Volume2 className="w-3.5 h-3.5 text-sky-500/70" />
+              <Volume2 className="w-3.5 h-3.5 opacity-80" style={{ color: 'var(--theme-accent)' }} />
             )}
 
             {onDismiss && (
@@ -203,7 +213,12 @@ export const VRMSubtitles: React.FC<VRMSubtitlesProps> = ({
               return (
                 <span
                   key={`${actualIndex}-${t.word}`}
-                  className="inline-block mx-0.5 px-1 py-0.2 rounded font-bold text-sky-600 dark:text-sky-300 bg-sky-100 dark:bg-sky-950/90 ring-1 ring-sky-400/40"
+                  className="inline-block mx-0.5 px-1 py-0.2 rounded font-bold"
+                  style={{
+                    color: 'var(--theme-accent)',
+                    backgroundColor: 'var(--theme-accent-soft)',
+                    boxShadow: '0 0 0 1px var(--theme-accent)',
+                  }}
                 >
                   {t.word}
                 </span>

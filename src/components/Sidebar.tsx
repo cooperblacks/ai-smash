@@ -124,7 +124,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       <aside
         ref={sidebarRef}
-        className={`fixed top-0 bottom-0 left-0 w-72 sm:w-80 ${THEME_COLORS.tokens.sidebarBg} z-40 flex flex-col shadow-xl transition-all duration-200`}
+        className={`fixed top-0 bottom-0 left-0 w-72 sm:w-80 ${THEME_COLORS.tokens.sidebarBg} z-40 flex flex-col shadow-xl transition-all duration-200 border-r`}
+        style={{
+          backgroundColor: 'var(--theme-surface)',
+          borderColor: 'var(--theme-border)',
+        }}
       >
         {/* Sidebar Header */}
         <div className="p-3 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
@@ -134,6 +138,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               if (window.innerWidth < 1024) onClose();
             }}
             className={`flex-1 mr-2 flex items-center justify-center gap-2 py-2 px-3 rounded-xl ${THEME_COLORS.tokens.sidebarNewChatButton} active:scale-95 font-medium text-xs transition-all shadow-xs`}
+            style={{
+              backgroundColor: 'var(--theme-accent)',
+              color: '#ffffff',
+            }}
           >
             <Plus className="w-4 h-4 stroke-[2.5]" />
             <span>New Chat</span>
