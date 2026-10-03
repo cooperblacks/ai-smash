@@ -1,5 +1,7 @@
-import { Pool } from 'pg';
+import pg, { type Pool as PoolType } from 'pg';
 import crypto from 'crypto';
+
+const { Pool } = pg;
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -71,47 +73,40 @@ function sanitizeUser(u: InternalUserRecord | DbUserRecord): DbUserRecord {
 }
 
 // ---------------------------------------------------------------------
-// NeonDB PostgreSQL Connection Pool (configured via env variables)
+// NeonDB PostgreSQL Connection Pool (configured via NEON_DATABASE_URL)
 // ---------------------------------------------------------------------
-let neonPool: Pool | null = null;
+let neonPool: PoolType | null = null;
 let schemaInitialized = false;
 
-function getNeonPool(): Pool | null {
+function normalizeNeonConnectionString(rawUrl: string): string {
+  const unquoted = rawUrl.trim().replace(/^["']+|["']+$/g, '').trim();
+  if (!unquoted) return '';
+  try {
+    const parsed = new URL(unquoted);
+    parsed.searchParams.delete('sslmode');
+    parsed.searchParams.delete('channel_binding');
+    return parsed.toString();
+  } catch {
+    return unquoted;
+  }
+}
+
+function getNeonPool(): PoolType | null {
   if (neonPool) return neonPool;
 
-  const connectionString =
-    process.env.NEON_DATABASE_URL ||
-    process.env.DATABASE_URL ||
-    process.env.POSTGRES_URL ||
-    '';
+  const rawConnectionString = process.env.NEON_DATABASE_URL || '';
+  const connectionString = normalizeNeonConnectionString(rawConnectionString);
 
-  const pgHost = process.env.PGHOST || process.env.NEON_HOST || '';
-  const pgUser = process.env.PGUSER || process.env.NEON_USER || '';
-  const pgPassword = process.env.PGPASSWORD || process.env.NEON_PASSWORD || '';
-  const pgDatabase = process.env.PGDATABASE || process.env.NEON_DATABASE || '';
-  const pgPort = parseInt(process.env.PGPORT || process.env.NEON_PORT || '5432', 10);
-
-  if (connectionString.trim()) {
-    neonPool = new Pool({
-      connectionString: connectionString.trim(),
-      ssl: { rejectUnauthorized: false },
-      max: 10,
-      connectionTimeoutMillis: 12000,
-    });
-  } else if (pgHost && pgUser && pgPassword && pgDatabase) {
-    neonPool = new Pool({
-      host: pgHost,
-      port: pgPort,
-      user: pgUser,
-      password: pgPassword,
-      database: pgDatabase,
-      ssl: { rejectUnauthorized: false },
-      max: 10,
-      connectionTimeoutMillis: 12000,
-    });
-  } else {
+  if (!connectionString) {
     return null;
   }
+
+  neonPool = new Pool({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+    max: 10,
+    connectionTimeoutMillis: 12000,
+  });
 
   neonPool.on('error', (err) => {
     console.error('NeonDB idle client error:', err.message);
@@ -120,7 +115,7 @@ function getNeonPool(): Pool | null {
   return neonPool;
 }
 
-async function ensureNeonSchema(): Promise<Pool | null> {
+async function ensureNeonSchema(): Promise<PoolType | null> {
   const pool = getNeonPool();
   if (!pool) return null;
   if (schemaInitialized) return pool;
@@ -173,7 +168,7 @@ export async function signUpAccount(params: {
   const cleanEmail = params.email.trim().toLowerCase();
   const passwordHash = hashPassword(params.password);
   const { username, displayName } = deriveDefaultProfileFromEmail(cleanEmail);
-  const defaultAvatar = 'https://muxai.vercel.app/logo_Hana.png';
+  const defaultAvatar = 'https://ai.mux8.com/favicon.png';
   const nowIso = new Date().toISOString();
   const deviceLabel = (params.device || 'Web Browser').slice(0, 180);
   const fingerprints = params.fingerprint ? [params.fingerprint] : [];

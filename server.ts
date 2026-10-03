@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from 'express';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
@@ -650,6 +651,9 @@ app.post('/api/account/sync', async (req: Request, res: Response) => {
 });
 
 async function startServer() {
+  const distIndex = path.join(__dirname, 'dist', 'index.html');
+  const rootIndex = path.join(__dirname, 'index.html');
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -657,10 +661,31 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+
+    // Explicit SPA fallback for /chat, /app, and any non-API route on page refresh
+    app.get(['/chat', '/chat/*', '/app', '/app/*', '*'], async (req: Request, res: Response, next) => {
+      if (req.path.startsWith('/api/')) {
+        return next();
+      }
+      try {
+        const template = fs.readFileSync(rootIndex, 'utf-8');
+        const html = await vite.transformIndexHtml(req.originalUrl, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
+      } catch (err) {
+        next(err);
+      }
+    });
   } else {
     app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    app.get(['/chat', '/chat/*', '/app', '/app/*', '*'], (req: Request, res: Response, next) => {
+      if (req.path.startsWith('/api/')) {
+        return next();
+      }
+      if (fs.existsSync(distIndex)) {
+        res.sendFile(distIndex);
+      } else {
+        res.sendFile(rootIndex);
+      }
     });
   }
 

@@ -22,17 +22,17 @@ export async function fetchVRMWithCache(
 ): Promise<ArrayBuffer> {
   const cleanFile = (fileName || 'hana_v1.0_vrm1.vrm').trim();
 
-  // If already in memory, instant return
+  // If already in memory, instant return (cloned so callers cannot detach shared buffer)
   const existingMem = memoryCachedVRMBufferMap.get(cleanFile);
   if (existingMem) {
     onProgress?.(100, `Restoring ${AI_PROFILE.name} from memory...`);
-    return existingMem;
+    return existingMem.slice(0);
   }
 
   // Deduplicate concurrent requests per file
   const existingFlight = inFlightVRMFetchMap.get(cleanFile);
   if (existingFlight) {
-    return existingFlight;
+    return existingFlight.then((buf) => buf.slice(0));
   }
 
   const fetchPromise = (async () => {
@@ -53,10 +53,16 @@ export async function fetchVRMWithCache(
         for (const url of candidateUrls) {
           const cached = await cache.match(url);
           if (cached) {
-            onProgress?.(100, `Restoring ${AI_PROFILE.name} from local cache...`);
             const buffer = await cached.arrayBuffer();
-            memoryCachedVRMBufferMap.set(cleanFile, buffer);
-            return buffer;
+            if (buffer.byteLength > 100) {
+              const header = new Uint8Array(buffer, 0, 4);
+              const isGlb = header[0] === 0x67 && header[1] === 0x6c && header[2] === 0x54 && header[3] === 0x46;
+              if (isGlb) {
+                onProgress?.(100, `Restoring ${AI_PROFILE.name} from local cache...`);
+                memoryCachedVRMBufferMap.set(cleanFile, buffer);
+                return buffer;
+              }
+            }
           }
         }
       }
@@ -73,6 +79,10 @@ export async function fetchVRMWithCache(
         const response = await fetch(targetUrl, { cache: 'no-cache' });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (contentType.includes('text/html')) {
+          throw new Error('Endpoint returned HTML instead of VRM binary');
         }
 
         const contentLength = Number(response.headers.get('content-length')) || 0;
@@ -143,7 +153,8 @@ export async function fetchVRMWithCache(
   inFlightVRMFetchMap.set(cleanFile, fetchPromise);
 
   try {
-    return await fetchPromise;
+    const buf = await fetchPromise;
+    return buf.slice(0);
   } finally {
     inFlightVRMFetchMap.delete(cleanFile);
   }

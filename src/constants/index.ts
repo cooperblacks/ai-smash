@@ -13,7 +13,7 @@
  * - UI timings, timeouts, badge themes, and default settings
  */
 
-import { UserSettings, ThemeDefinition, WardrobeOutfit } from '../types';
+import type { UserSettings, ThemeDefinition, WardrobeOutfit } from '../types/index.ts';
 
 // =====================================================================
 // TYPOGRAPHY CONFIGURATION (Google Fonts)

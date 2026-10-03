@@ -57,6 +57,7 @@ interface WardrobePortraitViewportProps {
   outfit: WardrobeOutfit;
   isSelected: boolean;
   isLocked: boolean;
+  isSidebarOpen: boolean;
   loadDelayMs: number;
   onSelect: () => void;
 }
@@ -65,14 +66,25 @@ const WardrobePortraitViewport: React.FC<WardrobePortraitViewportProps> = ({
   outfit,
   isSelected,
   isLocked,
+  isSidebarOpen,
   loadDelayMs,
   onSelect,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [shouldLoad, setShouldLoad] = useState(false);
+  const isSidebarOpenRef = useRef(isSidebarOpen);
 
   useEffect(() => {
+    isSidebarOpenRef.current = isSidebarOpen;
+    if (isSidebarOpen) {
+      setShouldLoad(true);
+    }
+  }, [isSidebarOpen]);
+
+  useEffect(() => {
+    if (!shouldLoad) return;
     let isDisposed = false;
     let rafId = 0;
     let delayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -169,40 +181,45 @@ const WardrobePortraitViewport: React.FC<WardrobePortraitViewportProps> = ({
 
               const renderLoop = () => {
                 if (isDisposed) return;
-                const delta = Math.min(clock.getDelta(), 0.05);
-                elapsed += delta;
 
-                if (loadedVrm) {
-                  // Gentle portrait breathing & subtle head motion
-                  if (loadedVrm.humanoid) {
-                    const head = loadedVrm.humanoid.getNormalizedBoneNode('head');
-                    const chest = loadedVrm.humanoid.getNormalizedBoneNode('chest');
-                    if (head) {
-                      head.rotation.y = Math.sin(elapsed * 0.9) * 0.09;
-                      head.rotation.z = Math.cos(elapsed * 0.7) * 0.03;
+                if (isSidebarOpenRef.current) {
+                  const delta = Math.min(clock.getDelta(), 0.05);
+                  elapsed += delta;
+
+                  if (loadedVrm) {
+                    // Gentle portrait breathing & subtle head motion
+                    if (loadedVrm.humanoid) {
+                      const head = loadedVrm.humanoid.getNormalizedBoneNode('head');
+                      const chest = loadedVrm.humanoid.getNormalizedBoneNode('chest');
+                      if (head) {
+                        head.rotation.y = Math.sin(elapsed * 0.9) * 0.09;
+                        head.rotation.z = Math.cos(elapsed * 0.7) * 0.03;
+                      }
+                      if (chest) {
+                        chest.rotation.x = Math.sin(elapsed * 1.6) * 0.02;
+                      }
                     }
-                    if (chest) {
-                      chest.rotation.x = Math.sin(elapsed * 1.6) * 0.02;
+                    loadedVrm.update(delta);
+                  }
+
+                  const renderer = getSharedPreviewRenderer();
+                  const targetCanvas = canvasRef.current;
+                  if (renderer && targetCanvas) {
+                    const ctx = targetCanvas.getContext('2d');
+                    if (ctx) {
+                      renderer.render(scene, camera);
+                      ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+                      ctx.drawImage(
+                        renderer.domElement,
+                        0,
+                        0,
+                        targetCanvas.width,
+                        targetCanvas.height
+                      );
                     }
                   }
-                  loadedVrm.update(delta);
-                }
-
-                const renderer = getSharedPreviewRenderer();
-                const targetCanvas = canvasRef.current;
-                if (renderer && targetCanvas) {
-                  const ctx = targetCanvas.getContext('2d');
-                  if (ctx) {
-                    renderer.render(scene, camera);
-                    ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
-                    ctx.drawImage(
-                      renderer.domElement,
-                      0,
-                      0,
-                      targetCanvas.width,
-                      targetCanvas.height
-                    );
-                  }
+                } else {
+                  clock.getDelta();
                 }
 
                 // Throttle preview refresh slightly (~24fps) to keep all 9 portraits silky smooth
@@ -210,7 +227,7 @@ const WardrobePortraitViewport: React.FC<WardrobePortraitViewportProps> = ({
                   if (!isDisposed) {
                     rafId = requestAnimationFrame(renderLoop);
                   }
-                }, 42);
+                }, isSidebarOpenRef.current ? 42 : 250);
               };
 
               rafId = requestAnimationFrame(renderLoop);
@@ -240,7 +257,7 @@ const WardrobePortraitViewport: React.FC<WardrobePortraitViewportProps> = ({
         VRMUtils.deepDispose(loadedVrm.scene);
       }
     };
-  }, [outfit.fileName, loadDelayMs]);
+  }, [shouldLoad, outfit.fileName, loadDelayMs]);
 
   return (
     <button
@@ -690,6 +707,7 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
                     outfit={outfit}
                     isSelected={isSelected}
                     isLocked={isLocked}
+                    isSidebarOpen={isOpen}
                     loadDelayMs={idx * 180}
                     onSelect={() => {
                       if (isLocked) {
