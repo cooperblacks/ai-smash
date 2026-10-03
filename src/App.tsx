@@ -1116,8 +1116,8 @@ export default function App() {
         id: `msg_asst_err_${Date.now()}`,
         role: 'assistant',
         content: isOllama
-          ? `Connection to ${activeModel.name} was interrupted. I have automatically switched to local SmolLM2 135M.`
-          : "My memory stalled loading those weights into your browser. If your device is low on RAM, try SmolLM2 135M.",
+          ? `Connection to ${activeModel.name} was interrupted. I have automatically switched to local Tiny Brain.`
+          : "My memory stalled loading those weights into your browser. If your device is low on RAM, try Tiny Brain.",
         timestamp: Date.now(),
         modelUsed: activeModel.name,
         error: true,

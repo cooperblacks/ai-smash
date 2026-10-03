@@ -266,7 +266,7 @@ priorityQueue: [
   'Tessa',
   'Veena',
 ],
-  pitch: 1.15,
+  pitch: 1.25,
   rate: 1.05,
   preloadTimeoutMs: 2500,
   waitVoiceTimeoutMs: 2000,
