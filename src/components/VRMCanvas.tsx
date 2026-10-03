@@ -3,23 +3,29 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
 import { retargetAnimationFromUrl } from 'vrm-mixamo-retarget';
-import { VRM_CONFIG, AI_PROFILE, THEME_COLORS } from '../constants';
+import { VRM_CONFIG, AI_PROFILE, THEME_COLORS, getWaitingAnimationCandidateUrls } from '../constants';
 import { lipSyncManager } from '../lib/lipSync';
 import { fetchVRMWithCache } from '../lib/vrmCache';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, AlertTriangle } from 'lucide-react';
 
 interface VRMCanvasProps {
   isSpeaking: boolean;
   onLoaded?: () => void;
   onModelClick?: (hitRegion: 'head' | 'chest' | 'stomach' | 'skirt' | 'legs') => void;
+  onFallStart?: () => void;
   isPainSoundPlaying?: boolean;
+  modelFileName?: string;
+  lastUserMessageAt?: number;
 }
 
 export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   isSpeaking,
   onLoaded,
   onModelClick,
+  onFallStart,
   isPainSoundPlaying = false,
+  modelFileName = 'hana_v1.0_vrm1.vrm',
+  lastUserMessageAt = 0,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,6 +35,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   const [loadingStep, setLoadingStep] = useState<string>(`Preparing ${AI_PROFILE.name} 3D...`);
   const [isLoaded, setIsLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isFallWarningActive, setIsFallWarningActive] = useState(false);
 
   // Store speaking state in ref to prevent unnecessary re-mounts
   const isSpeakingRef = useRef(isSpeaking);
@@ -47,6 +54,11 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     onModelClickRef.current = onModelClick;
   }, [onModelClick]);
 
+  const onFallStartRef = useRef(onFallStart);
+  useEffect(() => {
+    onFallStartRef.current = onFallStart;
+  }, [onFallStart]);
+
   const isPainSoundPlayingRef = useRef(isPainSoundPlaying);
   useEffect(() => {
     isPainSoundPlayingRef.current = isPainSoundPlaying;
@@ -60,6 +72,10 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   const idleActionRef = useRef<THREE.AnimationAction | null>(null);
   const fallActionRef = useRef<THREE.AnimationAction | null>(null);
   const getupActionRef = useRef<THREE.AnimationAction | null>(null);
+  const waitingActionsRef = useRef<THREE.AnimationAction[]>([]);
+  const activeWaitActionRef = useRef<THREE.AnimationAction | null>(null);
+  const waitInactivityTimerRef = useRef<number>(0);
+  const stopCurrentWaitAnimationRef = useRef<(() => void) | null>(null);
   const isFallSequenceActiveRef = useRef(false);
   const clickTimestampsRef = useRef<number[]>([]);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -69,6 +85,13 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   // Mouse look tracking
   const mouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Reset the 60s waiting animation counter and immediately keyframe-transition back to default idle when a new message is sent
+  useEffect(() => {
+    if (!lastUserMessageAt) return;
+    waitInactivityTimerRef.current = 0;
+    stopCurrentWaitAnimationRef.current?.();
+  }, [lastUserMessageAt]);
+
   // Main Three.js Scene Setup & VRM Loader
   useEffect(() => {
     const container = containerRef.current;
@@ -77,6 +100,8 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     let isDisposed = false;
     let animationFrameId: number;
+    setIsLoaded(false);
+    setLoadError(null);
 
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -174,7 +199,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       if (isDisposed) return;
       if (pct !== undefined) setDownloadProgress(pct);
       if (step) setLoadingStep(step);
-    })
+    }, modelFileName)
       .then((buffer) => {
         if (isDisposed) return;
 
@@ -303,6 +328,20 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
                   getupActionRef.current = getupAction;
                 }
               });
+
+              // 4. Waiting animations array (e.g., mixamo_yawn.fbx, mixamo_wait.fbx, extensible via VRM_CONFIG.waitingAnimationFiles)
+              waitingActionsRef.current = [];
+              for (const waitFileName of VRM_CONFIG.waitingAnimationFiles) {
+                const candidateUrls = getWaitingAnimationCandidateUrls(waitFileName);
+                loadAndRetargetClip(candidateUrls, false).then((waitClip) => {
+                  if (waitClip && !isDisposed && mixerRef.current) {
+                    const waitAction = mixerRef.current.clipAction(waitClip);
+                    waitAction.setLoop(THREE.LoopOnce, 1);
+                    waitAction.clampWhenFinished = true;
+                    waitingActionsRef.current.push(waitAction);
+                  }
+                });
+              }
             };
 
             loadAllAnimations();
@@ -372,6 +411,119 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     let currentAngry = 0.0;
 
     // ----------------------------------------------------
+    // Waiting Animations (60s Inactivity Random Selector & Immediate Interrupt)
+    // ----------------------------------------------------
+    let waitFinishTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    let currentWaitFinishedListener: ((e: any) => void) | null = null;
+
+    const stopCurrentWaitAnimation = () => {
+      if (waitFinishTimeoutId) {
+        clearTimeout(waitFinishTimeoutId);
+        waitFinishTimeoutId = null;
+      }
+      const mixer = mixerRef.current;
+      if (mixer && currentWaitFinishedListener) {
+        mixer.removeEventListener('finished', currentWaitFinishedListener);
+        currentWaitFinishedListener = null;
+      }
+      const activeWait = activeWaitActionRef.current;
+      const idleAction = idleActionRef.current;
+      if (activeWait && idleAction && !isFallSequenceActiveRef.current) {
+        activeWaitActionRef.current = null;
+        idleAction.reset();
+        idleAction.setLoop(THREE.LoopRepeat, Infinity);
+        idleAction.enabled = true;
+        idleAction.setEffectiveTimeScale(1);
+        idleAction.setEffectiveWeight(1);
+        idleAction.crossFadeFrom(activeWait, 0.35, false);
+        idleAction.play();
+      } else {
+        activeWaitActionRef.current = null;
+      }
+    };
+
+    stopCurrentWaitAnimationRef.current = stopCurrentWaitAnimation;
+
+    const triggerRandomWaitAnimation = () => {
+      // Auto-reset the 60s counter every time a wait animation is played
+      waitInactivityTimerRef.current = 0;
+
+      if (isFallSequenceActiveRef.current) return;
+      const mixer = mixerRef.current;
+      const idleAction = idleActionRef.current;
+      const availableWaitActions = waitingActionsRef.current;
+      if (!mixer || !idleAction || availableWaitActions.length === 0) return;
+
+      const chosenAction =
+        availableWaitActions[Math.floor(Math.random() * availableWaitActions.length)];
+      if (!chosenAction) return;
+
+      if (waitFinishTimeoutId) {
+        clearTimeout(waitFinishTimeoutId);
+        waitFinishTimeoutId = null;
+      }
+      if (currentWaitFinishedListener) {
+        mixer.removeEventListener('finished', currentWaitFinishedListener);
+        currentWaitFinishedListener = null;
+      }
+
+      const fromAction = activeWaitActionRef.current || idleAction;
+      activeWaitActionRef.current = chosenAction;
+
+      chosenAction.reset();
+      chosenAction.setLoop(THREE.LoopOnce, 1);
+      chosenAction.clampWhenFinished = true;
+      chosenAction.enabled = true;
+      chosenAction.setEffectiveTimeScale(1);
+      chosenAction.setEffectiveWeight(1);
+      if (fromAction !== chosenAction) {
+        chosenAction.crossFadeFrom(fromAction, 0.45, false);
+      } else {
+        chosenAction.fadeIn(0.35);
+      }
+      chosenAction.play();
+
+      let hasHandledWaitEnd = false;
+      const handleWaitComplete = () => {
+        if (hasHandledWaitEnd || isDisposed) return;
+        hasHandledWaitEnd = true;
+        if (currentWaitFinishedListener) {
+          mixer.removeEventListener('finished', currentWaitFinishedListener);
+          currentWaitFinishedListener = null;
+        }
+        if (waitFinishTimeoutId) {
+          clearTimeout(waitFinishTimeoutId);
+          waitFinishTimeoutId = null;
+        }
+        if (activeWaitActionRef.current === chosenAction) {
+          activeWaitActionRef.current = null;
+          if (!isFallSequenceActiveRef.current && idleActionRef.current) {
+            const idle = idleActionRef.current;
+            idle.reset();
+            idle.setLoop(THREE.LoopRepeat, Infinity);
+            idle.enabled = true;
+            idle.setEffectiveTimeScale(1);
+            idle.setEffectiveWeight(1);
+            idle.crossFadeFrom(chosenAction, 0.5, false);
+            idle.play();
+          }
+        }
+      };
+
+      const onWaitFinished = (e: any) => {
+        if (e.action === chosenAction) {
+          handleWaitComplete();
+        }
+      };
+
+      currentWaitFinishedListener = onWaitFinished;
+      mixer.addEventListener('finished', onWaitFinished);
+
+      const waitDurationMs = (chosenAction.getClip()?.duration || 4.0) * 1000;
+      waitFinishTimeoutId = setTimeout(handleWaitComplete, Math.max(500, waitDurationMs - 150));
+    };
+
+    // ----------------------------------------------------
     // Fall & Get Up Multi-Click Sequence
     // ----------------------------------------------------
     let fallSequenceTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -387,9 +539,23 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       if (!mixer || !fallAction || !getupAction || !idleAction) return;
 
       isFallSequenceActiveRef.current = true;
+      waitInactivityTimerRef.current = 0;
+      setIsFallWarningActive(true);
+      onFallStartRef.current?.();
 
       if (fallSequenceTimeoutId) clearTimeout(fallSequenceTimeoutId);
       if (getupFallbackTimeoutId) clearTimeout(getupFallbackTimeoutId);
+      if (waitFinishTimeoutId) {
+        clearTimeout(waitFinishTimeoutId);
+        waitFinishTimeoutId = null;
+      }
+      if (currentWaitFinishedListener) {
+        mixer.removeEventListener('finished', currentWaitFinishedListener);
+        currentWaitFinishedListener = null;
+      }
+
+      const previousActiveAction = activeWaitActionRef.current || idleAction;
+      activeWaitActionRef.current = null;
 
       // Reset any leftover click impulse forces so physics does not fight animation
       clickImpulsePitch = 0;
@@ -405,7 +571,10 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       fallAction.reset();
       fallAction.setLoop(THREE.LoopOnce, 1);
       fallAction.clampWhenFinished = true;
-      fallAction.crossFadeFrom(idleAction, 0.4, false);
+      fallAction.enabled = true;
+      fallAction.setEffectiveTimeScale(1);
+      fallAction.setEffectiveWeight(1);
+      fallAction.crossFadeFrom(previousActiveAction, 0.4, false);
       fallAction.play();
 
       let hasHandledFallEnd = false;
@@ -422,6 +591,9 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           getupAction.reset();
           getupAction.setLoop(THREE.LoopOnce, 1);
           getupAction.clampWhenFinished = true;
+          getupAction.enabled = true;
+          getupAction.setEffectiveTimeScale(1);
+          getupAction.setEffectiveWeight(1);
           getupAction.crossFadeFrom(fallAction, 0.45, false);
           getupAction.play();
 
@@ -434,11 +606,18 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
             // 4. At the end of get up animation, keyframe transition to default idle animation
             idleAction.reset();
             idleAction.setLoop(THREE.LoopRepeat, Infinity);
+            idleAction.enabled = true;
+            idleAction.setEffectiveTimeScale(1);
+            idleAction.setEffectiveWeight(1);
             idleAction.crossFadeFrom(getupAction, 0.6, false);
             idleAction.play();
 
             setTimeout(() => {
               isFallSequenceActiveRef.current = false;
+              waitInactivityTimerRef.current = 0;
+              if (!isDisposed) {
+                setIsFallWarningActive(false);
+              }
             }, 600);
           };
 
@@ -478,7 +657,17 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       const vrm = vrmRef.current;
 
       if (vrm) {
-        // Continuous Mixamo Idle Body Animation
+        // 60-second message inactivity counter -> select random waiting animation & auto-reset
+        if (!isFallSequenceActiveRef.current) {
+          waitInactivityTimerRef.current += delta;
+          const waitIntervalSec = VRM_CONFIG.interaction.waitAnimationIntervalSec || 60.0;
+          if (waitInactivityTimerRef.current >= waitIntervalSec) {
+            waitInactivityTimerRef.current = 0;
+            triggerRandomWaitAnimation();
+          }
+        }
+
+        // Continuous Mixamo Body Animation Mixer
         if (mixerRef.current) {
           mixerRef.current.update(delta);
         }
@@ -676,11 +865,12 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           saccadeOffsetY = (Math.random() - 0.5) * 0.015;
         }
 
-        // Head & Neck Gaze Tracking
+        // Head & Neck Gaze Tracking (paused while full-body fall or wait animation is driving head/neck keyframes)
         const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
         const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
+        const isWaitPlaying = Boolean(activeWaitActionRef.current);
 
-        if (!isFalling && headNode && cameraRef.current) {
+        if (!isFalling && !isWaitPlaying && headNode && cameraRef.current) {
           const headWorldPos = new THREE.Vector3();
           headNode.getWorldPosition(headWorldPos);
           headWorldPos.y += 0.055;
@@ -863,8 +1053,10 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     return () => {
       isDisposed = true;
+      stopCurrentWaitAnimationRef.current = null;
       if (fallSequenceTimeoutId) clearTimeout(fallSequenceTimeoutId);
       if (getupFallbackTimeoutId) clearTimeout(getupFallbackTimeoutId);
+      if (waitFinishTimeoutId) clearTimeout(waitFinishTimeoutId);
       clickTimestampsRef.current = [];
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
@@ -878,7 +1070,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         VRMUtils.deepDispose(vrmRef.current.scene);
       }
     };
-  }, []);
+  }, [modelFileName]);
 
   return (
     <div
@@ -895,6 +1087,16 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
       {/* 3D WebGL Canvas */}
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full outline-none" />
+
+      {/* Harassment Warning Banner while Fall Animation is Playing */}
+      {isFallWarningActive && (
+        <div className="absolute top-5 inset-x-0 z-30 flex justify-center px-4 pointer-events-none animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="px-4 py-2.5 rounded-2xl bg-red-600/95 text-white border border-red-400/50 shadow-xl backdrop-blur-md flex items-center gap-2.5 text-xs sm:text-sm font-semibold">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-200" />
+            <span>Harassing {AI_PROFILE.name} will get you banned!</span>
+          </div>
+        </div>
+      )}
 
       {/* Download / Caching Progress Overlay */}
       {!isLoaded && !loadError && (

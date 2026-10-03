@@ -121,7 +121,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 text-xs sm:text-sm">
           {/* Section 1: User Personalization */}
           <div className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-400 flex items-center gap-1.5">
+            <h3 className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
               <User className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
               User Personalization
             </h3>
@@ -183,7 +183,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section 2: Hardware Backend Preference */}
           <div className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-400 flex items-center gap-1.5">
+            <h3 className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
               <Cpu className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
               Hardware Execution Engine
             </h3>
@@ -224,7 +224,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Section 3: In-Browser SLM Storage & Deletion */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-400 flex items-center gap-1.5">
+              <h3 className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
                 <HardDrive className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
                 Browser SLM Weights Storage ({totalCachedMB} MB stored)
               </h3>

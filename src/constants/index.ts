@@ -13,7 +13,7 @@
  * - UI timings, timeouts, badge themes, and default settings
  */
 
-import { UserSettings, ThemeDefinition } from '../types';
+import { UserSettings, ThemeDefinition, WardrobeOutfit } from '../types';
 
 // =====================================================================
 // TYPOGRAPHY CONFIGURATION (Google Fonts)
@@ -317,8 +317,63 @@ export const APP_INFO = {
     userSettings: 'aismash_settings',
     customOllamaUrl: 'aismash_custom_ollama_url',
     customOllamaModel: 'aismash_custom_ollama_model',
+    harassmentCount: 'aismash_harassment_count',
+    blockedUntil: 'aismash_blocked_until',
+    equippedOutfit: 'aismash_equipped_outfit_id',
+    accountSession: 'aismash_account_session',
+    deviceFingerprint: 'aismash_device_fingerprint',
   },
 };
+
+export const SPECIAL_THANKS_LINKS = [
+  {
+    name: 'Dewan Mukto',
+    url: 'https://dewanmukto.github.io/',
+    description: 'creator of MuxAI and Hana (OC)',
+  },
+  {
+    name: 'VRoid Studio',
+    url: 'https://vroid.com/en/studio',
+    description: '3D model designing software',
+  },
+  {
+    name: 'Mixamo',
+    url: 'https://www.mixamo.com/',
+    description: '3D animation templates',
+  },
+  {
+    name: 'HuggingFace',
+    url: 'https://huggingface.co/docs/transformers.js/index',
+    description: 'Open-source LLMs and Transformers.js',
+  },
+  {
+    name: 'Ollama',
+    url: 'https://ollama.com/',
+    description: 'Open-source LLMs',
+  },
+  {
+    name: 'Ngrok',
+    url: 'https://dashboard.ngrok.com/get-started/your-authtoken',
+    description: 'Tunneling for connecting Ollama servers easily',
+  },
+  {
+    name: 'ThreeJS',
+    url: 'https://threejs.org/',
+    description: '3D engine for web-based projects',
+  },
+  {
+    name: 'ThreeVRM',
+    url: 'https://github.com/pixiv/three-vrm',
+    description: 'Driver for Three.js with VRoid models.',
+  },
+  {
+    name: 'VRM Mixamo Retarget',
+    url: 'https://github.com/saori-eth/vrm-mixamo-retargeter',
+    description: 'Middleware for 3D animation-model compatibility',
+  },
+];
+
+export const PRODUCT_HUNT_URL = 'https://www.producthunt.com/products/ai-smash?launch=ai-smash';
 
 // =====================================================================
 // 3. AI PERSONA PROFILE CONFIGURATION
@@ -344,12 +399,117 @@ export const AI_PROFILE = {
   socials: {
     instagram: 'https://instagram.com/huanmux',
     discord: 'https://discord.com/invite/hMjVaVJU76',
+    github: 'https://github.com/dwmk/ai-smash',
   },
 };
+
+export const MODEL_SOURCE_DOMAIN = 'https://muxai.vercel.app';
+export const MODEL_FALLBACK_DOMAIN = 'https://ai.mux8.com';
+
+export const WARDROBE_OUTFITS: WardrobeOutfit[] = [
+  {
+    id: 'mint-maid-apron',
+    name: 'Mint Maid Apron',
+    fileName: 'hana_v1.0_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_vrm1.vrm`,
+    isPremium: false,
+    isDefault: true,
+  },
+  {
+    id: 'candy-maid-apron',
+    name: 'Candy Maid Apron',
+    fileName: 'hana_v1.0_pinkmaid_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_pinkmaid_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_pinkmaid_vrm1.vrm`,
+    isPremium: true,
+  },
+  {
+    id: 'imperial-noblewoman',
+    name: 'Imperial Noblewoman',
+    fileName: 'hana_v1.0_imperial_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_imperial_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_imperial_vrm1.vrm`,
+    isPremium: true,
+  },
+  {
+    id: 'lavender-grace-dress',
+    name: 'Lavender Grace Dress',
+    fileName: 'hana_v1.0_purpledress_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_purpledress_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_purpledress_vrm1.vrm`,
+    isPremium: true,
+  },
+  {
+    id: 'sakura-spring',
+    name: 'Sakura Spring',
+    fileName: 'hana_v1.0_pinkdress_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_pinkdress_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_pinkdress_vrm1.vrm`,
+    isPremium: true,
+  },
+  {
+    id: 'school-uniform',
+    name: 'School Uniform',
+    fileName: 'hana_v1.0_beigeuniform_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_beigeuniform_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_beigeuniform_vrm1.vrm`,
+    isPremium: true,
+  },
+  {
+    id: 'streetlit-hoodie',
+    name: 'Streetlit Hoodie',
+    fileName: 'hana_v1.0_redhoodie_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_redhoodie_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_redhoodie_vrm1.vrm`,
+    isPremium: true,
+  },
+  {
+    id: 'mux-future',
+    name: 'Mux Future',
+    fileName: 'hana_v1.0_futurewhite_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_futurewhite_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_futurewhite_vrm1.vrm`,
+    isPremium: true,
+  },
+  {
+    id: 'cozy-canadian-winter',
+    name: 'Cozy Canadian Winter',
+    fileName: 'hana_v1.0_wintercardigan_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_wintercardigan_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_wintercardigan_vrm1.vrm`,
+    isPremium: true,
+  },
+];
+
+export const DEFAULT_OUTFIT_ID = 'mint-maid-apron';
+
+export function getOutfitById(id?: string | null): WardrobeOutfit {
+  if (!id) return WARDROBE_OUTFITS[0];
+  return WARDROBE_OUTFITS.find((o) => o.id === id) || WARDROBE_OUTFITS[0];
+}
 
 // =====================================================================
 // 4. VRM 3D CANVAS & AVATAR CONFIGURATION
 // =====================================================================
+export const ANIMATION_SOURCE_DOMAINS = [
+  MODEL_SOURCE_DOMAIN,
+  MODEL_FALLBACK_DOMAIN,
+];
+
+// Extensible array of waiting animation FBX files on the animation source domain
+export const WAITING_ANIMATION_FILES: string[] = [
+  'mixamo_yawn.fbx',
+  'mixamo_wait.fbx',
+];
+
+export function getWaitingAnimationCandidateUrls(fileName: string): string[] {
+  return [
+    `/api/animation/wait?file=${encodeURIComponent(fileName)}`,
+    ...ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/${fileName}`),
+  ];
+}
+
 export const VRM_CONFIG = {
   modelUrl: 'https://muxai.vercel.app/hana_v1.0_vrm1.vrm',
   animationUrl: 'https://muxai.vercel.app/mixamo_idle.fbx',
@@ -357,6 +517,7 @@ export const VRM_CONFIG = {
   getupAnimationUrl: 'https://muxai.vercel.app/mixamo_getup.fbx',
   walkAnimationUrl: 'https://muxai.vercel.app/mixamo_walk.fbx',
   waveAnimationUrl: 'https://muxai.vercel.app/mixamo_wave.fbx',
+  waitingAnimationFiles: WAITING_ANIMATION_FILES,
   cacheKey: 'hana_vrm_cache_v1',
   candidateModelUrls: [
     '/api/vrm',
@@ -411,6 +572,7 @@ export const VRM_CONFIG = {
     blinkRandomIntervalSec: 4.0,
     saccadeMinIntervalSec: 1.2,
     saccadeRandomIntervalSec: 2.5,
+    waitAnimationIntervalSec: 60.0,
   },
 };
 
@@ -454,8 +616,22 @@ priorityQueue: [
 };
 
 // =====================================================================
-// 6. STARTER PROMPTS
+// 6. STARTER PROMPTS & LANDING HERO TIME-BASED GREETINGS
 // =====================================================================
+export function getTimeBasedGreeting(date: Date = new Date()): string {
+  const hour = date.getHours();
+  if (hour >= 5 && hour < 12) {
+    return 'Good morning';
+  }
+  if (hour >= 12 && hour < 17) {
+    return 'Good afternoon';
+  }
+  if (hour >= 17 && hour < 22) {
+    return 'Good evening';
+  }
+  return "It's late night, huh?";
+}
+
 export const STARTER_PROMPTS = [
   'Are you around right now?',
   'What are you thinking about?',
