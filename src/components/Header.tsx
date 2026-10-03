@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Search, PanelLeft, Volume2, VolumeX, Palette, Box, Home } from 'lucide-react';
+import { Settings as SettingsIcon, Search, PanelLeft, Volume2, VolumeX, Palette, Box } from 'lucide-react';
 import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
 
 interface HeaderProps {
@@ -16,7 +16,6 @@ interface HeaderProps {
   onToggleSound: () => void;
   isThemeSidebarOpen: boolean;
   onToggleThemeSidebar: () => void;
-  onNavigateHome?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -33,7 +32,6 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSound,
   isThemeSidebarOpen,
   onToggleThemeSidebar,
-  onNavigateHome,
 }) => {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
 
@@ -81,17 +79,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <PanelLeft className="w-4 h-4" />
           </button>
-
-          {onNavigateHome && (
-            <button
-              onClick={onNavigateHome}
-              title="Return to Home Landing Page"
-              className="p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/[0.05] dark:hover:bg-white/[0.08] active:scale-95 transition-all duration-100"
-              aria-label="Return to Home"
-            >
-              <Home className="w-4 h-4" />
-            </button>
-          )}
 
           {/* Clickable Profile Region: opens Twitter/X preview */}
           <button

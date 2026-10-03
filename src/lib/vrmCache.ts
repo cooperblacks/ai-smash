@@ -1,7 +1,7 @@
-import { VRM_CONFIG, AI_PROFILE } from '../constants';
+import { VRM_CONFIG, AI_PROFILE, MODEL_SOURCE_DOMAIN, MODEL_FALLBACK_DOMAIN } from '../constants';
 
-let inFlightVRMFetch: Promise<ArrayBuffer> | null = null;
-let memoryCachedVRMBuffer: ArrayBuffer | null = null;
+const inFlightVRMFetchMap = new Map<string, Promise<ArrayBuffer>>();
+const memoryCachedVRMBufferMap = new Map<string, ArrayBuffer>();
 let isPreloadStarted = false;
 
 export interface VRMLoadProgress {
@@ -10,29 +10,41 @@ export interface VRMLoadProgress {
 }
 
 /**
- * Fetch and persistently cache the VRM 3D model according to its usual loading scheme:
- * 1. Checks Cache API (VRM_CONFIG.cacheKey) for existing cached ArrayBuffer
- * 2. If not found, attempts candidate model URLs (/api/vrm and fallbacks)
+ * Fetch and persistently cache a VRM 3D model by file name:
+ * 1. Checks memory and Cache API (VRM_CONFIG.cacheKey) for existing cached ArrayBuffer
+ * 2. If not found, attempts candidate model URLs (/api/vrm?file=..., MODEL_SOURCE_DOMAIN, MODEL_FALLBACK_DOMAIN)
  * 3. Streams download with percentage tracking
  * 4. Stores completed buffer in Cache API and memory cache for zero-latency access
  */
 export async function fetchVRMWithCache(
-  onProgress?: (progress: number, step?: string) => void
+  onProgress?: (progress: number, step?: string) => void,
+  fileName: string = 'hana_v1.0_vrm1.vrm'
 ): Promise<ArrayBuffer> {
+  const cleanFile = (fileName || 'hana_v1.0_vrm1.vrm').trim();
+
   // If already in memory, instant return
-  if (memoryCachedVRMBuffer) {
+  const existingMem = memoryCachedVRMBufferMap.get(cleanFile);
+  if (existingMem) {
     onProgress?.(100, `Restoring ${AI_PROFILE.name} from memory...`);
-    return memoryCachedVRMBuffer;
+    return existingMem;
   }
 
-  // Deduplicate concurrent requests
-  if (inFlightVRMFetch) {
-    return inFlightVRMFetch;
+  // Deduplicate concurrent requests per file
+  const existingFlight = inFlightVRMFetchMap.get(cleanFile);
+  if (existingFlight) {
+    return existingFlight;
   }
 
-  inFlightVRMFetch = (async () => {
+  const fetchPromise = (async () => {
     const cacheName = VRM_CONFIG.cacheKey;
-    const candidateUrls = VRM_CONFIG.candidateModelUrls;
+    const isDefaultModel = cleanFile === 'hana_v1.0_vrm1.vrm';
+    const candidateUrls = isDefaultModel
+      ? VRM_CONFIG.candidateModelUrls
+      : [
+          `/api/vrm?file=${encodeURIComponent(cleanFile)}`,
+          `${MODEL_SOURCE_DOMAIN}/${cleanFile}`,
+          `${MODEL_FALLBACK_DOMAIN}/${cleanFile}`,
+        ];
 
     let cache: Cache | null = null;
     try {
@@ -43,7 +55,7 @@ export async function fetchVRMWithCache(
           if (cached) {
             onProgress?.(100, `Restoring ${AI_PROFILE.name} from local cache...`);
             const buffer = await cached.arrayBuffer();
-            memoryCachedVRMBuffer = buffer;
+            memoryCachedVRMBufferMap.set(cleanFile, buffer);
             return buffer;
           }
         }
@@ -71,12 +83,12 @@ export async function fetchVRMWithCache(
           if (cache) {
             try {
               await cache.put(targetUrl, new Response(buffer.slice(0)));
-              await cache.put(VRM_CONFIG.modelUrl, new Response(buffer.slice(0)));
+              await cache.put(`${MODEL_SOURCE_DOMAIN}/${cleanFile}`, new Response(buffer.slice(0)));
             } catch {
               // Ignore cache put error
             }
           }
-          memoryCachedVRMBuffer = buffer;
+          memoryCachedVRMBufferMap.set(cleanFile, buffer);
           return buffer;
         }
 
@@ -106,13 +118,13 @@ export async function fetchVRMWithCache(
         }
 
         const finalBuffer = totalBuffer.buffer;
-        memoryCachedVRMBuffer = finalBuffer;
+        memoryCachedVRMBufferMap.set(cleanFile, finalBuffer);
 
         // Persist to Cache API for instant reload
         if (cache) {
           try {
             await cache.put(targetUrl, new Response(finalBuffer.slice(0)));
-            await cache.put(VRM_CONFIG.modelUrl, new Response(finalBuffer.slice(0)));
+            await cache.put(`${MODEL_SOURCE_DOMAIN}/${cleanFile}`, new Response(finalBuffer.slice(0)));
           } catch {
             // Ignore cache put error
           }
@@ -128,10 +140,12 @@ export async function fetchVRMWithCache(
     throw lastError || new Error('Failed to download VRM model from all candidate endpoints.');
   })();
 
+  inFlightVRMFetchMap.set(cleanFile, fetchPromise);
+
   try {
-    return await inFlightVRMFetch;
+    return await fetchPromise;
   } finally {
-    inFlightVRMFetch = null;
+    inFlightVRMFetchMap.delete(cleanFile);
   }
 }
 

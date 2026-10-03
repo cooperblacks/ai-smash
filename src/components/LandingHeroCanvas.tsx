@@ -3,8 +3,10 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
 import { retargetAnimationFromUrl } from 'vrm-mixamo-retarget';
-import { VRM_CONFIG } from '../constants';
+import { VRM_CONFIG, VOICE_CONFIG, getTimeBasedGreeting } from '../constants';
 import { fetchVRMWithCache } from '../lib/vrmCache';
+import { waitForPersonaVoice } from '../lib/audio';
+import { lipSyncManager } from '../lib/lipSync';
 
 interface LandingHeroCanvasProps {
   onSequenceComplete?: () => void;
@@ -22,6 +24,11 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
   const walkActionRef = useRef<THREE.AnimationAction | null>(null);
   const waveActionRef = useRef<THREE.AnimationAction | null>(null);
   const mouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const pointerClientRef = useRef<{ clientX: number; clientY: number; hasMoved: boolean }>({
+    clientX: 0,
+    clientY: 0,
+    hasMoved: false,
+  });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -30,6 +37,108 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
 
     let isDisposed = false;
     let animationFrameId: number;
+    let hasSpokenWaveGreeting = false;
+    let pendingAutoplayGreeting: string | null = null;
+    const simulatedBoundaryTimeouts: Array<ReturnType<typeof setTimeout>> = [];
+
+    // Preload female persona voice so it is ready when wave animation begins
+    let cachedVoice: SpeechSynthesisVoice | null = null;
+    waitForPersonaVoice(VOICE_CONFIG.preloadTimeoutMs)
+      .then((v) => {
+        if (!isDisposed) cachedVoice = v;
+      })
+      .catch(() => {});
+
+    const triggerSimulatedVisemes = (phrase: string) => {
+      simulatedBoundaryTimeouts.forEach((t) => clearTimeout(t));
+      simulatedBoundaryTimeouts.length = 0;
+
+      lipSyncManager.startSpeech(phrase);
+      const words = phrase.split(/\s+/).filter(Boolean);
+      words.forEach((word, idx) => {
+        const t = setTimeout(() => {
+          if (!isDisposed) {
+            lipSyncManager.onBoundary(word);
+          }
+        }, idx * 290);
+        simulatedBoundaryTimeouts.push(t);
+      });
+
+      const endTimer = setTimeout(() => {
+        if (!isDisposed) {
+          lipSyncManager.endSpeech();
+        }
+      }, Math.max(900, words.length * 310 + 220));
+      simulatedBoundaryTimeouts.push(endTimer);
+    };
+
+    const speakWaveGreeting = async (greetingText: string) => {
+      if (isDisposed) return;
+
+      // Always animate mouth lip-sync during the wave greeting
+      triggerSimulatedVisemes(greetingText);
+
+      if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
+      const voice = cachedVoice || (await waitForPersonaVoice(VOICE_CONFIG.waitVoiceTimeoutMs));
+      if (!voice || isDisposed) return;
+
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(greetingText);
+        utterance.voice = voice;
+        utterance.pitch = VOICE_CONFIG.pitch;
+        utterance.rate = VOICE_CONFIG.rate;
+
+        utterance.onstart = () => {
+          pendingAutoplayGreeting = null;
+          lipSyncManager.startSpeech(greetingText);
+        };
+
+        utterance.onboundary = (event) => {
+          const charIndex = event.charIndex || 0;
+          let charLength = event.charLength || 0;
+          if (!charLength) {
+            const match = greetingText.slice(charIndex).match(/^\S+/);
+            charLength = match ? match[0].length : 5;
+          }
+          const word = greetingText.slice(charIndex, charIndex + charLength);
+          lipSyncManager.onBoundary(word);
+        };
+
+        utterance.onend = () => {
+          lipSyncManager.endSpeech();
+        };
+
+        utterance.onerror = (e) => {
+          if (e.error === 'not-allowed' || e.error === 'audio-busy') {
+            pendingAutoplayGreeting = greetingText;
+          }
+          lipSyncManager.endSpeech();
+        };
+
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        // Ignore if blocked by browser autoplay policy
+      }
+    };
+
+    const handleUserGestureUnlockSpeech = () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.resume();
+        } catch {
+          // Ignore
+        }
+      }
+      if (pendingAutoplayGreeting && !isDisposed) {
+        const textToSpeak = pendingAutoplayGreeting;
+        pendingAutoplayGreeting = null;
+        speakWaveGreeting(textToSpeak);
+      }
+    };
+
+    window.addEventListener('pointerdown', handleUserGestureUnlockSpeech);
 
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
@@ -83,12 +192,48 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
     rimLight.position.set(0.0, 2.5, -2.0);
     scene.add(rimLight);
 
-    // Calculate target standing X based on screen size
+    // Calculate minimum width required for open space on the left when foreground elements are on the right:
+    // - On mobile/narrow viewports (< 1024px or when left open space < 300px), finish walk at horizontal center (0.0)
+    // - On desktop viewports with sufficient width, finish walk in the left open space just to the left of the foreground elements
     const getTargetStandingX = () => {
-      const curWidth = window.innerWidth;
-      if (curWidth >= 1024) return -0.72; // Left side of desktop hero
-      if (curWidth >= 640) return -0.45;
-      return -0.25; // Closer to center on mobile
+      const curWidth = container.clientWidth || window.innerWidth;
+      const curHeight = container.clientHeight || window.innerHeight || 1;
+      const MIN_DESKTOP_WIDTH_PX = 1024;
+      const MIN_LEFT_SPACE_PX = 300;
+
+      if (curWidth < MIN_DESKTOP_WIDTH_PX) {
+        return 0.0; // Horizontal center of the screen on mobile/tablet devices
+      }
+
+      const distToModel = 2.3;
+      const halfFrustumH = distToModel * Math.tan(THREE.MathUtils.degToRad(28 * 0.5));
+      const halfFrustumW = halfFrustumH * (curWidth / curHeight);
+
+      // Measure actual left edge of the hero foreground elements on the right side
+      const fgEl = document.querySelector('[data-hero-foreground="true"]');
+      let fgLeftPx = curWidth * (5 / 12);
+      if (fgEl) {
+        const rect = fgEl.getBoundingClientRect();
+        if (rect.width > 0 && rect.left > 0) {
+          fgLeftPx = rect.left;
+        }
+      }
+
+      // If open space to the left of foreground elements is smaller than minimum required width, stand at center
+      if (fgLeftPx < MIN_LEFT_SPACE_PX) {
+        return 0.0;
+      }
+
+      const fgLeftNdc = (fgLeftPx / curWidth) * 2 - 1;
+      const fgLeftWorldX = fgLeftNdc * halfFrustumW;
+
+      // Position avatar just to the left of the foreground elements while keeping her fully visible inside the left frustum edge
+      const avatarOffsetFromForeground = 0.22;
+      const desiredWorldX = fgLeftWorldX - avatarOffsetFromForeground;
+      const minSafeLeftWorldX = -halfFrustumW + 0.32;
+      const maxLeftColumnWorldX = -0.16;
+
+      return THREE.MathUtils.clamp(desiredWorldX, minSafeLeftWorldX, maxLeftColumnWorldX);
     };
 
     let targetStandingX = getTargetStandingX();
@@ -118,8 +263,14 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
               // Ignore if already VRM 1.0
             }
 
-            // Spawn off-screen to the right side
-            const spawnX = Math.max(2.2, (camera.aspect * 1.3));
+            // Recompute targetStandingX now that layout is mounted
+            targetStandingX = getTargetStandingX();
+
+            // Spawn off-screen to the right side based on visible camera frustum width
+            const distToModel = 2.3;
+            const halfFrustumH = distToModel * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+            const halfFrustumW = halfFrustumH * camera.aspect;
+            const spawnX = halfFrustumW + 0.38;
             vrm.scene.position.set(spawnX, VRM_CONFIG.interaction.bodyOffsetY, 0);
 
             // Facing towards the left along -X axis so she walks forward from right to left
@@ -228,10 +379,18 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
         console.error('Landing VRM fetch error:', err);
       });
 
-    // Handle mouse movement for pointer tracking
+    // Handle mouse movement for pointer tracking calibrated to canvas bounds
     const handlePointerMove = (e: MouseEvent) => {
-      const x = (e.clientX / window.innerWidth) * 2 - 1;
-      const y = -(e.clientY / window.innerHeight) * 2 + 1;
+      pointerClientRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        hasMoved: true,
+      };
+      const rect = canvas.getBoundingClientRect();
+      const rectWidth = rect.width || window.innerWidth;
+      const rectHeight = rect.height || window.innerHeight;
+      const x = ((e.clientX - rect.left) / rectWidth) * 2 - 1;
+      const y = -(((e.clientY - rect.top) / rectHeight) * 2 - 1);
       mouseRef.current = { x, y };
     };
 
@@ -276,6 +435,7 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
       if (vrm) {
         // STATE 1: WALKING towards targetStandingX
         if (state === 'walking') {
+          targetStandingX = getTargetStandingX();
           vrm.scene.position.x -= walkSpeed * delta;
 
           if (vrm.scene.position.x <= targetStandingX) {
@@ -287,6 +447,8 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
         }
         // STATE 2: TURNING to her left (from -Math.PI / 2 towards 0 facing the audience)
         else if (state === 'turning') {
+          targetStandingX = getTargetStandingX();
+          vrm.scene.position.x = THREE.MathUtils.damp(vrm.scene.position.x, targetStandingX, 6, delta);
           // Smoothly rotate rotation.y towards 0 (her left turns towards front viewer)
           const currentY = vrm.scene.rotation.y;
           const targetY = 0;
@@ -295,9 +457,15 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
           if (Math.abs(vrm.scene.rotation.y - targetY) < 0.04) {
             vrm.scene.rotation.y = 0;
 
-            // Transition to WAVING
+            // Transition to WAVING and speak time-based greeting aloud
             sequenceStateRef.current = 'waving';
             waveStartTime = time;
+
+            if (!hasSpokenWaveGreeting) {
+              hasSpokenWaveGreeting = true;
+              const greeting = getTimeBasedGreeting(new Date());
+              speakWaveGreeting(greeting);
+            }
 
             const waveAction = waveActionRef.current;
             if (waveAction) {
@@ -314,6 +482,8 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
         }
         // STATE 3: WAVING animation
         else if (state === 'waving') {
+          targetStandingX = getTargetStandingX();
+          vrm.scene.position.x = THREE.MathUtils.damp(vrm.scene.position.x, targetStandingX, 6, delta);
           const waveAction = waveActionRef.current;
           const clipDuration = waveAction?.getClip().duration || 2.4;
           const elapsed = (time - waveStartTime) / 1000;
@@ -327,6 +497,14 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
         }
         // STATE 4: STANDING in default pose (not idle) & TRACKING POINTER
         else if (state === 'standing') {
+          targetStandingX = getTargetStandingX();
+          vrm.scene.position.x = THREE.MathUtils.damp(vrm.scene.position.x, targetStandingX, 6, delta);
+
+          // Stop faded-out mixer clips once weight reaches zero so they never fight procedural head/arm bones
+          if (waveActionRef.current && waveActionRef.current.isRunning() && waveActionRef.current.getEffectiveWeight() <= 0.01) {
+            mixerRef.current?.stopAllAction();
+          }
+
           // Arm resting pose
           if (vrm.humanoid) {
             const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
@@ -345,32 +523,86 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
             if (leftLowerArm) leftLowerArm.rotation.y = THREE.MathUtils.damp(leftLowerArm.rotation.y, -0.2, 4, delta);
             if (rightLowerArm) rightLowerArm.rotation.y = THREE.MathUtils.damp(rightLowerArm.rotation.y, 0.2, 4, delta);
 
-            // Pointer Tracking with Head & Neck
+            // Pointer Tracking with Head, Neck & Spine calibrated to current head position
             const head = vrm.humanoid.getNormalizedBoneNode('head');
             const neck = vrm.humanoid.getNormalizedBoneNode('neck');
+            const spine = vrm.humanoid.getNormalizedBoneNode('spine');
 
-            const mouse = mouseRef.current;
-            // Target gaze angles relative to model standing position
-            const lookTargetAngleY = (mouse.x - targetStandingX * 0.5) * 0.45;
-            const lookTargetAngleX = -mouse.y * 0.25;
+            // Recalculate pointer NDC relative to current canvas bounding box (accounts for scroll/parallax)
+            if (pointerClientRef.current.hasMoved) {
+              const rect = canvas.getBoundingClientRect();
+              if (rect.width > 0 && rect.height > 0) {
+                mouseRef.current = {
+                  x: ((pointerClientRef.current.clientX - rect.left) / rect.width) * 2 - 1,
+                  y: -(((pointerClientRef.current.clientY - rect.top) / rect.height) * 2 - 1),
+                };
+              }
+            }
+
+            // Get current 3D world position of the head (at eye level) and project to camera NDC space
+            vrm.scene.updateMatrixWorld(true);
+            const headWorldPos = new THREE.Vector3();
+            if (head) {
+              head.getWorldPosition(headWorldPos);
+              headWorldPos.y += 0.06;
+            } else {
+              headWorldPos.set(vrm.scene.position.x, 1.16, vrm.scene.position.z);
+            }
+
+            const headScreenPos = headWorldPos.clone().project(camera);
+
+            const mouse = pointerClientRef.current.hasMoved
+              ? mouseRef.current
+              : { x: headScreenPos.x, y: headScreenPos.y };
+
+            // Pointer delta relative to the head's current projected position on screen
+            const deltaX = mouse.x - headScreenPos.x;
+            const deltaY = mouse.y - headScreenPos.y;
+
+            // Convert screen-space delta into 3D world offset at the head's depth using camera frustum
+            const distToHead = Math.max(0.5, camera.position.z - headWorldPos.z);
+            const halfFrustumH = distToHead * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+            const halfFrustumW = halfFrustumH * camera.aspect;
+
+            const worldOffsetX = deltaX * halfFrustumW;
+            const worldOffsetY = deltaY * halfFrustumH;
+            const lookDepth = 1.25;
+
+            const lookTargetAngleY = THREE.MathUtils.clamp(Math.atan2(worldOffsetX, lookDepth), -1.05, 1.05);
+            const lookTargetAngleX = THREE.MathUtils.clamp(-Math.atan2(worldOffsetY, lookDepth), -0.55, 0.55);
 
             if (head) {
-              head.rotation.y = THREE.MathUtils.damp(head.rotation.y, lookTargetAngleY * 0.65, 5, delta);
-              head.rotation.x = THREE.MathUtils.damp(head.rotation.x, lookTargetAngleX * 0.65, 5, delta);
+              head.rotation.y = THREE.MathUtils.damp(head.rotation.y, lookTargetAngleY * 0.65, 7, delta);
+              head.rotation.x = THREE.MathUtils.damp(head.rotation.x, lookTargetAngleX * 0.65, 7, delta);
             }
             if (neck) {
-              neck.rotation.y = THREE.MathUtils.damp(neck.rotation.y, lookTargetAngleY * 0.35, 5, delta);
-              neck.rotation.x = THREE.MathUtils.damp(neck.rotation.x, lookTargetAngleX * 0.35, 5, delta);
+              neck.rotation.y = THREE.MathUtils.damp(neck.rotation.y, lookTargetAngleY * 0.35, 6, delta);
+              neck.rotation.x = THREE.MathUtils.damp(neck.rotation.x, lookTargetAngleX * 0.35, 6, delta);
+            }
+            if (spine) {
+              spine.rotation.y = THREE.MathUtils.damp(spine.rotation.y, lookTargetAngleY * 0.12, 5, delta);
+              spine.rotation.x = THREE.MathUtils.damp(spine.rotation.x, lookTargetAngleX * 0.08, 5, delta);
             }
 
-            // Also update VRM LookAt target vector
+            // Also update VRM LookAt target vector calibrated to current head world coordinates
             const gazeTarget = new THREE.Vector3(
-              mouse.x * 2.0,
-              1.15 + mouse.y * 0.5,
-              camera.position.z
+              headWorldPos.x + worldOffsetX,
+              headWorldPos.y + worldOffsetY,
+              headWorldPos.z + lookDepth
             );
             vrm.lookAt?.lookAt(gazeTarget);
           }
+        }
+
+        // Update lip-sync visemes so avatar mouth speaks the greeting naturally during wave
+        lipSyncManager.update(delta, time / 1000);
+        const visemes = lipSyncManager.getVisemes();
+        if (vrm.expressionManager) {
+          vrm.expressionManager.setValue('aa', visemes.aa);
+          vrm.expressionManager.setValue('ih', visemes.ih);
+          vrm.expressionManager.setValue('ou', visemes.ou);
+          vrm.expressionManager.setValue('ee', visemes.ee);
+          vrm.expressionManager.setValue('oh', visemes.oh);
         }
 
         // Natural subtle blinking during waving and standing
@@ -398,8 +630,14 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
     return () => {
       isDisposed = true;
       cancelAnimationFrame(animationFrameId);
+      simulatedBoundaryTimeouts.forEach((t) => clearTimeout(t));
+      window.removeEventListener('pointerdown', handleUserGestureUnlockSpeech);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('resize', handleResize);
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      lipSyncManager.endSpeech();
 
       if (mixerRef.current) {
         mixerRef.current.stopAllAction();

@@ -109,3 +109,30 @@ export interface ThemeDefinition {
   isCustom?: boolean;
   createdAt?: number;
 }
+
+export interface AccountUser {
+  id: number;
+  email: string;
+  username: string;
+  display_name: string;
+  avatar_url: string;
+  account_type: 'free' | 'paid';
+  last_payment: string | null;
+  last_login_time: string;
+  last_login_device: string;
+  device_fingerprints: string[];
+  equipped_outfit_id: string;
+  active_theme_id: string;
+  created_at: string;
+}
+
+export interface WardrobeOutfit {
+  id: string;
+  name: string;
+  fileName: string;
+  modelUrl: string;
+  fallbackModelUrl: string;
+  isPremium: boolean;
+  isDefault?: boolean;
+}
+

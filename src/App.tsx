@@ -8,6 +8,7 @@ import {
   TelemetryStats,
   UserSettings,
   ThemeDefinition,
+  AccountUser,
 } from './types';
 import { DEFAULT_MODEL_ID, getModelById } from './lib/models';
 import {
@@ -25,6 +26,15 @@ import {
   saveStoredCustomThemes,
   loadActiveThemeId,
   saveActiveThemeId,
+  loadBlockedUntil,
+  incrementHarassmentCount,
+  loadAccountSession,
+  saveAccountSession,
+  loadEquippedOutfitId,
+  saveEquippedOutfitId,
+  getOrCreateDeviceFingerprint,
+  getBrowserDeviceLabel,
+  isUserPremium,
 } from './lib/storage';
 import {
   streamPersonaResponse,
@@ -44,7 +54,9 @@ import {
   UI_CONFIG,
   TOKEN_CONFIG,
   PRESET_THEMES,
+  DEFAULT_OUTFIT_ID,
   getThemeById,
+  getOutfitById,
 } from './constants';
 import { Header } from './components/Header';
 import { SearchBar } from './components/SearchBar';
@@ -63,16 +75,20 @@ import { SplashScreen } from './components/SplashScreen';
 import { LandingPage } from './components/LandingPage';
 import { lipSyncManager } from './lib/lipSync';
 import { preloadVRMAssetsBehindTheScenes } from './lib/vrmCache';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ShieldAlert, Clock, Home } from 'lucide-react';
 
 export default function App() {
   // ----------------------------------------------------
-  // SPA Routing: '/' -> Landing Page, '/app' -> Main Chat App
+  // SPA Routing: '/' -> Landing Page, '/chat' -> Main Chat App
   // ----------------------------------------------------
   const [currentRoute, setCurrentRoute] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname;
-      return path.startsWith('/app') ? '/app' : '/';
+      if (path.startsWith('/app')) {
+        window.history.replaceState(null, '', '/chat');
+        return '/chat';
+      }
+      return path.startsWith('/chat') ? '/chat' : '/';
     }
     return '/';
   });
@@ -80,7 +96,12 @@ export default function App() {
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname;
-      setCurrentRoute(path.startsWith('/app') ? '/app' : '/');
+      if (path.startsWith('/app')) {
+        window.history.replaceState(null, '', '/chat');
+        setCurrentRoute('/chat');
+        return;
+      }
+      setCurrentRoute(path.startsWith('/chat') ? '/chat' : '/');
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
@@ -88,8 +109,9 @@ export default function App() {
 
   const navigateTo = (path: string) => {
     if (typeof window !== 'undefined') {
-      window.history.pushState(null, '', path);
-      setCurrentRoute(path.startsWith('/app') ? '/app' : '/');
+      const normalized = path.startsWith('/chat') || path.startsWith('/app') ? '/chat' : '/';
+      window.history.pushState(null, '', normalized);
+      setCurrentRoute(normalized);
       window.scrollTo(0, 0);
     }
   };
@@ -220,6 +242,263 @@ export default function App() {
 
   // Pain sound facial expression mood state for 3D model
   const [isPainSoundActive, setIsPainSoundActive] = useState(false);
+
+  // ----------------------------------------------------
+  // NeonDB Account Session & Wardrobe Outfit State
+  // ----------------------------------------------------
+  const [accountUser, setAccountUser] = useState<AccountUser | null>(() => loadAccountSession());
+  const [equippedOutfitId, setEquippedOutfitId] = useState<string>(() => loadEquippedOutfitId());
+  const [externalAuthModalRequest, setExternalAuthModalRequest] = useState<number>(0);
+  const [lastUserMessageAt, setLastUserMessageAt] = useState<number>(0);
+
+  const isPremium = useMemo(() => isUserPremium(accountUser), [accountUser]);
+
+  const activeOutfit = useMemo(() => {
+    const candidate = getOutfitById(equippedOutfitId);
+    if (candidate.isPremium && !isPremium) {
+      return getOutfitById(DEFAULT_OUTFIT_ID);
+    }
+    return candidate;
+  }, [equippedOutfitId, isPremium]);
+
+  useEffect(() => {
+    saveAccountSession(accountUser);
+  }, [accountUser]);
+
+  useEffect(() => {
+    saveEquippedOutfitId(equippedOutfitId);
+  }, [equippedOutfitId]);
+
+  const handleSelectOutfit = useCallback(
+    (outfitId: string) => {
+      const outfit = getOutfitById(outfitId);
+      if (outfit.isPremium && !isUserPremium(accountUser)) {
+        setIsSidebarOpen(true);
+        setExternalAuthModalRequest((n) => n + 1);
+        return;
+      }
+      setEquippedOutfitId(outfit.id);
+      if (accountUser) {
+        fetch('/api/account/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: accountUser.id,
+            equippedOutfitId: outfit.id,
+          }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data?.user) setAccountUser(data.user);
+          })
+          .catch(() => {});
+      }
+    },
+    [accountUser]
+  );
+
+  const handleSignUp = useCallback(
+    async (email: string, password: string) => {
+      const resp = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          device: getBrowserDeviceLabel(),
+          fingerprint: getOrCreateDeviceFingerprint(),
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.error) {
+        throw new Error(data.error || 'Failed to create account.');
+      }
+      const user = data.user as AccountUser;
+      setAccountUser(user);
+      // Sync existing local conversations & custom themes up to NeonDB for this new user
+      fetch('/api/account/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user.id,
+          conversations,
+          customThemes,
+        }),
+      }).catch(() => {});
+    },
+    [conversations, customThemes]
+  );
+
+  const handleSignIn = useCallback(
+    async (email: string, password: string) => {
+      const resp = await fetch('/api/auth/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          device: getBrowserDeviceLabel(),
+          fingerprint: getOrCreateDeviceFingerprint(),
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.error) {
+        throw new Error(data.error || 'Failed to sign in.');
+      }
+      const user = data.user as AccountUser;
+      setAccountUser(user);
+      if (user.equipped_outfit_id) {
+        setEquippedOutfitId(user.equipped_outfit_id);
+      }
+      if (user.active_theme_id) {
+        setActiveThemeId(user.active_theme_id);
+      }
+      if (Array.isArray(data.conversations) && data.conversations.length > 0) {
+        setConversations(data.conversations);
+        saveStoredConversations(data.conversations);
+        setActiveConvId(data.conversations[0].id);
+      } else if (conversations.length > 0) {
+        fetch('/api/account/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user.id,
+            conversations,
+            customThemes,
+          }),
+        }).catch(() => {});
+      }
+      if (Array.isArray(data.customThemes) && data.customThemes.length > 0) {
+        setCustomThemes(data.customThemes);
+        saveStoredCustomThemes(data.customThemes);
+      }
+    },
+    [conversations, customThemes]
+  );
+
+  const handleSignOut = useCallback(() => {
+    setAccountUser(null);
+    setEquippedOutfitId(DEFAULT_OUTFIT_ID);
+  }, []);
+
+  const handleUpdateProfile = useCallback(
+    async (updates: { username: string; displayName: string; avatarUrl: string }) => {
+      if (!accountUser) return;
+      const resp = await fetch('/api/account/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: accountUser.id,
+          username: updates.username,
+          displayName: updates.displayName,
+          avatarUrl: updates.avatarUrl,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) {
+        throw new Error(data.error || 'Failed to update profile.');
+      }
+      if (data.user) {
+        setAccountUser(data.user);
+      }
+    },
+    [accountUser]
+  );
+
+  const handleRedeemCode = useCallback(
+    async (code: string) => {
+      if (!accountUser) return;
+      const resp = await fetch('/api/account/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: accountUser.id,
+          code,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) {
+        throw new Error(data.error || 'Failed to redeem code.');
+      }
+      if (data.user) {
+        setAccountUser(data.user);
+      }
+    },
+    [accountUser]
+  );
+
+  // Sync conversations & custom themes to NeonDB when logged in
+  useEffect(() => {
+    if (!accountUser) return;
+    const syncTimer = setTimeout(() => {
+      fetch('/api/account/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: accountUser.id,
+          conversations,
+          customThemes,
+        }),
+      }).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(syncTimer);
+  }, [accountUser, conversations, customThemes]);
+
+  // Global Mouse Click Echoing Shockwave Ripples (0.6s total duration)
+  const [clickRipples, setClickRipples] = useState<Array<{ id: number; x: number; y: number }>>([]);
+
+  useEffect(() => {
+    const handleGlobalPointerDown = (e: PointerEvent) => {
+      const id = Date.now() + Math.random();
+      setClickRipples((prev) => [...prev.slice(-14), { id, x: e.clientX, y: e.clientY }]);
+      setTimeout(() => {
+        setClickRipples((prev) => prev.filter((r) => r.id !== id));
+      }, 600);
+    };
+    window.addEventListener('pointerdown', handleGlobalPointerDown);
+    return () => window.removeEventListener('pointerdown', handleGlobalPointerDown);
+  }, []);
+
+  // Harassment Temporary Block State (persisted in localStorage across refreshes)
+  const [blockedUntil, setBlockedUntil] = useState<number>(() => loadBlockedUntil());
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const storedUntil = loadBlockedUntil();
+    if (storedUntil !== blockedUntil) {
+      setBlockedUntil(storedUntil);
+    }
+  }, [currentRoute]);
+
+  useEffect(() => {
+    if (blockedUntil <= Date.now()) return;
+    setNowMs(Date.now());
+    const interval = setInterval(() => {
+      const currentNow = Date.now();
+      setNowMs(currentNow);
+      if (currentNow >= blockedUntil) {
+        clearInterval(interval);
+      }
+    }, 250);
+    return () => clearInterval(interval);
+  }, [blockedUntil]);
+
+  const handleFallStart = useCallback(() => {
+    const { blockedUntil: newBlockedUntil } = incrementHarassmentCount();
+    if (newBlockedUntil && newBlockedUntil > Date.now()) {
+      stopCurrentGeneration();
+      if (pausedSpeechResumeTimeoutRef.current) {
+        clearTimeout(pausedSpeechResumeTimeoutRef.current);
+      }
+      window.speechSynthesis?.cancel();
+      lipSyncManager.endSpeech();
+      setCurrentlySpeakingMsgId(null);
+      setIsPainSoundActive(false);
+      isPainSoundActiveRef.current = false;
+      setNowMs(Date.now());
+      setBlockedUntil(newBlockedUntil);
+    }
+  }, []);
 
   useEffect(() => {
     // Preload voice engine
@@ -1095,6 +1374,7 @@ export default function App() {
     }
 
     setInput('');
+    setLastUserMessageAt(Date.now());
 
     const userMessage: Message = {
       id: `msg_user_${Date.now()}`,
@@ -1306,9 +1586,92 @@ export default function App() {
     handleUpdateSettings({ soundEffects: nextVal });
   };
 
+  const remainingBlockSeconds = Math.max(0, Math.ceil((blockedUntil - nowMs) / 1000));
+  const isCurrentlyBlocked = blockedUntil > nowMs && remainingBlockSeconds > 0;
+
+  const formatBlockCountdown = (totalSec: number) => {
+    const hrs = Math.floor(totalSec / 3600);
+    const mins = Math.floor((totalSec % 3600) / 60);
+    const secs = totalSec % 60;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    if (hrs > 0) {
+      return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+    }
+    return `${pad(mins)}:${pad(secs)}`;
+  };
+
+  const shockwaveOverlay = (
+    <div className="fixed inset-0 pointer-events-none z-[100] overflow-hidden" aria-hidden="true">
+      {clickRipples.map((r) => (
+        <div key={r.id} style={{ position: 'absolute', left: r.x, top: r.y }}>
+          <span className="click-shockwave-primary" />
+          <span className="click-shockwave-echo-1" />
+          <span className="click-shockwave-echo-2" />
+        </div>
+      ))}
+    </div>
+  );
+
   // Render Landing Page at default root route '/'
   if (currentRoute === '/') {
-    return <LandingPage onStartChat={() => navigateTo('/app')} />;
+    return (
+      <>
+        {shockwaveOverlay}
+        <LandingPage onStartChat={() => navigateTo('/chat')} />
+      </>
+    );
+  }
+
+  // Render "You are Blocked" Screen on '/chat' when temporary harassment ban is active
+  if (isCurrentlyBlocked) {
+    return (
+      <div className="relative min-h-screen w-screen bg-[#0c0d14] text-white font-sans flex items-center justify-center p-4 sm:p-6 overflow-y-auto select-none">
+        {shockwaveOverlay}
+        <div className="max-w-xl w-full rounded-3xl bg-[#13151f] border border-red-500/30 shadow-2xl shadow-red-950/40 p-6 sm:p-10 text-center space-y-6 animate-in fade-in zoom-in-95 duration-200">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-500 flex items-center justify-center mx-auto shadow-inner">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h1 className="text-3xl sm:text-4xl font-bold font-heading text-white tracking-tight">
+              You are Blocked
+            </h1>
+
+            {/* Real-time Countdown Timer */}
+            <div className="inline-flex items-center gap-2.5 px-5 py-2.5 rounded-2xl bg-red-950/50 border border-red-500/30 text-red-300 font-mono text-xl sm:text-2xl font-bold tracking-widest mt-2 shadow-inner">
+              <Clock className="w-5 h-5 text-red-400 animate-pulse" />
+              <span>{formatBlockCountdown(remainingBlockSeconds)}</span>
+            </div>
+          </div>
+
+          <div className="space-y-4 text-sm sm:text-base text-neutral-300 leading-relaxed text-left bg-black/25 p-5 rounded-2xl border border-white/[0.06]">
+            <p className="font-semibold text-white">
+              MuxAI has detected indecent behavior from you, for which you are temporarily banned from talking to {AI_PROFILE.name}.
+            </p>
+            <p className="text-neutral-300">
+              The duration to wait will increase if you continue doing this in the future
+            </p>
+            <p className="text-amber-300/90 text-xs sm:text-sm font-medium">
+              Trying to reset this by clearing cache will also clear all your conversations and delete downloaded AI models. Do it at your own risk!
+            </p>
+            <p className="text-neutral-400 text-xs sm:text-sm border-t border-white/[0.08] pt-3">
+              MuxAI does not monitor your usage of this platform but there are built-in detection systems that may trigger alerts in case of highly illegal or inappropriate activities. Be warned!
+            </p>
+          </div>
+
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => navigateTo('/')}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-white/10 hover:bg-white/15 text-white border border-white/10 transition-all active:scale-95 cursor-pointer"
+            >
+              <Home className="w-4 h-4" />
+              <span>Return to Landing Page</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1319,7 +1682,8 @@ export default function App() {
         color: 'var(--theme-text)',
       }}
     >
-      {/* Sidebar (Conversations History) */}
+      {shockwaveOverlay}
+      {/* Sidebar (Conversations History & Account Section) */}
       <Sidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
@@ -1330,9 +1694,16 @@ export default function App() {
         onDeleteConversation={handleDeleteConversation}
         onTogglePin={handleTogglePin}
         cacheStatuses={cacheStatuses}
+        accountUser={accountUser}
+        onSignUp={handleSignUp}
+        onSignIn={handleSignIn}
+        onSignOut={handleSignOut}
+        onUpdateProfile={handleUpdateProfile}
+        onRedeemCode={handleRedeemCode}
+        externalAuthModalRequest={externalAuthModalRequest}
       />
 
-      {/* Right Sidebar (Themes, Clothing, Hairstyle) */}
+      {/* Right Sidebar (Themes & Wardrobe Live 3D Viewports) */}
       <ThemeSidebar
         isOpen={isThemeSidebarOpen}
         onClose={() => setIsThemeSidebarOpen(false)}
@@ -1342,6 +1713,14 @@ export default function App() {
         onSelectTheme={handleSelectTheme}
         onDeleteCustomTheme={handleDeleteCustomTheme}
         onOpenCreateModal={() => setIsCustomThemeModalOpen(true)}
+        equippedOutfitId={activeOutfit.id}
+        onSelectOutfit={handleSelectOutfit}
+        isPremiumUser={isPremium}
+        onRequirePremium={() => {
+          setIsThemeSidebarOpen(false);
+          setIsSidebarOpen(true);
+          setExternalAuthModalRequest((n) => n + 1);
+        }}
       />
 
       {/* Main Viewport */}
@@ -1351,7 +1730,7 @@ export default function App() {
           backgroundColor: 'var(--theme-bg)',
         }}
       >
-        {/* Top Header with 3D Mode Toggle Button between Search and Sound, Palette Theme Button, and Home Navigation */}
+        {/* Top Header with 3D Mode Toggle Button between Search and Sound, and Palette Theme Button */}
         <Header
           isGenerating={isGenerating}
           isSidebarOpen={isSidebarOpen}
@@ -1366,7 +1745,6 @@ export default function App() {
           onToggleSound={handleToggleNavbarSound}
           isThemeSidebarOpen={isThemeSidebarOpen}
           onToggleThemeSidebar={() => setIsThemeSidebarOpen((prev) => !prev)}
-          onNavigateHome={() => navigateTo('/')}
         />
 
         {/* Quick Conversation Search Bar */}
@@ -1397,7 +1775,10 @@ export default function App() {
             <VRMCanvas
               isSpeaking={currentlySpeakingMsgId !== null}
               onModelClick={handleModelClick}
+              onFallStart={handleFallStart}
               isPainSoundPlaying={isPainSoundActive}
+              modelFileName={activeOutfit.fileName}
+              lastUserMessageAt={lastUserMessageAt}
             />
           </div>
 
@@ -1484,6 +1865,10 @@ export default function App() {
       <TwitterProfileModal
         isOpen={isProfileOpen}
         onClose={() => setIsProfileOpen(false)}
+        onNavigateHome={() => {
+          setIsProfileOpen(false);
+          navigateTo('/');
+        }}
       />
 
       {/* Settings & Offline SLM Storage Manager Modal */}

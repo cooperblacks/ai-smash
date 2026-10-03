@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Check, ChevronDown, Sparkles, MessageSquare, Shield, Box, Palette, Github, Linkedin, ExternalLink } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, Sparkles, MessageSquare, Shield, Box, Palette, Github, Linkedin, ExternalLink, Heart, Award } from 'lucide-react';
 import { LandingHeroCanvas } from './LandingHeroCanvas';
-import { AI_PROFILE } from '../constants';
+import { AI_PROFILE, SPECIAL_THANKS_LINKS, PRODUCT_HUNT_URL } from '../constants';
 
 interface LandingPageProps {
   onStartChat: () => void;
@@ -74,6 +74,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
     setActiveAccordion(index);
   };
 
+  const scrollToSection = (e: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>, sectionId: string) => {
+    e.preventDefault();
+    const element = document.getElementById(sectionId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   const currentAccordion = ACCORDION_DATA[activeAccordion] || ACCORDION_DATA[0];
 
   return (
@@ -108,9 +116,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
               <span className="font-bold text-lg tracking-tight font-heading block leading-none">
                 AI Smash
               </span>
-              <span className="text-[10px] font-mono text-neutral-400 block -mt-0.5">
-                by MuxAI
-              </span>
             </div>
           </div>
 
@@ -118,7 +123,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
           <div className="flex items-center gap-3 sm:gap-6">
             <a
               href="#why-it-matters"
-              className="hidden sm:inline-block text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors"
+              onClick={(e) => scrollToSection(e, 'why-it-matters')}
+              className="hidden sm:inline-block text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
             >
               Why It Matters
             </a>
@@ -142,7 +148,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
             <div className="hidden lg:block lg:col-span-5 pointer-events-none" />
 
             {/* Right side: Foreground typography & CTA elements */}
-            <div className="lg:col-span-7 flex flex-col items-start lg:pl-6 text-left">
+            <div
+              data-hero-foreground="true"
+              className="lg:col-span-7 flex flex-col items-start lg:pl-6 text-left"
+            >
               {/* Badge */}
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/90 border border-black/[0.08] shadow-xs text-xs font-medium text-neutral-700 mb-6 backdrop-blur-xs animate-in fade-in duration-300">
                 <span className="flex h-2 w-2 relative">
@@ -150,17 +159,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-[#55d2f6]" />
                 </span>
                 <span className="font-mono text-[11px] tracking-wide text-neutral-500 uppercase">
-                  100% In-Browser SLM Sandbox
+                  Hana is online
                 </span>
               </div>
 
               {/* Title: Very large size font that says "AI Smash" */}
-              <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight font-heading text-neutral-900 leading-[1.04]">
+              <h1 className="hero-title-outline text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight font-heading text-neutral-900 leading-[1.04]">
                 AI Smash
               </h1>
 
               {/* Subtitle: Sandbox for mini LLMs that run directly in the browser with 3D avatar interactions and voice */}
-              <p className="mt-6 text-lg sm:text-xl md:text-2xl text-neutral-600 font-sans leading-relaxed max-w-2xl">
+              <p className="hero-subtitle-outline mt-6 text-lg sm:text-xl md:text-2xl text-neutral-600 font-sans leading-relaxed max-w-2xl">
                 Sandbox for mini LLMs that run directly in the browser with 3D avatar interactions and voice
               </p>
 
@@ -177,27 +186,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
 
                 <a
                   href="#why-it-matters"
-                  className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl text-sm font-semibold bg-white/90 hover:bg-white text-neutral-700 hover:text-neutral-950 border border-black/[0.08] shadow-xs active:scale-95 transition-all"
+                  onClick={(e) => scrollToSection(e, 'why-it-matters')}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl text-sm font-semibold bg-white/90 hover:bg-white text-neutral-700 hover:text-neutral-950 border border-black/[0.08] shadow-xs active:scale-95 transition-all cursor-pointer"
                 >
                   <span>Explore Features</span>
                   <ChevronDown className="w-4 h-4" />
                 </a>
-              </div>
-
-              {/* Quick Feature Pills */}
-              <div className="mt-12 flex flex-wrap items-center gap-2 text-xs font-mono text-neutral-500">
-                <span className="px-2.5 py-1 rounded-lg bg-black/[0.03] border border-black/[0.05]">
-                  WebGPU + WASM
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-black/[0.03] border border-black/[0.05]">
-                  Transformers.js
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-black/[0.03] border border-black/[0.05]">
-                  VRM 1.0 Avatar
-                </span>
-                <span className="px-2.5 py-1 rounded-lg bg-black/[0.03] border border-black/[0.05]">
-                  Zero Login
-                </span>
               </div>
             </div>
           </div>
@@ -212,7 +206,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
             {/* Centered Heading */}
             <div className="text-center max-w-2xl mx-auto mb-16 lg:mb-20">
               <span className="text-xs font-mono uppercase tracking-widest text-[#22bdec] font-semibold block mb-2">
-                Core Highlights
+                Highlights
               </span>
               <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold font-heading text-neutral-900 tracking-tight">
                 Why It Matters
@@ -233,7 +227,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
                   return (
                     <div
                       key={item.id}
-                      className={`rounded-2xl border transition-all duration-200 overflow-hidden ${
+                      className={`rounded-2xl border transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden ${
                         isOpen
                           ? 'border-[#55d2f6] bg-[#f8f9fc] shadow-md ring-1 ring-[#55d2f6]/30'
                           : 'border-black/[0.08] bg-white hover:border-black/20 hover:bg-neutral-50/50'
@@ -248,10 +242,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
                       >
                         <div className="flex items-center gap-3.5 min-w-0">
                           <div
-                            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
+                            className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
                               isOpen
-                                ? 'bg-[#55d2f6] text-neutral-950 shadow-xs'
-                                : 'bg-neutral-100 text-neutral-500'
+                                ? 'bg-[#55d2f6] text-neutral-950 shadow-xs scale-105'
+                                : 'bg-neutral-100 text-neutral-500 scale-100'
                             }`}
                           >
                             <Icon className="w-5 h-5 stroke-[2]" />
@@ -267,7 +261,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
                         </div>
 
                         <div
-                          className={`w-7 h-7 rounded-full flex items-center justify-center border border-black/10 shrink-0 transition-transform duration-200 ${
+                          className={`w-7 h-7 rounded-full flex items-center justify-center border border-black/10 shrink-0 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
                             isOpen ? 'rotate-180 bg-[#55d2f6]/10 text-neutral-900' : 'text-neutral-400'
                           }`}
                         >
@@ -275,29 +269,42 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
                         </div>
                       </button>
 
-                      {/* Accordion Expanded Body with Checkmark Points */}
-                      {isOpen && (
-                        <div className="px-5 pb-6 pt-1 sm:px-6 border-t border-black/[0.05] animate-in fade-in duration-200">
-                          <ul className="space-y-3 pt-2">
-                            {item.points.map((point, pIdx) => (
-                              <li key={pIdx} className="flex items-start gap-3 text-sm text-neutral-700 leading-snug">
-                                <div className="w-5 h-5 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
-                                  <Check className="w-3.5 h-3.5 stroke-[3]" />
-                                </div>
-                                <span className="capitalize">{point}</span>
-                              </li>
-                            ))}
-                          </ul>
+                      {/* Accordion Expanded Body with Synchronized Smooth Height & Opacity Transition */}
+                      <div
+                        className={`grid transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                          isOpen
+                            ? 'grid-rows-[1fr] opacity-100'
+                            : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                        }`}
+                      >
+                        <div className="overflow-hidden">
+                          <div className="px-5 pb-6 pt-1 sm:px-6 border-t border-black/[0.05]">
+                            <ul className="space-y-3 pt-2">
+                              {item.points.map((point, pIdx) => (
+                                <li
+                                  key={pIdx}
+                                  className={`flex items-start gap-3 text-sm text-neutral-700 leading-snug transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                                    isOpen ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
+                                  }`}
+                                >
+                                  <div className="w-5 h-5 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+                                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                  </div>
+                                  <span className="capitalize">{point}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Right Column: Dynamic Image Showcase */}
+              {/* Right Column: Dynamic Image Showcase Synchronized with Accordion */}
               <div className="lg:col-span-6">
-                <div className="relative rounded-3xl p-3 sm:p-4 bg-gradient-to-br from-neutral-100 to-neutral-200/80 border border-black/[0.08] shadow-2xl overflow-hidden group">
+                <div className="relative rounded-3xl p-3 sm:p-4 bg-gradient-to-br from-neutral-100 to-neutral-200/80 border border-black/[0.08] shadow-2xl overflow-hidden group transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
                   {/* Mock Window Header */}
                   <div className="flex items-center justify-between pb-3 px-2 border-b border-black/[0.06] mb-3">
                     <div className="flex items-center gap-1.5">
@@ -305,39 +312,37 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
                       <span className="w-2.5 h-2.5 rounded-full bg-amber-400/80" />
                       <span className="w-2.5 h-2.5 rounded-full bg-emerald-400/80" />
                     </div>
-                    <span className="text-[11px] font-mono text-neutral-400 font-medium truncate max-w-[200px]">
-                      {currentAccordion.title} Preview
-                    </span>
-                    <div className="w-8" />
-                  </div>
-
-                  {/* Screenshot Display */}
-                  <div className="relative aspect-[16/10] w-full rounded-2xl overflow-hidden bg-neutral-900 shadow-inner">
-                    <img
-                      key={currentAccordion.image}
-                      src={currentAccordion.image}
-                      alt={currentAccordion.title}
-                      className="w-full h-full object-cover object-top transition-all duration-300 animate-in fade-in zoom-in-98"
-                      loading="lazy"
-                    />
-
-                    {/* Gradient Overlay for Sleek Look */}
-                    <div className="absolute inset-0 ring-1 ring-inset ring-black/10 pointer-events-none rounded-2xl" />
-                  </div>
-
-                  {/* Active Accordion Caption Pill */}
-                  <div className="mt-3 px-2 flex items-center justify-between text-xs text-neutral-500 font-sans">
-                    <span className="flex items-center gap-1.5 font-medium text-neutral-700">
-                      <Sparkles className="w-3.5 h-3.5 text-[#22bdec]" />
-                      <span>{currentAccordion.tagline}</span>
-                    </span>
                     <button
+                      type="button"
                       onClick={onStartChat}
                       className="text-xs font-semibold text-[#16536b] hover:underline inline-flex items-center gap-1 cursor-pointer"
                     >
-                      Try it live
+                      <span>Try it</span>
                       <ArrowRight className="w-3 h-3" />
                     </button>
+                  </div>
+
+                  {/* Screenshot Display with Synchronized Cross-Fade & Scale Transitions */}
+                  <div className="relative aspect-[16/10] w-full rounded-2xl overflow-hidden bg-neutral-900 shadow-inner">
+                    {ACCORDION_DATA.map((item, idx) => {
+                      const isCurrent = activeAccordion === idx;
+                      return (
+                        <img
+                          key={item.id}
+                          src={item.image}
+                          alt={item.title}
+                          className={`absolute inset-0 w-full h-full object-cover object-top transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                            isCurrent
+                              ? 'opacity-100 scale-100 translate-y-0 z-10'
+                              : 'opacity-0 scale-[0.97] translate-y-2 z-0 pointer-events-none'
+                          }`}
+                          loading="lazy"
+                        />
+                      );
+                    })}
+
+                    {/* Gradient Overlay for Sleek Look */}
+                    <div className="absolute inset-0 ring-1 ring-inset ring-black/10 pointer-events-none rounded-2xl z-20" />
                   </div>
                 </div>
               </div>
@@ -366,6 +371,75 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
             </button>
           </div>
         </section>
+
+        {/* SPECIAL THANKS & PRODUCT HUNT SECTION (Above Footer) */}
+        <section
+          id="special-thanks"
+          className="relative z-20 bg-white/95 border-t border-black/[0.08] py-16 lg:py-20 px-4 sm:px-6 lg:px-8"
+        >
+          <div className="max-w-7xl mx-auto">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
+              <div>
+                <span className="inline-flex items-center gap-1.5 text-xs font-mono uppercase tracking-widest text-[#22bdec] font-semibold mb-2">
+                  <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
+                  <span> Acknowledgements</span>
+                </span>
+                <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold font-heading text-neutral-900 tracking-tight">
+                  Special Thanks
+                </h2>
+                <p className="text-sm text-neutral-500 mt-1.5 max-w-xl">
+                  This project could not be possible without:
+                </p>
+              </div>
+
+              {/* ProductHunt Launch Badge */}
+              <a
+                href={PRODUCT_HUNT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#fff6f4] hover:bg-[#ffebe6] border border-[#da552f]/25 shadow-xs hover:shadow-md transition-all group shrink-0 self-start md:self-auto"
+                title="AI Smash on Product Hunt"
+              >
+                <div className="w-9 h-9 rounded-xl bg-[#da552f] text-white flex items-center justify-center font-bold text-base shadow-xs shrink-0">
+                  P
+                </div>
+                <div className="text-left">
+                  <span className="block text-[10px] font-mono uppercase tracking-wider text-[#da552f] font-bold leading-none">
+                    Featured on
+                  </span>
+                  <span className="text-sm font-bold text-neutral-900 flex items-center gap-1 mt-0.5">
+                    <span>Product Hunt</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-[#da552f] group-hover:translate-x-0.5 transition-transform" />
+                  </span>
+                </div>
+              </a>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {SPECIAL_THANKS_LINKS.map((entry) => (
+                <a
+                  key={entry.name}
+                  href={entry.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-4 sm:p-5 rounded-2xl bg-[#f8f9fc] hover:bg-white border border-black/[0.08] hover:border-[#55d2f6] shadow-2xs hover:shadow-md transition-all duration-200 flex items-start justify-between gap-3 group"
+                >
+                  <div className="min-w-0">
+                    <h3 className="text-base font-bold font-heading text-neutral-900 group-hover:text-[#0f9bc7] transition-colors flex items-center gap-1.5">
+                      <span>{entry.name}</span>
+                    </h3>
+                    <p className="text-xs sm:text-sm text-neutral-600 mt-1 leading-relaxed">
+                      {entry.description}
+                    </p>
+                  </div>
+                  <div className="w-7 h-7 rounded-xl bg-white border border-black/[0.06] flex items-center justify-center text-neutral-400 group-hover:text-[#0f9bc7] group-hover:border-[#55d2f6]/40 shrink-0 transition-colors">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
 
       {/* FOOTER */}
@@ -377,7 +451,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
               AI Smash
             </span>
             <span className="text-xs text-neutral-400 font-mono">
-              by <strong className="text-neutral-700 font-semibold">MuxAI</strong>
+              by{' '}
+              <a
+                href="https://mux8.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-neutral-700 font-semibold hover:text-neutral-900 hover:underline transition-colors"
+              >
+                MuxAI
+              </a>
             </span>
           </div>
 
@@ -408,7 +490,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
 
           {/* Copyright notice */}
           <div className="text-xs text-neutral-400 font-mono">
-            &copy; {new Date().getFullYear()} MuxAI. All rights reserved.
+            &copy; {new Date().getFullYear()}{' '}
+            <a
+              href="https://mux8.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-neutral-700 hover:underline transition-colors"
+            >
+              MuxAI
+            </a>
+            . All rights reserved.
           </div>
         </div>
       </footer>

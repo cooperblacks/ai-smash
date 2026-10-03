@@ -1,7 +1,11 @@
-import React, { useRef, useEffect } from 'react';
-import { X, Plus, Check, Palette, Sparkles, Trash2, Shirt, Scissors, Lock, Sun, Moon } from 'lucide-react';
-import { ThemeDefinition } from '../types';
-import { THEME_COLORS } from '../constants';
+import React, { useRef, useEffect, useState } from 'react';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
+import { X, Plus, Check, Palette, Trash2, Shirt, Lock, Sun, Moon, Sparkles, Crown } from 'lucide-react';
+import { ThemeDefinition, WardrobeOutfit } from '../types';
+import { THEME_COLORS, WARDROBE_OUTFITS, VRM_CONFIG } from '../constants';
+import { fetchVRMWithCache } from '../lib/vrmCache';
 
 interface ThemeSidebarProps {
   isOpen: boolean;
@@ -12,7 +16,328 @@ interface ThemeSidebarProps {
   onSelectTheme: (themeId: string) => void;
   onDeleteCustomTheme: (themeId: string) => void;
   onOpenCreateModal: () => void;
+  equippedOutfitId: string;
+  onSelectOutfit: (outfitId: string) => void;
+  isPremiumUser: boolean;
+  onRequirePremium?: () => void;
 }
+
+// Shared offscreen WebGLRenderer so 9 live 3D portrait viewports never exceed browser WebGL context limits
+let sharedPreviewRenderer: THREE.WebGLRenderer | null = null;
+const PORTRAIT_WIDTH = 220;
+const PORTRAIT_HEIGHT = 290;
+
+function getSharedPreviewRenderer(): THREE.WebGLRenderer | null {
+  if (typeof window === 'undefined') return null;
+  if (sharedPreviewRenderer) return sharedPreviewRenderer;
+  try {
+    const offscreenCanvas = document.createElement('canvas');
+    offscreenCanvas.width = PORTRAIT_WIDTH;
+    offscreenCanvas.height = PORTRAIT_HEIGHT;
+    const renderer = new THREE.WebGLRenderer({
+      canvas: offscreenCanvas,
+      alpha: true,
+      antialias: true,
+      powerPreference: 'low-power',
+    });
+    renderer.setSize(PORTRAIT_WIDTH, PORTRAIT_HEIGHT, false);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    sharedPreviewRenderer = renderer;
+    return renderer;
+  } catch (err) {
+    console.warn('Could not initialize shared wardrobe WebGL preview renderer:', err);
+    return null;
+  }
+}
+
+interface WardrobePortraitViewportProps {
+  outfit: WardrobeOutfit;
+  isSelected: boolean;
+  isLocked: boolean;
+  loadDelayMs: number;
+  onSelect: () => void;
+}
+
+const WardrobePortraitViewport: React.FC<WardrobePortraitViewportProps> = ({
+  outfit,
+  isSelected,
+  isLocked,
+  loadDelayMs,
+  onSelect,
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    let isDisposed = false;
+    let rafId = 0;
+    let delayTimer: ReturnType<typeof setTimeout> | null = null;
+    let loadedVrm: VRM | null = null;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(
+      25,
+      PORTRAIT_WIDTH / PORTRAIT_HEIGHT,
+      0.1,
+      20.0
+    );
+    // Portrait framing showing head, shoulders, and upper outfit
+    camera.position.set(0.0, 1.17, 1.25);
+    camera.lookAt(0.0, 1.11, 0.0);
+
+    const ambientLight = new THREE.AmbientLight(
+      VRM_CONFIG.lighting.ambient.color,
+      VRM_CONFIG.lighting.ambient.intensity
+    );
+    scene.add(ambientLight);
+
+    const keyLight = new THREE.DirectionalLight(
+      VRM_CONFIG.lighting.key.color,
+      VRM_CONFIG.lighting.key.intensity
+    );
+    keyLight.position.set(1.3, 2.2, 2.0);
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(
+      VRM_CONFIG.lighting.fill.color,
+      VRM_CONFIG.lighting.fill.intensity
+    );
+    fillLight.position.set(-1.3, 1.4, 1.4);
+    scene.add(fillLight);
+
+    const startLoading = () => {
+      const loader = new GLTFLoader();
+      loader.register((parser) => new VRMLoaderPlugin(parser));
+
+      fetchVRMWithCache(undefined, outfit.fileName)
+        .then((buffer) => {
+          if (isDisposed) return;
+          loader.parse(
+            buffer.slice(0),
+            '',
+            (gltf) => {
+              if (isDisposed) return;
+              const vrm = gltf.userData.vrm as VRM;
+              if (!vrm) {
+                setHasError(true);
+                return;
+              }
+
+              VRMUtils.removeUnnecessaryVertices(gltf.scene);
+              VRMUtils.combineSkeletons(gltf.scene);
+              try {
+                VRMUtils.rotateVRM0(vrm);
+              } catch {
+                // Already VRM 1.0
+              }
+
+              vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
+              vrm.scene.traverse((obj) => {
+                obj.frustumCulled = false;
+              });
+
+              if (vrm.humanoid) {
+                const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+                const rightUpperArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+                const leftLowerArm = vrm.humanoid.getNormalizedBoneNode('leftLowerArm');
+                const rightLowerArm = vrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+                if (leftUpperArm) leftUpperArm.rotation.set(0.12, 0.05, -1.25);
+                if (rightUpperArm) rightUpperArm.rotation.set(0.12, -0.05, 1.25);
+                if (leftLowerArm) leftLowerArm.rotation.set(0.0, -0.22, -0.1);
+                if (rightLowerArm) rightLowerArm.rotation.set(0.0, 0.22, 0.1);
+              }
+
+              if (vrm.expressionManager) {
+                try {
+                  vrm.expressionManager.setValue('relaxed', 0.35);
+                  vrm.expressionManager.setValue('happy', 0.15);
+                } catch {
+                  // Ignore
+                }
+              }
+
+              loadedVrm = vrm;
+              scene.add(vrm.scene);
+              setIsLoaded(true);
+
+              const clock = new THREE.Clock();
+              let elapsed = Math.random() * 6;
+
+              const renderLoop = () => {
+                if (isDisposed) return;
+                const delta = Math.min(clock.getDelta(), 0.05);
+                elapsed += delta;
+
+                if (loadedVrm) {
+                  // Gentle portrait breathing & subtle head motion
+                  if (loadedVrm.humanoid) {
+                    const head = loadedVrm.humanoid.getNormalizedBoneNode('head');
+                    const chest = loadedVrm.humanoid.getNormalizedBoneNode('chest');
+                    if (head) {
+                      head.rotation.y = Math.sin(elapsed * 0.9) * 0.09;
+                      head.rotation.z = Math.cos(elapsed * 0.7) * 0.03;
+                    }
+                    if (chest) {
+                      chest.rotation.x = Math.sin(elapsed * 1.6) * 0.02;
+                    }
+                  }
+                  loadedVrm.update(delta);
+                }
+
+                const renderer = getSharedPreviewRenderer();
+                const targetCanvas = canvasRef.current;
+                if (renderer && targetCanvas) {
+                  const ctx = targetCanvas.getContext('2d');
+                  if (ctx) {
+                    renderer.render(scene, camera);
+                    ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+                    ctx.drawImage(
+                      renderer.domElement,
+                      0,
+                      0,
+                      targetCanvas.width,
+                      targetCanvas.height
+                    );
+                  }
+                }
+
+                // Throttle preview refresh slightly (~24fps) to keep all 9 portraits silky smooth
+                setTimeout(() => {
+                  if (!isDisposed) {
+                    rafId = requestAnimationFrame(renderLoop);
+                  }
+                }, 42);
+              };
+
+              rafId = requestAnimationFrame(renderLoop);
+            },
+            () => {
+              if (!isDisposed) setHasError(true);
+            }
+          );
+        })
+        .catch(() => {
+          if (!isDisposed) setHasError(true);
+        });
+    };
+
+    if (loadDelayMs > 0) {
+      delayTimer = setTimeout(startLoading, loadDelayMs);
+    } else {
+      startLoading();
+    }
+
+    return () => {
+      isDisposed = true;
+      if (delayTimer) clearTimeout(delayTimer);
+      if (rafId) cancelAnimationFrame(rafId);
+      scene.clear();
+      if (loadedVrm) {
+        VRMUtils.deepDispose(loadedVrm.scene);
+      }
+    };
+  }, [outfit.fileName, loadDelayMs]);
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      data-outfit-id={outfit.id}
+      className={`group relative flex flex-col rounded-2xl border overflow-hidden text-left transition-all duration-150 cursor-pointer ${
+        isSelected
+          ? 'ring-2 shadow-md'
+          : 'hover:border-neutral-400 dark:hover:border-neutral-600'
+      }`}
+      style={{
+        backgroundColor: 'var(--theme-card)',
+        borderColor: isSelected ? 'var(--theme-accent)' : 'var(--theme-border)',
+        boxShadow: isSelected ? '0 0 0 1px var(--theme-accent)' : 'none',
+      }}
+      title={
+        isLocked
+          ? `${outfit.name} (Premium Only)`
+          : `Equip ${outfit.name} (${outfit.fileName})`
+      }
+    >
+      {/* Live 3D Portrait Viewport Window */}
+      <div
+        className="relative w-full aspect-[3/4] overflow-hidden flex items-center justify-center bg-gradient-to-b from-sky-500/10 via-transparent to-black/10 dark:from-sky-400/10 dark:to-black/30"
+        data-model-url={outfit.modelUrl}
+      >
+        <canvas
+          ref={canvasRef}
+          width={PORTRAIT_WIDTH}
+          height={PORTRAIT_HEIGHT}
+          className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${
+            isLocked ? 'brightness-90' : ''
+          }`}
+        />
+
+        {/* Loading indicator inside portrait window */}
+        {!isLoaded && !hasError && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/5 dark:bg-black/20 backdrop-blur-[1px]">
+            <Sparkles
+              className="w-4 h-4 animate-spin"
+              style={{ color: 'var(--theme-accent)' }}
+            />
+            <span className="text-[9px] font-mono text-neutral-500 dark:text-neutral-400">
+              3D View
+            </span>
+          </div>
+        )}
+
+        {/* Selected / Default Active Check Badge */}
+        {isSelected && !isLocked && (
+          <div
+            className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center shadow-sm z-20"
+            style={{
+              backgroundColor: 'var(--theme-accent)',
+              color: '#ffffff',
+            }}
+          >
+            <Check className="w-3 h-3 stroke-[3]" />
+          </div>
+        )}
+
+        {/* PREMIUM ONLY Lock Text Centered in Middle of Portrait Viewport */}
+        {outfit.isPremium && isLocked && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center p-2 bg-black/35 backdrop-blur-[1.5px] pointer-events-none">
+            <div className="px-2.5 py-1.5 rounded-xl bg-neutral-950/85 border border-amber-400/50 text-amber-300 shadow-lg flex items-center gap-1.5 text-center">
+              <Lock className="w-3 h-3 shrink-0 text-amber-400" />
+              <span className="text-[10px] font-mono font-bold tracking-wider uppercase leading-none">
+                PREMIUM ONLY
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Unlocked Crown Badge for Premium Users */}
+        {outfit.isPremium && !isLocked && (
+          <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-amber-500/90 text-neutral-950 text-[8px] font-mono font-bold uppercase flex items-center gap-0.5 shadow-xs z-20">
+            <Crown className="w-2.5 h-2.5" />
+            <span>PRO</span>
+          </div>
+        )}
+      </div>
+
+      {/* Outfit Title & Status Footer */}
+      <div className="p-2.5 border-t flex items-center justify-between gap-1.5 w-full" style={{ borderColor: 'var(--theme-border)' }}>
+        <div className="min-w-0">
+          <span className="block text-[11px] font-semibold text-neutral-900 dark:text-white truncate">
+            {outfit.name}
+          </span>
+          <span className="block text-[9px] font-mono text-neutral-400 dark:text-neutral-500 truncate">
+            {isSelected ? 'Equipped' : outfit.isPremium ? 'Premium VRM' : 'Default VRM'}
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+};
 
 export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
   isOpen,
@@ -23,6 +348,10 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
   onSelectTheme,
   onDeleteCustomTheme,
   onOpenCreateModal,
+  equippedOutfitId,
+  onSelectOutfit,
+  isPremiumUser,
+  onRequirePremium,
 }) => {
   const sidebarRef = useRef<HTMLElement>(null);
 
@@ -32,7 +361,11 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
 
     const handlePointerDown = (e: MouseEvent | TouchEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target?.closest('[data-theme-toggle]') || target?.closest('[data-custom-theme-modal]')) {
+      if (
+        target?.closest('[data-theme-toggle]') ||
+        target?.closest('[data-custom-theme-modal]') ||
+        target?.closest('[data-account-modal]')
+      ) {
         return;
       }
       if (sidebarRef.current && !sidebarRef.current.contains(target as Node)) {
@@ -65,7 +398,7 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
       {/* Right Drawer */}
       <aside
         ref={sidebarRef}
-        className={`fixed top-0 bottom-0 right-0 w-80 sm:w-92 ${THEME_COLORS.tokens.sidebarBg} z-40 flex flex-col shadow-2xl transition-all duration-200 border-l border-black/[0.08] dark:border-white/[0.08]`}
+        className={`fixed top-0 bottom-0 right-0 w-80 sm:w-96 ${THEME_COLORS.tokens.sidebarBg} z-40 flex flex-col shadow-2xl transition-all duration-200 border-l border-black/[0.08] dark:border-white/[0.08]`}
         style={{
           backgroundColor: 'var(--theme-surface)',
           borderColor: 'var(--theme-border)',
@@ -213,7 +546,7 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
               })}
             </div>
 
-            {/* Custom Themes (appear below preset themes and above the create theme button) */}
+            {/* Custom Themes */}
             {customThemes.length > 0 && (
               <div className="space-y-2 pt-1">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 font-mono block px-1">
@@ -239,7 +572,6 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
                         onClick={() => onSelectTheme(theme.id)}
                         className="flex-1 flex items-center gap-2.5 min-w-0 text-left"
                       >
-                        {/* Swatches preview pill */}
                         <div className="flex -space-x-1.5 shrink-0 p-1 rounded-xl bg-black/[0.04] dark:bg-white/[0.06]">
                           <span
                             className="w-3.5 h-3.5 rounded-full border border-black/10 shadow-2xs shrink-0"
@@ -306,7 +638,7 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
               </div>
             )}
 
-            {/* + Make Your Own Button (below preset themes and custom themes) */}
+            {/* + Make Your Own Button */}
             <button
               type="button"
               onClick={onOpenCreateModal}
@@ -322,133 +654,53 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
             </button>
           </section>
 
-          {/* SECTION 2: CLOTHING (Coming Soon Placeholder) */}
-          <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--theme-border)' }}>
+          {/* SECTION 2: WARDROBE (Live 3D VRM Portrait Viewports) */}
+          <section className="space-y-3 pt-2 border-t" style={{ borderColor: 'var(--theme-border)' }}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
-                <Shirt className="w-4 h-4 text-neutral-400" />
-                <h3 className="text-base font-semibold tracking-tight font-heading text-neutral-900 dark:text-white">
-                  Clothing
-                </h3>
-              </div>
-              <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 font-medium">
-                Coming Soon
-              </span>
-            </div>
-
-            <div
-              className="p-3.5 rounded-2xl border bg-black/[0.02] dark:bg-white/[0.02] space-y-2.5 text-xs"
-              style={{ borderColor: 'var(--theme-border)' }}
-            >
-              <div className="flex items-start gap-2.5">
-                <div className="w-7 h-7 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-500 flex items-center justify-center shrink-0">
-                  <Lock className="w-3.5 h-3.5" />
-                </div>
-                <div className="min-w-0">
-                  <span className="font-semibold text-neutral-800 dark:text-neutral-200 block text-xs">
+                <Shirt className="w-4 h-4" style={{ color: 'var(--theme-accent)' }} />
+                <div>
+                  <h3 className="text-base font-semibold tracking-tight font-heading text-neutral-900 dark:text-white">
                     Wardrobe
-                  </span>
-                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed mt-0.5">
-                    Change Hana's outfit
+                  </h3>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    Live 3D portrait previews of Hana's outfits
                   </p>
                 </div>
               </div>
-
-              {/* Sample Wardrobe Previews */}
-              <div className="grid grid-cols-2 gap-1.5 pt-1">
-                <div
-                  className="p-2 rounded-xl border flex items-center justify-between opacity-90"
-                  style={{
-                    backgroundColor: 'var(--theme-card)',
-                    borderColor: 'var(--theme-accent)',
-                  }}
-                >
-                  <span className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200">
-                    Mint Maid Apron
-                  </span>
-                  <span
-                    className="text-[9px] font-semibold"
-                    style={{ color: 'var(--theme-accent)' }}
-                  >
-                    Current
-                  </span>
-                </div>
-                <div
-                  className="p-2 rounded-xl border flex items-center justify-between opacity-60"
-                  style={{
-                    backgroundColor: 'var(--theme-card)',
-                    borderColor: 'var(--theme-border)',
-                  }}
-                >
-                  <span className="text-[11px] text-neutral-500">Tea Pinafore</span>
-                  <Lock className="w-2.5 h-2.5 text-neutral-400" />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* SECTION 3: HAIRSTYLE (Coming Soon Placeholder) */}
-          <section className="space-y-2 pt-2 border-t" style={{ borderColor: 'var(--theme-border)' }}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <Scissors className="w-4 h-4 text-neutral-400" />
-                <h3 className="text-base font-semibold tracking-tight font-heading text-neutral-900 dark:text-white">
-                  Hairstyle
-                </h3>
-              </div>
-              <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 font-medium">
-                Coming Soon
+              <span
+                className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full font-medium"
+                style={{
+                  backgroundColor: 'var(--theme-accent-soft)',
+                  color: 'var(--theme-accent)',
+                }}
+              >
+                {WARDROBE_OUTFITS.length} Outfits
               </span>
             </div>
 
-            <div
-              className="p-3.5 rounded-2xl border bg-black/[0.02] dark:bg-white/[0.02] space-y-2.5 text-xs"
-              style={{ borderColor: 'var(--theme-border)' }}
-            >
-              <div className="flex items-start gap-2.5">
-                <div className="w-7 h-7 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-500 flex items-center justify-center shrink-0">
-                  <Lock className="w-3.5 h-3.5" />
-                </div>
-                <div className="min-w-0">
-                  <span className="font-semibold text-neutral-800 dark:text-neutral-200 block text-xs">
-                    Hairstyles
-                  </span>
-                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed mt-0.5">
-                    Change Hana's hairstyle
-                  </p>
-                </div>
-              </div>
+            <div className="grid grid-cols-2 gap-2.5">
+              {WARDROBE_OUTFITS.map((outfit, idx) => {
+                const isSelected = equippedOutfitId === outfit.id;
+                const isLocked = outfit.isPremium && !isPremiumUser;
 
-              {/* Sample Hairstyle Previews */}
-              <div className="grid grid-cols-2 gap-1.5 pt-1">
-                <div
-                  className="p-2 rounded-xl border flex items-center justify-between opacity-90"
-                  style={{
-                    backgroundColor: 'var(--theme-card)',
-                    borderColor: 'var(--theme-accent)',
-                  }}
-                >
-                  <span className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200">
-                    Low Twin Braids
-                  </span>
-                  <span
-                    className="text-[9px] font-semibold"
-                    style={{ color: 'var(--theme-accent)' }}
-                  >
-                    Current
-                  </span>
-                </div>
-                <div
-                  className="p-2 rounded-xl border flex items-center justify-between opacity-60"
-                  style={{
-                    backgroundColor: 'var(--theme-card)',
-                    borderColor: 'var(--theme-border)',
-                  }}
-                >
-                  <span className="text-[11px] text-neutral-500">Twin Ribbons</span>
-                  <Lock className="w-2.5 h-2.5 text-neutral-400" />
-                </div>
-              </div>
+                return (
+                  <WardrobePortraitViewport
+                    key={outfit.id}
+                    outfit={outfit}
+                    isSelected={isSelected}
+                    isLocked={isLocked}
+                    loadDelayMs={idx * 180}
+                    onSelect={() => {
+                      if (isLocked) {
+                        onRequirePremium?.();
+                        return;
+                      }
+                      onSelectOutfit(outfit.id);
+                    }}
+                  />
+                );
+              })}
             </div>
           </section>
         </div>

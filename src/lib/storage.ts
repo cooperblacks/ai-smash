@@ -1,6 +1,6 @@
-import { Conversation, UserSettings, ThemeDefinition } from '../types';
+import { Conversation, UserSettings, ThemeDefinition, AccountUser } from '../types';
 import { AVAILABLE_MODELS } from './models';
-import { APP_INFO, OLLAMA_CONFIG, DEFAULT_USER_SETTINGS, DEFAULT_THEME_ID } from '../constants';
+import { APP_INFO, OLLAMA_CONFIG, DEFAULT_USER_SETTINGS, DEFAULT_THEME_ID, DEFAULT_OUTFIT_ID } from '../constants';
 
 export { DEFAULT_USER_SETTINGS };
 
@@ -9,6 +9,155 @@ const SETTINGS_KEY = APP_INFO.storageKeys.userSettings;
 const ACTIVE_CONV_KEY = APP_INFO.storageKeys.activeConversation;
 const ACTIVE_THEME_KEY = APP_INFO.storageKeys.activeTheme;
 const CUSTOM_THEMES_KEY = APP_INFO.storageKeys.customThemes;
+const HARASSMENT_COUNT_KEY = APP_INFO.storageKeys.harassmentCount;
+const BLOCKED_UNTIL_KEY = APP_INFO.storageKeys.blockedUntil;
+const EQUIPPED_OUTFIT_KEY = APP_INFO.storageKeys.equippedOutfit;
+const ACCOUNT_SESSION_KEY = APP_INFO.storageKeys.accountSession;
+const DEVICE_FINGERPRINT_KEY = APP_INFO.storageKeys.deviceFingerprint;
+
+// ----------------------------------------------------
+// Account Session, Device Fingerprint & Premium Check
+// ----------------------------------------------------
+
+export function isUserPremium(user: AccountUser | null | undefined): boolean {
+  if (!user) return false;
+  if (user.account_type !== 'paid') return false;
+  if (!user.last_payment) return false;
+  const ts = Date.parse(user.last_payment);
+  return Number.isFinite(ts) && ts > 0;
+}
+
+export function getOrCreateDeviceFingerprint(): string {
+  if (typeof window === 'undefined') return 'fp_server';
+  try {
+    const existing = localStorage.getItem(DEVICE_FINGERPRINT_KEY);
+    if (existing && existing.trim()) return existing.trim();
+
+    const nav = window.navigator;
+    const rawTraits = [
+      nav.userAgent || '',
+      nav.language || '',
+      String(window.screen?.width || 0),
+      String(window.screen?.height || 0),
+      String(window.screen?.colorDepth || 24),
+      String(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'),
+    ].join('|');
+
+    let hash = 0;
+    for (let i = 0; i < rawTraits.length; i++) {
+      hash = (hash << 5) - hash + rawTraits.charCodeAt(i);
+      hash |= 0;
+    }
+    const fp = `fp_${Math.abs(hash).toString(16)}_${Date.now().toString(36).slice(-4)}`;
+    localStorage.setItem(DEVICE_FINGERPRINT_KEY, fp);
+    return fp;
+  } catch {
+    return 'fp_browser_default';
+  }
+}
+
+export function getBrowserDeviceLabel(): string {
+  if (typeof window === 'undefined') return 'Web Browser';
+  const ua = window.navigator?.userAgent || '';
+  const platform = (window.navigator as { platform?: string })?.platform || 'Desktop';
+  if (/Edg\//i.test(ua)) return `Edge on ${platform}`;
+  if (/Chrome\//i.test(ua)) return `Chrome on ${platform}`;
+  if (/Firefox\//i.test(ua)) return `Firefox on ${platform}`;
+  if (/Safari\//i.test(ua)) return `Safari on ${platform}`;
+  return `Browser on ${platform}`;
+}
+
+export function loadAccountSession(): AccountUser | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(ACCOUNT_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AccountUser;
+    if (!parsed || typeof parsed.id !== 'number' || !parsed.email) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAccountSession(user: AccountUser | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!user) {
+      localStorage.removeItem(ACCOUNT_SESSION_KEY);
+    } else {
+      localStorage.setItem(ACCOUNT_SESSION_KEY, JSON.stringify(user));
+    }
+  } catch (err) {
+    console.error('Failed to save account session:', err);
+  }
+}
+
+export function loadEquippedOutfitId(): string {
+  if (typeof window === 'undefined') return DEFAULT_OUTFIT_ID;
+  try {
+    return localStorage.getItem(EQUIPPED_OUTFIT_KEY) || DEFAULT_OUTFIT_ID;
+  } catch {
+    return DEFAULT_OUTFIT_ID;
+  }
+}
+
+export function saveEquippedOutfitId(outfitId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(EQUIPPED_OUTFIT_KEY, outfitId);
+  } catch (err) {
+    console.error('Failed to save equipped outfit id:', err);
+  }
+}
+
+// ----------------------------------------------------
+// Harassment Count & Temporary Block Persistence
+// ----------------------------------------------------
+
+export function loadHarassmentCount(): number {
+  if (typeof window === 'undefined') return 0;
+  try {
+    const raw = localStorage.getItem(HARASSMENT_COUNT_KEY);
+    const parsed = raw ? parseInt(raw, 10) : 0;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function loadBlockedUntil(): number {
+  if (typeof window === 'undefined') return 0;
+  try {
+    const raw = localStorage.getItem(BLOCKED_UNTIL_KEY);
+    const parsed = raw ? parseInt(raw, 10) : 0;
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return parsed;
+  } catch {
+    return 0;
+  }
+}
+
+export function incrementHarassmentCount(): { count: number; blockedUntil: number | null } {
+  if (typeof window === 'undefined') return { count: 0, blockedUntil: null };
+  try {
+    const current = loadHarassmentCount();
+    const nextCount = current + 1;
+    localStorage.setItem(HARASSMENT_COUNT_KEY, String(nextCount));
+
+    if (nextCount > 0 && nextCount % 3 === 0) {
+      const durationMs = nextCount * 5 * 60 * 1000;
+      const blockedUntil = Date.now() + durationMs;
+      localStorage.setItem(BLOCKED_UNTIL_KEY, String(blockedUntil));
+      return { count: nextCount, blockedUntil };
+    }
+
+    return { count: nextCount, blockedUntil: null };
+  } catch (err) {
+    console.error('Failed to update harassment count:', err);
+    return { count: 0, blockedUntil: null };
+  }
+}
 
 // ----------------------------------------------------
 // Theme Persistence
@@ -338,6 +487,11 @@ export async function clearAllTransformersCaches(): Promise<boolean> {
         settingsKey,
         ACTIVE_THEME_KEY,
         CUSTOM_THEMES_KEY,
+        HARASSMENT_COUNT_KEY,
+        BLOCKED_UNTIL_KEY,
+        EQUIPPED_OUTFIT_KEY,
+        ACCOUNT_SESSION_KEY,
+        DEVICE_FINGERPRINT_KEY,
       ]);
 
       const keysToRemove: string[] = [];

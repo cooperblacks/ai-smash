@@ -1,0 +1,100 @@
+-- =====================================================================
+-- AI Smash - NeonDB PostgreSQL Initialization & Schema Setup Script
+-- =====================================================================
+-- Run this SQL script in the NeonDB SQL Editor (or via psql) to prepare
+-- all required tables for authentication, user accounts, device tracking,
+-- conversations, messages, custom themes, and premium redeem codes.
+-- =====================================================================
+
+-- 1. USERS TABLE
+-- Only email and password are required at sign-up; all other fields are
+-- automatically populated with their respective defaults upon creation.
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  username TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  avatar_url TEXT NOT NULL DEFAULT 'https://muxai.vercel.app/logo_Hana.png',
+  account_type TEXT NOT NULL DEFAULT 'free' CHECK (account_type IN ('free', 'paid')),
+  last_payment TIMESTAMPTZ NULL DEFAULT NULL,
+  last_login_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_login_device TEXT NOT NULL DEFAULT 'Web Browser',
+  device_fingerprints TEXT[] NOT NULL DEFAULT '{}',
+  equipped_outfit_id TEXT NOT NULL DEFAULT 'mint-maid-apron',
+  active_theme_id TEXT NOT NULL DEFAULT 'classic-light',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_account_type ON users(account_type);
+
+-- 2. CONVERSATIONS TABLE
+-- Stores conversation threads belonging to each user account.
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT 'Direct Message',
+  model_id TEXT DEFAULT 'smollm2-135m',
+  pinned BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
+
+-- 3. MESSAGES TABLE
+-- Stores individual chat messages within user conversations.
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+  content TEXT NOT NULL,
+  timestamp BIGINT NOT NULL,
+  model_used TEXT,
+  tokens_count INTEGER,
+  generation_time_ms NUMERIC,
+  speed_tps NUMERIC,
+  error BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
+
+-- 4. CUSTOM THEMES TABLE
+-- Stores user-created custom themes synced across sessions.
+CREATE TABLE IF NOT EXISTS custom_themes (
+  id TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  is_dark BOOLEAN NOT NULL DEFAULT FALSE,
+  description TEXT DEFAULT 'Custom user theme',
+  colors JSONB NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_custom_themes_user_id ON custom_themes(user_id);
+
+-- 5. REDEEM CODES TABLE
+-- Stores promotional or subscription redeem codes that upgrade an account to 'paid'
+-- and record a valid last_payment timestamp.
+CREATE TABLE IF NOT EXISTS redeem_codes (
+  code TEXT PRIMARY KEY,
+  account_type_grant TEXT NOT NULL DEFAULT 'paid',
+  duration_days INTEGER NOT NULL DEFAULT 30,
+  max_uses INTEGER NOT NULL DEFAULT 1000,
+  used_count INTEGER NOT NULL DEFAULT 0,
+  redeemed_by INTEGER[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Seed default promotional redeem codes for testing & premium activation
+INSERT INTO redeem_codes (code, account_type_grant, duration_days, max_uses)
+VALUES
+  ('MUXAI-PREMIUM-2026', 'paid', 365, 10000),
+  ('HANA-VIP', 'paid', 365, 10000),
+  ('AISMASH-PRO', 'paid', 365, 10000)
+ON CONFLICT (code) DO NOTHING;

@@ -3,7 +3,23 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { SYSTEM_PROMPTS, APP_INFO, VRM_CONFIG, OLLAMA_CONFIG } from './src/constants/index.ts';
+import {
+  SYSTEM_PROMPTS,
+  APP_INFO,
+  VRM_CONFIG,
+  OLLAMA_CONFIG,
+  MODEL_SOURCE_DOMAIN,
+  MODEL_FALLBACK_DOMAIN,
+  ANIMATION_SOURCE_DOMAINS,
+} from './src/constants/index.ts';
+import {
+  signUpAccount,
+  signInAccount,
+  updateAccountProfile,
+  redeemAccountCode,
+  fetchUserSyncedData,
+  syncUserConversationsAndThemes,
+} from './src/db/neondb.ts';
 
 dotenv.config();
 
@@ -27,12 +43,21 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 // Proxy endpoint for VRM 3D asset to bypass CORS redirect blocks
-app.get('/api/vrm', async (_req: Request, res: Response) => {
+app.get('/api/vrm', async (req: Request, res: Response) => {
   try {
-    const targetUrls = [
-      VRM_CONFIG.modelUrl,
-      ...VRM_CONFIG.candidateModelUrls.filter((u) => !u.startsWith('/api')),
-    ];
+    const requestedFile = typeof req.query.file === 'string' ? req.query.file.trim() : '';
+    const safeFile = /^[a-zA-Z0-9_.-]+\.vrm$/.test(requestedFile) ? requestedFile : '';
+
+    const targetUrls = safeFile
+      ? [
+          `${MODEL_SOURCE_DOMAIN}/${safeFile}`,
+          `${MODEL_FALLBACK_DOMAIN}/${safeFile}`,
+          VRM_CONFIG.modelUrl,
+        ]
+      : [
+          VRM_CONFIG.modelUrl,
+          ...VRM_CONFIG.candidateModelUrls.filter((u) => !u.startsWith('/api')),
+        ];
 
     let vrmResp: globalThis.Response | null = null;
     for (const url of targetUrls) {
@@ -77,13 +102,18 @@ app.get('/api/vrm', async (_req: Request, res: Response) => {
   }
 });
 
-// Proxy endpoint for Mixamo animation FBX assets (idle, fall, getup)
+// Proxy endpoint for Mixamo animation FBX assets (idle, fall, getup, walk, wave, wait/yawn/custom fbx)
 app.get(['/api/animation/:type', '/api/animation/idle'], async (req: Request, res: Response) => {
   try {
     const animType = req.params.type || 'idle';
+    const requestedFile = typeof req.query.file === 'string' ? req.query.file.trim() : '';
+    const safeFile = /^[a-zA-Z0-9_.-]+\.fbx$/.test(requestedFile) ? requestedFile : '';
+
     let targetUrls: string[] = [];
 
-    if (animType === 'fall') {
+    if (safeFile) {
+      targetUrls = ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/${safeFile}`);
+    } else if (animType === 'fall') {
       targetUrls = [
         VRM_CONFIG.fallAnimationUrl,
         ...VRM_CONFIG.candidateFallAnimationUrls.filter((u) => !u.startsWith('/api')),
@@ -103,6 +133,10 @@ app.get(['/api/animation/:type', '/api/animation/idle'], async (req: Request, re
         VRM_CONFIG.waveAnimationUrl,
         ...VRM_CONFIG.candidateWaveAnimationUrls.filter((u) => !u.startsWith('/api')),
       ];
+    } else if (animType === 'yawn') {
+      targetUrls = ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/mixamo_yawn.fbx`);
+    } else if (animType === 'wait') {
+      targetUrls = ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/mixamo_wait.fbx`);
     } else {
       targetUrls = [
         VRM_CONFIG.animationUrl,
@@ -484,6 +518,134 @@ app.post('/api/chat', async (req: Request, res: Response) => {
       res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
       res.end();
     }
+  }
+});
+
+// =====================================================================
+// NeonDB Account Authentication, Profile, Redeem & Sync Routes
+// =====================================================================
+
+app.post('/api/auth/signup', async (req: Request, res: Response) => {
+  try {
+    const { email, password, device, fingerprint } = req.body || {};
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: 'A valid email address is required.' });
+    }
+    if (!password || typeof password !== 'string' || password.length < 4) {
+      return res.status(400).json({ error: 'Password must be at least 4 characters.' });
+    }
+
+    const userAgent = req.headers['user-agent'] || 'Web Browser';
+    const result = await signUpAccount({
+      email,
+      password,
+      device: device || String(userAgent),
+      fingerprint: fingerprint || '',
+    });
+
+    res.json(result);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to create account.';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post('/api/auth/signin', async (req: Request, res: Response) => {
+  try {
+    const { email, password, device, fingerprint } = req.body || {};
+    if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+
+    const userAgent = req.headers['user-agent'] || 'Web Browser';
+    const result = await signInAccount({
+      email,
+      password,
+      device: device || String(userAgent),
+      fingerprint: fingerprint || '',
+    });
+
+    res.json(result);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to sign in.';
+    res.status(401).json({ error: message });
+  }
+});
+
+app.post('/api/account/profile', async (req: Request, res: Response) => {
+  try {
+    const { userId, username, displayName, avatarUrl, equippedOutfitId, activeThemeId } = req.body || {};
+    if (!userId || Number.isNaN(Number(userId))) {
+      return res.status(400).json({ error: 'Valid userId is required.' });
+    }
+
+    const user = await updateAccountProfile({
+      userId: Number(userId),
+      username,
+      displayName,
+      avatarUrl,
+      equippedOutfitId,
+      activeThemeId,
+    });
+
+    res.json({ user });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to update profile.';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post('/api/account/redeem', async (req: Request, res: Response) => {
+  try {
+    const { userId, code } = req.body || {};
+    if (!userId || Number.isNaN(Number(userId))) {
+      return res.status(400).json({ error: 'Valid userId is required.' });
+    }
+    if (!code || typeof code !== 'string') {
+      return res.status(400).json({ error: 'Redeem code is required.' });
+    }
+
+    const user = await redeemAccountCode({
+      userId: Number(userId),
+      code,
+    });
+
+    res.json({ user });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to redeem code.';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.get('/api/account/sync/:userId', async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.userId);
+    if (!userId || Number.isNaN(userId)) {
+      return res.status(400).json({ error: 'Valid userId is required.' });
+    }
+    const data = await fetchUserSyncedData(userId);
+    res.json(data);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch synced data.';
+    res.status(400).json({ error: message });
+  }
+});
+
+app.post('/api/account/sync', async (req: Request, res: Response) => {
+  try {
+    const { userId, conversations, customThemes } = req.body || {};
+    if (!userId || Number.isNaN(Number(userId))) {
+      return res.status(400).json({ error: 'Valid userId is required.' });
+    }
+    await syncUserConversationsAndThemes({
+      userId: Number(userId),
+      conversations,
+      customThemes,
+    });
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to sync account data.';
+    res.status(400).json({ error: message });
   }
 });
 

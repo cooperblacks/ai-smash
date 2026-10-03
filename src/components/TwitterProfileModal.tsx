@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Link as LinkIcon, Calendar, MessageCircle, BadgeCheck, Instagram } from 'lucide-react';
+import { X, Link as LinkIcon, Calendar, MessageCircle, BadgeCheck, Instagram, Home, Github } from 'lucide-react';
 import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
 
 const DiscordIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
@@ -16,9 +16,14 @@ const DiscordIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }
 interface TwitterProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onNavigateHome?: () => void;
 }
 
-export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen, onClose }) => {
+export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({
+  isOpen,
+  onClose,
+  onNavigateHome,
+}) => {
   const [currentBannerIndex, setCurrentBannerIndex] = useState(0);
 
   useEffect(() => {
@@ -167,8 +172,23 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
               </div>
             </div>
 
-            {/* Social Links: Instagram & Discord on the bottom right corner */}
+            {/* Social Links: Home, Instagram, Discord & GitHub on the bottom right corner */}
             <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onNavigateHome) {
+                    onNavigateHome();
+                  } else {
+                    window.location.href = '/';
+                  }
+                }}
+                title="Return to Home Landing Page"
+                className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all active:scale-95 cursor-pointer"
+                aria-label="Return to Home"
+              >
+                <Home className="w-4 h-4" />
+              </button>
               <a
                 href={AI_PROFILE.socials.instagram}
                 target="_blank"
@@ -186,6 +206,15 @@ export const TwitterProfileModal: React.FC<TwitterProfileModalProps> = ({ isOpen
                 className="p-1.5 rounded-full text-neutral-500 hover:text-[#5865F2] hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all active:scale-95"
               >
                 <DiscordIcon className="w-4 h-4" />
+              </a>
+              <a
+                href="https://github.com/dwmk/ai-smash"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="AI Smash on GitHub"
+                className="p-1.5 rounded-full text-neutral-500 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all active:scale-95"
+              >
+                <Github className="w-4 h-4" />
               </a>
             </div>
           </div>
