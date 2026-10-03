@@ -262,7 +262,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                                   : 'bg-neutral-200 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400'
                               }`}
                             >
-                              {isOnline ? 'ONLINE' : 'OFFLINE (5s)'}
+                              {isOnline ? 'ONLINE' : 'OFFLINE'}
                             </span>
                           )}
                         </span>
@@ -273,9 +273,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
                       <p className="text-[11px] text-neutral-500 dark:text-neutral-400 line-clamp-1 mt-0.5">
                         {isMuxAiOption && !isOnline
-                          ? 'Waiting for server detection at https://trout-egotism-decorator.ngrok-free.dev/...'
+                          ? 'Waiting for server...'
                           : isSelfHostedOption && !isOnline
-                          ? `Waiting for server at ${customUrl}...`
+                          ? `Waiting for server...`
                           : model.description}
                       </p>
 
