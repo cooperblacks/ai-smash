@@ -54,7 +54,7 @@ function sanitizeUser(u: InternalUserRecord | DbUserRecord): DbUserRecord {
     email: u.email,
     username: u.username,
     display_name: u.display_name,
-    avatar_url: u.avatar_url || 'https://muxai.vercel.app/logo_Hana.png',
+    avatar_url: u.avatar_url || 'https://ai.mux8.com/favicon.png',
     account_type: u.account_type === 'paid' ? 'paid' : 'free',
     last_payment: u.last_payment ? new Date(u.last_payment).toISOString() : null,
     last_login_time: u.last_login_time
