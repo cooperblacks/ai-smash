@@ -1,8 +1,5 @@
 import express, { type Request, type Response } from 'express';
 import dotenv from 'dotenv';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import {
   SYSTEM_PROMPTS,
@@ -12,7 +9,7 @@ import {
   MODEL_SOURCE_DOMAIN,
   MODEL_FALLBACK_DOMAIN,
   ANIMATION_SOURCE_DOMAINS,
-} from './src/constants';
+} from '../src/constants';
 import {
   signUpAccount,
   signInAccount,
@@ -20,31 +17,50 @@ import {
   redeemAccountCode,
   fetchUserSyncedData,
   syncUserConversationsAndThemes,
-} from './src/db/neondb';
+} from '../src/db/neondb';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const apiApp = express();
+const router = express.Router();
 
-const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
+apiApp.use(express.json({ limit: '10mb' }));
 
-app.use(express.json({ limit: '10mb' }));
+// Ensure string/Buffer bodies pre-read by serverless platforms are parsed as JSON
+apiApp.use((req: Request, _res: Response, next) => {
+  if (typeof req.body === 'string' && req.body.trim().startsWith('{')) {
+    try {
+      req.body = JSON.parse(req.body);
+    } catch {
+      // Ignore parse error
+    }
+  } else if (Buffer.isBuffer(req.body)) {
+    try {
+      const str = req.body.toString('utf-8').trim();
+      if (str.startsWith('{')) {
+        req.body = JSON.parse(str);
+      }
+    } catch {
+      // Ignore parse error
+    }
+  }
+  next();
+});
 
 const DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPTS.full;
 
 // Health check
-app.get('/api/health', (_req: Request, res: Response) => {
+router.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     persona: APP_INFO.name,
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+    hasNeonUrl: Boolean(process.env.NEON_DATABASE_URL),
   });
 });
 
 // Proxy endpoint for VRM 3D asset to bypass CORS redirect blocks
-app.get('/api/vrm', async (req: Request, res: Response) => {
+router.get('/vrm', async (req: Request, res: Response) => {
   try {
     const requestedFile = typeof req.query.file === 'string' ? req.query.file.trim() : '';
     const safeFile = /^[a-zA-Z0-9_.-]+\.vrm$/.test(requestedFile) ? requestedFile : '';
@@ -104,7 +120,7 @@ app.get('/api/vrm', async (req: Request, res: Response) => {
 });
 
 // Proxy endpoint for Mixamo animation FBX assets (idle, fall, getup, walk, wave, wait/yawn/custom fbx)
-app.get(['/api/animation/:type', '/api/animation/idle'], async (req: Request, res: Response) => {
+router.get(['/animation/:type', '/animation/idle'], async (req: Request, res: Response) => {
   try {
     const animType = req.params.type || 'idle';
     const requestedFile = typeof req.query.file === 'string' ? req.query.file.trim() : '';
@@ -191,17 +207,15 @@ app.get(['/api/animation/:type', '/api/animation/idle'], async (req: Request, re
 // Helper to normalize Ollama base URL
 function cleanOllamaBaseUrl(rawUrl: string): string {
   let url = (rawUrl || '').trim();
-  // Strip trailing slashes
   url = url.replace(/\/+$/, '');
-  // Strip any trailing API subpaths if user pasted full endpoint
   url = url.replace(/\/(api\/tags|api\/chat|api\/generate|api\/version|v1\/models|v1\/chat\/completions)$/, '');
   return url.replace(/\/+$/, '');
 }
 
 function buildServerOllamaUrl(rawUrl: string, endpoint: string): string {
   const clean = cleanOllamaBaseUrl(rawUrl);
-  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const full = `${clean}${path}`;
+  const endpointPath = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const full = `${clean}${endpointPath}`;
   if (full.includes('ngrok')) {
     const sep = full.includes('?') ? '&' : '?';
     return `${full}${sep}ngrok-skip-browser-warning=true`;
@@ -212,11 +226,11 @@ function buildServerOllamaUrl(rawUrl: string, endpoint: string): string {
 const OLLAMA_REQUEST_HEADERS = {
   'ngrok-skip-browser-warning': 'true',
   'User-Agent': 'curl/8.0.0',
-  'Accept': 'application/json',
+  Accept: 'application/json',
 };
 
 // Ollama connectivity ping endpoint
-app.post('/api/ollama/ping', async (req: Request, res: Response) => {
+router.post('/ollama/ping', async (req: Request, res: Response) => {
   try {
     const baseUrl = cleanOllamaBaseUrl(req.body?.url || '');
     if (!baseUrl) {
@@ -229,7 +243,6 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
     let online = false;
     let models: string[] = [];
 
-    // 1. Try /api/tags (Native Ollama model list)
     try {
       const resp = await fetch(buildServerOllamaUrl(baseUrl, '/api/tags'), {
         method: 'GET',
@@ -255,7 +268,6 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
       // Continue to /v1/models fallback
     }
 
-    // 2. Try /v1/models (OpenAI compatibility endpoint on Ollama, shown in pyngrok setup)
     if (models.length === 0) {
       try {
         const v1Resp = await fetch(buildServerOllamaUrl(baseUrl, '/v1/models'), {
@@ -283,7 +295,6 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
       }
     }
 
-    // 3. Fallback check to /api/version or / root
     if (!online) {
       try {
         const verResp = await fetch(buildServerOllamaUrl(baseUrl, '/api/version'), {
@@ -326,7 +337,7 @@ app.post('/api/ollama/ping', async (req: Request, res: Response) => {
 });
 
 // Cloud streaming endpoint for Ollama
-app.post('/api/ollama/chat', async (req: Request, res: Response) => {
+router.post('/ollama/chat', async (req: Request, res: Response) => {
   try {
     const { url, model, messages, systemPrompt, maxTokens } = req.body;
     const baseUrl = cleanOllamaBaseUrl(url || '');
@@ -334,8 +345,6 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Target Ollama URL is required' });
     }
 
-    // Resolve target model: if unspecified,
-    // auto-fetch available models from the target Ollama instance to use the actual model in VRAM
     let resolvedModel = (model || '').trim();
     if (!resolvedModel) {
       try {
@@ -383,7 +392,6 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    // Filter out any client system messages to guarantee exactly ONE complete system prompt
     const cleanedHistory = (messages || [])
       .filter((m: { role: string; content: string }) => m.role !== 'system')
       .map((m: { role: string; content: string }) => ({
@@ -391,7 +399,6 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
         content: m.content,
       }));
 
-    // Full system prompt according to Ollama system instructions protocol
     const formattedMessages = [
       { role: 'system', content: systemPrompt || DEFAULT_SYSTEM_PROMPT },
       ...cleanedHistory,
@@ -403,7 +410,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        Accept: 'application/json',
         'ngrok-skip-browser-warning': 'true',
         'User-Agent': 'curl/8.0.0',
       },
@@ -467,7 +474,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
 });
 
 // Cloud streaming endpoint for Gemini 3.8 Flash
-app.post('/api/chat', async (req: Request, res: Response) => {
+router.post('/chat', async (req: Request, res: Response) => {
   try {
     const { messages, systemPrompt, maxTokens } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
@@ -478,8 +485,6 @@ app.post('/api/chat', async (req: Request, res: Response) => {
 
     const ai = new GoogleGenAI({ apiKey });
 
-    // Format chat history for GoogleGenAI
-    // systemInstruction is passed separately in config
     const formattedContents = (messages || []).map((msg: { role: string; content: string }) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }],
@@ -526,7 +531,7 @@ app.post('/api/chat', async (req: Request, res: Response) => {
 // NeonDB Account Authentication, Profile, Redeem & Sync Routes
 // =====================================================================
 
-app.post('/api/auth/signup', async (req: Request, res: Response) => {
+router.post('/auth/signup', async (req: Request, res: Response) => {
   try {
     const { email, password, device, fingerprint } = req.body || {};
     if (!email || typeof email !== 'string' || !email.includes('@')) {
@@ -551,7 +556,7 @@ app.post('/api/auth/signup', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/auth/signin', async (req: Request, res: Response) => {
+router.post('/auth/signin', async (req: Request, res: Response) => {
   try {
     const { email, password, device, fingerprint } = req.body || {};
     if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
@@ -573,7 +578,7 @@ app.post('/api/auth/signin', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/account/profile', async (req: Request, res: Response) => {
+router.post('/account/profile', async (req: Request, res: Response) => {
   try {
     const { userId, username, displayName, avatarUrl, equippedOutfitId, activeThemeId } = req.body || {};
     if (!userId || Number.isNaN(Number(userId))) {
@@ -596,7 +601,7 @@ app.post('/api/account/profile', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/account/redeem', async (req: Request, res: Response) => {
+router.post('/account/redeem', async (req: Request, res: Response) => {
   try {
     const { userId, code } = req.body || {};
     if (!userId || Number.isNaN(Number(userId))) {
@@ -618,7 +623,7 @@ app.post('/api/account/redeem', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/api/account/sync/:userId', async (req: Request, res: Response) => {
+router.get('/account/sync/:userId', async (req: Request, res: Response) => {
   try {
     const userId = Number(req.params.userId);
     if (!userId || Number.isNaN(userId)) {
@@ -632,7 +637,7 @@ app.get('/api/account/sync/:userId', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/account/sync', async (req: Request, res: Response) => {
+router.post('/account/sync', async (req: Request, res: Response) => {
   try {
     const { userId, conversations, customThemes } = req.body || {};
     if (!userId || Number.isNaN(Number(userId))) {
@@ -650,48 +655,8 @@ app.post('/api/account/sync', async (req: Request, res: Response) => {
   }
 });
 
-async function startServer() {
-  const distIndex = path.join(__dirname, 'dist', 'index.html');
-  const rootIndex = path.join(__dirname, 'index.html');
+// Mount under both /api and / so Vercel rewrites and Express both resolve cleanly
+apiApp.use('/api', router);
+apiApp.use('/', router);
 
-  if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-
-    // Explicit SPA fallback for /chat, /app, and any non-API route on page refresh
-    app.get(['/chat', '/chat/*', '/app', '/app/*', '*'], async (req: Request, res: Response, next) => {
-      if (req.path.startsWith('/api/')) {
-        return next();
-      }
-      try {
-        const template = fs.readFileSync(rootIndex, 'utf-8');
-        const html = await vite.transformIndexHtml(req.originalUrl, template);
-        res.status(200).set({ 'Content-Type': 'text/html' }).end(html);
-      } catch (err) {
-        next(err);
-      }
-    });
-  } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
-    app.get(['/chat', '/chat/*', '/app', '/app/*', '*'], (req: Request, res: Response, next) => {
-      if (req.path.startsWith('/api/')) {
-        return next();
-      }
-      if (fs.existsSync(distIndex)) {
-        res.sendFile(distIndex);
-      } else {
-        res.sendFile(rootIndex);
-      }
-    });
-  }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`${APP_INFO.name} server running on http://0.0.0.0:${PORT}`);
-  });
-}
-
-startServer();
+export default apiApp;

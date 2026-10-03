@@ -20,7 +20,7 @@ import {
   Loader2,
   User as UserIcon,
 } from 'lucide-react';
-import { APP_INFO, THEME_COLORS, UI_CONFIG, AI_PROFILE } from '../constants';
+import { APP_INFO, THEME_COLORS, UI_CONFIG, DEFAULT_USER_AVATAR_URL } from '../constants';
 import {
   isUserPremium,
   loadAccountSession,
@@ -109,7 +109,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       } else {
         setEditDisplayName(accountUser.display_name || '');
         setEditUsername(accountUser.username || '');
-        setEditAvatarUrl(accountUser.avatar_url || AI_PROFILE.avatarUrl);
+        setEditAvatarUrl(accountUser.avatar_url || DEFAULT_USER_AVATAR_URL);
         setProfileStatusMsg(null);
         setIsProfileModalOpen(true);
       }
@@ -266,7 +266,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (!accountUser) return;
     setEditDisplayName(accountUser.display_name || '');
     setEditUsername(accountUser.username || '');
-    setEditAvatarUrl(accountUser.avatar_url || AI_PROFILE.avatarUrl);
+    setEditAvatarUrl(accountUser.avatar_url || DEFAULT_USER_AVATAR_URL);
     setRedeemInput('');
     setProfileStatusMsg(null);
     setIsProfileModalOpen(true);
@@ -281,7 +281,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       const updates = {
         displayName: editDisplayName.trim(),
         username: editUsername.trim().replace(/^@+/, ''),
-        avatarUrl: editAvatarUrl.trim() || AI_PROFILE.avatarUrl,
+        avatarUrl: editAvatarUrl.trim() || DEFAULT_USER_AVATAR_URL,
       };
       if (typeof onUpdateProfile === 'function') {
         await onUpdateProfile(updates);
@@ -532,11 +532,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="relative w-9 h-9 rounded-full overflow-hidden ring-1 ring-black/10 dark:ring-white/15 shrink-0 bg-neutral-200 dark:bg-neutral-800">
                       <img
-                        src={accountUser.avatar_url || AI_PROFILE.avatarUrl}
+                        src={accountUser.avatar_url || DEFAULT_USER_AVATAR_URL}
                         alt={accountUser.display_name}
                         className="w-full h-full object-cover"
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src = AI_PROFILE.avatarUrl;
+                          (e.currentTarget as HTMLImageElement).src = DEFAULT_USER_AVATAR_URL;
                         }}
                       />
                     </div>
@@ -763,11 +763,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-[var(--theme-accent)] shrink-0">
                   <img
-                    src={editAvatarUrl || accountUser.avatar_url || AI_PROFILE.avatarUrl}
+                    src={editAvatarUrl || accountUser.avatar_url || DEFAULT_USER_AVATAR_URL}
                     alt={accountUser.display_name}
                     className="w-full h-full object-cover"
                     onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).src = AI_PROFILE.avatarUrl;
+                      (e.currentTarget as HTMLImageElement).src = DEFAULT_USER_AVATAR_URL;
                     }}
                   />
                 </div>

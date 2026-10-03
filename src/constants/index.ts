@@ -13,7 +13,7 @@
  * - UI timings, timeouts, badge themes, and default settings
  */
 
-import type { UserSettings, ThemeDefinition, WardrobeOutfit } from '../types/index.ts';
+import type { UserSettings, ThemeDefinition, WardrobeOutfit } from '../types';
 
 // =====================================================================
 // TYPOGRAPHY CONFIGURATION (Google Fonts)
@@ -374,6 +374,8 @@ export const SPECIAL_THANKS_LINKS = [
 ];
 
 export const PRODUCT_HUNT_URL = 'https://www.producthunt.com/products/ai-smash?launch=ai-smash';
+
+export const DEFAULT_USER_AVATAR_URL = 'https://ai.mux8.com/favicon.png';
 
 // =====================================================================
 // 3. AI PERSONA PROFILE CONFIGURATION

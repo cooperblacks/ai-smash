@@ -1,14 +1,10 @@
 import pg, { type Pool as PoolType } from 'pg';
 import crypto from 'crypto';
+import type { Conversation, ThemeDefinition } from '../types';
 
 const { Pool } = pg;
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import type { Conversation, ThemeDefinition } from '../types/index.ts';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+export const DEFAULT_USER_AVATAR_URL = 'https://ai.mux8.com/favicon.png';
 
 export interface DbUserRecord {
   id: number;
@@ -51,12 +47,18 @@ function verifyPassword(password: string, storedHash: string): boolean {
 }
 
 function sanitizeUser(u: InternalUserRecord | DbUserRecord): DbUserRecord {
+  const rawAvatar = (u.avatar_url || '').trim();
+  const normalizedAvatar =
+    !rawAvatar || rawAvatar === 'https://muxai.vercel.app/logo_Hana.png'
+      ? DEFAULT_USER_AVATAR_URL
+      : rawAvatar;
+
   return {
     id: Number(u.id),
     email: u.email,
     username: u.username,
     display_name: u.display_name,
-    avatar_url: u.avatar_url || 'https://ai.mux8.com/favicon.png',
+    avatar_url: normalizedAvatar,
     account_type: u.account_type === 'paid' ? 'paid' : 'free',
     last_payment: u.last_payment ? new Date(u.last_payment).toISOString() : null,
     last_login_time: u.last_login_time
@@ -115,20 +117,107 @@ function getNeonPool(): PoolType | null {
   return neonPool;
 }
 
+const INIT_NEONDB_SQL = `
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  username TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  avatar_url TEXT NOT NULL DEFAULT 'https://ai.mux8.com/favicon.png',
+  account_type TEXT NOT NULL DEFAULT 'free' CHECK (account_type IN ('free', 'paid')),
+  last_payment TIMESTAMPTZ NULL DEFAULT NULL,
+  last_login_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_login_device TEXT NOT NULL DEFAULT 'Web Browser',
+  device_fingerprints TEXT[] NOT NULL DEFAULT '{}',
+  equipped_outfit_id TEXT NOT NULL DEFAULT 'mint-maid-apron',
+  active_theme_id TEXT NOT NULL DEFAULT 'classic-light',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_account_type ON users(account_type);
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL DEFAULT 'Direct Message',
+  model_id TEXT DEFAULT 'smollm2-135m',
+  pinned BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+  content TEXT NOT NULL,
+  timestamp BIGINT NOT NULL,
+  model_used TEXT,
+  tokens_count INTEGER,
+  generation_time_ms NUMERIC,
+  speed_tps NUMERIC,
+  error BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
+
+CREATE TABLE IF NOT EXISTS custom_themes (
+  id TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  is_dark BOOLEAN NOT NULL DEFAULT FALSE,
+  description TEXT DEFAULT 'Custom user theme',
+  colors JSONB NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_custom_themes_user_id ON custom_themes(user_id);
+
+CREATE TABLE IF NOT EXISTS redeem_codes (
+  code TEXT PRIMARY KEY,
+  account_type_grant TEXT NOT NULL DEFAULT 'paid',
+  duration_days INTEGER NOT NULL DEFAULT 30,
+  max_uses INTEGER NOT NULL DEFAULT 1000,
+  used_count INTEGER NOT NULL DEFAULT 0,
+  redeemed_by INTEGER[] NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO redeem_codes (code, account_type_grant, duration_days, max_uses)
+VALUES
+  ('MUXAI-PREMIUM-2026', 'paid', 365, 10000),
+  ('HANA-VIP', 'paid', 365, 10000),
+  ('AISMASH-PRO', 'paid', 365, 10000)
+ON CONFLICT (code) DO NOTHING;
+`;
+
 async function ensureNeonSchema(): Promise<PoolType | null> {
   const pool = getNeonPool();
   if (!pool) return null;
   if (schemaInitialized) return pool;
 
   try {
-    const sqlFilePath = path.join(__dirname, 'init_neondb.sql');
-    const sqlContent = fs.readFileSync(sqlFilePath, 'utf-8');
-    await pool.query(sqlContent);
+    await pool.query(INIT_NEONDB_SQL);
     schemaInitialized = true;
     return pool;
   } catch (err) {
-    console.warn('NeonDB schema auto-init warning (falling back if unreachable):', err);
-    return null;
+    console.warn('NeonDB schema auto-init warning:', err);
+    // Test basic connectivity so if tables already exist in NeonDB we still use the pool
+    try {
+      await pool.query('SELECT 1');
+      schemaInitialized = true;
+      return pool;
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -168,7 +257,7 @@ export async function signUpAccount(params: {
   const cleanEmail = params.email.trim().toLowerCase();
   const passwordHash = hashPassword(params.password);
   const { username, displayName } = deriveDefaultProfileFromEmail(cleanEmail);
-  const defaultAvatar = 'https://ai.mux8.com/favicon.png';
+  const defaultAvatar = DEFAULT_USER_AVATAR_URL;
   const nowIso = new Date().toISOString();
   const deviceLabel = (params.device || 'Web Browser').slice(0, 180);
   const fingerprints = params.fingerprint ? [params.fingerprint] : [];
