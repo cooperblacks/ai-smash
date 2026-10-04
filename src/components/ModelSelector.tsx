@@ -1,10 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDown, HardDrive, Check, Sparkles, ArrowDownCircle, Cloud, Globe, Edit2, Youtube, Download } from 'lucide-react';
-import { ModelSpec, ModelCacheInfo } from '../types';
+import { ChevronDown, HardDrive, Check, Sparkles, ArrowDownCircle, Cloud, Globe, Edit2, Youtube, Download, Key, Eye, EyeOff, ExternalLink } from 'lucide-react';
+import { ModelSpec, ModelCacheInfo, ApiProviderId } from '../types';
 import { AVAILABLE_MODELS } from '../lib/models';
-import { OLLAMA_CONFIG, THEME_COLORS } from '../constants';
+import { OLLAMA_CONFIG, THEME_COLORS, API_PROVIDERS_CONFIG } from '../constants';
 import { pingOllama } from '../lib/ollama';
-import { loadCustomOllamaUrl, saveCustomOllamaUrl } from '../lib/storage';
+import {
+  loadCustomOllamaUrl,
+  saveCustomOllamaUrl,
+  loadStoredApiKey,
+  saveStoredApiKey,
+  loadStoredProviderModel,
+  saveStoredProviderModel,
+} from '../lib/storage';
 
 export interface OllamaServerStatus {
   online: boolean;
@@ -24,6 +31,7 @@ interface ModelSelectorProps {
   disabled?: boolean;
   ollamaStatus?: OllamaStatusMap;
   onUpdateCustomUrl?: (url: string) => void;
+  onNavigateToDocs?: (docsPath: string) => void;
 }
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -33,6 +41,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   disabled = false,
   ollamaStatus,
   onUpdateCustomUrl,
+  onNavigateToDocs,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,6 +55,36 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [customUrl, setCustomUrl] = useState(() => loadCustomOllamaUrl());
   const [customInputUrl, setCustomInputUrl] = useState(() => loadCustomOllamaUrl());
   const [isEditingCustomUrl, setIsEditingCustomUrl] = useState(false);
+
+  // External API Providers State (Saved automatically to browser storage)
+  const [expandedProviderId, setExpandedProviderId] = useState<ApiProviderId | null>(null);
+  const [showKeyMap, setShowKeyMap] = useState<Record<string, boolean>>({});
+
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>(() => {
+    const keys: Record<string, string> = {};
+    (Object.keys(API_PROVIDERS_CONFIG) as ApiProviderId[]).forEach((pid) => {
+      keys[pid] = loadStoredApiKey(pid);
+    });
+    return keys;
+  });
+
+  const [providerModels, setProviderModels] = useState<Record<string, string>>(() => {
+    const models: Record<string, string> = {};
+    (Object.keys(API_PROVIDERS_CONFIG) as ApiProviderId[]).forEach((pid) => {
+      models[pid] = loadStoredProviderModel(pid);
+    });
+    return models;
+  });
+
+  const handleUpdateApiKey = (providerId: ApiProviderId, key: string) => {
+    setApiKeys((prev) => ({ ...prev, [providerId]: key }));
+    saveStoredApiKey(providerId, key);
+  };
+
+  const handleUpdateProviderModel = (providerId: ApiProviderId, modelName: string) => {
+    setProviderModels((prev) => ({ ...prev, [providerId]: modelName }));
+    saveStoredProviderModel(providerId, modelName);
+  };
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -131,7 +170,13 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-full ${THEME_COLORS.tokens.dropdownTrigger} border active:scale-95 text-xs transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs`}
         title="Switch Model"
       >
-        {isOllamaActive ? (
+        {activeModel.family === 'api-provider' && activeModel.logoUrl ? (
+          <img
+            src={activeModel.logoUrl}
+            alt={activeModel.name}
+            className="w-3.5 h-3.5 rounded-full object-cover shrink-0"
+          />
+        ) : isOllamaActive ? (
           <Cloud className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.successText} group-hover:scale-105 transition-transform`} />
         ) : isCurrentDownloaded ? (
           <HardDrive className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.successText} group-hover:scale-105 transition-transform`} />
@@ -140,7 +185,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         )}
 
         <span className="font-medium tracking-tight truncate max-w-[120px] sm:max-w-[160px]">
-          {activeModel.name}
+          {activeModel.family === 'api-provider' && (activeModel.customModel || providerModels[activeModel.providerId || 'openai'])
+            ? `${activeModel.name} (${activeModel.customModel || providerModels[activeModel.providerId || 'openai']})`
+            : activeModel.name}
         </span>
 
         <ChevronDown
@@ -161,7 +208,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           </div>
 
           <div className="py-1 flex flex-col gap-1">
-            {AVAILABLE_MODELS.map((model) => {
+            {AVAILABLE_MODELS.filter((m) => m.family !== 'api-provider').map((model) => {
               const isSelected = model.id === activeModel.id;
               const cache = cacheStatuses[model.id];
               const isDownloaded = cache?.downloaded || false;
@@ -408,6 +455,194 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 </div>
               );
             })}
+
+            {/* External Cloud AI APIs Section (Below Watch Tutorial & Download .ipynb) */}
+            <div className="pt-2.5 mt-2 border-t border-neutral-100 dark:border-neutral-800">
+              <div className="px-3 py-1 flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
+                  <Key className={`w-3.5 h-3.5 ${THEME_COLORS.tokens.accentText}`} />
+                  Connect your API key
+                </span>
+                <span className="text-[10px] text-neutral-400 font-mono">
+                  Saved to Browser
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-1 mt-1">
+                {AVAILABLE_MODELS.filter((m) => m.family === 'api-provider').map((model) => {
+                  const isSelected = model.id === activeModel.id;
+                  const providerId = (model.providerId || 'openai') as ApiProviderId;
+                  const config = API_PROVIDERS_CONFIG[providerId];
+                  const currentKey = apiKeys[providerId] || '';
+                  const currentSubmodel = providerModels[providerId] || config?.defaultModel || '';
+                  const isExpanded = expandedProviderId === providerId;
+                  const showKey = Boolean(showKeyMap[providerId]);
+                  const hasKey = Boolean(currentKey) || providerId === 'gemini';
+
+                  return (
+                    <div
+                      key={model.id}
+                      className={`w-full rounded-xl transition-all border ${
+                        isSelected
+                          ? THEME_COLORS.tokens.dropdownItemActive
+                          : THEME_COLORS.tokens.dropdownItemDefault
+                      }`}
+                    >
+                      <div
+                        className="w-full text-left p-2.5 flex items-start gap-2.5 cursor-pointer"
+                        onClick={() => {
+                          const updatedModel: ModelSpec = {
+                            ...model,
+                            customModel: currentSubmodel,
+                          };
+                          onSelectModel(updatedModel);
+                          setIsOpen(false);
+                        }}
+                      >
+                        {/* Provider Logo */}
+                        <div className="mt-0.5 shrink-0">
+                          <div className="w-7 h-7 rounded-lg overflow-hidden border border-black/10 dark:border-white/10 bg-white flex items-center justify-center shadow-xs">
+                            <img
+                              src={model.logoUrl || config?.logoUrl}
+                              alt={model.name}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Model Details */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-semibold truncate flex items-center gap-1.5 text-neutral-900 dark:text-white">
+                              {model.name}
+                              <span
+                                className={`text-[9px] px-1 py-0.2 rounded font-mono font-medium ${
+                                  hasKey
+                                    ? THEME_COLORS.tokens.successBadge
+                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                                }`}
+                              >
+                                {hasKey ? 'KEY READY' : 'KEY NEEDED'}
+                              </span>
+                            </span>
+                            <span className="text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0">
+                              {currentSubmodel}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between mt-1 text-[11px]">
+                            <p className="text-neutral-500 dark:text-neutral-400 line-clamp-1 font-mono text-[10.5px]">
+                              {model.description || `Default: ${config?.defaultModel || currentSubmodel}`}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedProviderId(isExpanded ? null : providerId);
+                              }}
+                              className={`flex items-center gap-1 text-[11px] font-medium ${THEME_COLORS.tokens.accentText} hover:underline cursor-pointer shrink-0 ml-2`}
+                            >
+                              <Edit2 className="w-3 h-3" />
+                              <span>{isExpanded ? 'Hide' : 'API key'}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Checkmark */}
+                        {isSelected && (
+                          <div className="shrink-0 self-center">
+                            <Check className={`w-4 h-4 ${THEME_COLORS.tokens.accentText}`} />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Expandable API Key & Model Configuration Panel */}
+                      {isExpanded && (
+                        <div
+                          className="px-3 pb-3 pt-1 border-t border-neutral-100 dark:border-neutral-800/80 bg-neutral-50/50 dark:bg-white/[0.01]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="space-y-2 mt-1">
+                            {/* API Key Input */}
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <label className="text-[10px] font-medium text-neutral-600 dark:text-neutral-400">
+                                  {model.name} Key
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setShowKeyMap((prev) => ({
+                                      ...prev,
+                                      [providerId]: !showKey,
+                                    }))
+                                  }
+                                  className="text-[10px] text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 flex items-center gap-1 cursor-pointer"
+                                >
+                                  {showKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  <span>{showKey ? 'Hide' : 'Show'}</span>
+                                </button>
+                              </div>
+                              <div className="relative">
+                                <input
+                                  type={showKey ? 'text' : 'password'}
+                                  value={currentKey}
+                                  onChange={(e) => handleUpdateApiKey(providerId, e.target.value)}
+                                  placeholder={
+                                    providerId === 'gemini'
+                                      ? 'Optional custom Gemini key (or uses server key)'
+                                      : `Paste ${model.name} API key...`
+                                  }
+                                  className="w-full px-2.5 py-1 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Submodel Selector */}
+                            {config?.availableModels && config.availableModels.length > 0 && (
+                              <div>
+                                <label className="block text-[10px] font-medium text-neutral-600 dark:text-neutral-400 mb-1">
+                                  Selected Model
+                                </label>
+                                <select
+                                  value={currentSubmodel}
+                                  onChange={(e) => handleUpdateProviderModel(providerId, e.target.value)}
+                                  className="w-full px-2 py-1 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white focus:outline-none focus:border-[var(--theme-accent)] cursor-pointer"
+                                >
+                                  {config.availableModels.map((mName) => (
+                                    <option key={mName} value={mName}>
+                                      {mName}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+
+                            {/* Footer links */}
+                            <div className="flex items-center justify-between pt-1">
+                              <span className="text-[10px] text-neutral-400">
+                                Auto-saved to browser storage
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsOpen(false);
+                                  onNavigateToDocs?.(config?.docsPath || `/docs/api/${providerId}`);
+                                }}
+                                className="text-[11px] text-[var(--theme-accent)] hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                <span>API Docs</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
       )}

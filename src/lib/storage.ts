@@ -1,6 +1,6 @@
-import { Conversation, UserSettings, ThemeDefinition, AccountUser } from '../types';
+import { Conversation, UserSettings, ThemeDefinition, AccountUser, IntegrationConfig, ApiProviderId } from '../types';
 import { AVAILABLE_MODELS } from './models';
-import { APP_INFO, OLLAMA_CONFIG, DEFAULT_USER_SETTINGS, DEFAULT_THEME_ID, DEFAULT_OUTFIT_ID } from '../constants';
+import { APP_INFO, OLLAMA_CONFIG, DEFAULT_USER_SETTINGS, DEFAULT_THEME_ID, DEFAULT_OUTFIT_ID, API_PROVIDERS_CONFIG } from '../constants';
 
 export { DEFAULT_USER_SETTINGS };
 
@@ -14,6 +14,9 @@ const BLOCKED_UNTIL_KEY = APP_INFO.storageKeys.blockedUntil;
 const EQUIPPED_OUTFIT_KEY = APP_INFO.storageKeys.equippedOutfit;
 const ACCOUNT_SESSION_KEY = APP_INFO.storageKeys.accountSession;
 const DEVICE_FINGERPRINT_KEY = APP_INFO.storageKeys.deviceFingerprint;
+const INTEGRATIONS_KEY = 'aismash_active_integrations_v1';
+const API_KEYS_PREFIX = 'aismash_api_key_';
+const PROVIDER_MODEL_PREFIX = 'aismash_provider_model_';
 
 // ----------------------------------------------------
 // Account Session, Device Fingerprint & Premium Check
@@ -492,12 +495,13 @@ export async function clearAllTransformersCaches(): Promise<boolean> {
         EQUIPPED_OUTFIT_KEY,
         ACCOUNT_SESSION_KEY,
         DEVICE_FINGERPRINT_KEY,
+        INTEGRATIONS_KEY,
       ]);
 
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && !preservedKeySet.has(k)) {
+        if (k && !preservedKeySet.has(k) && !k.startsWith(API_KEYS_PREFIX) && !k.startsWith(PROVIDER_MODEL_PREFIX)) {
           keysToRemove.push(k);
         }
       }
@@ -526,4 +530,97 @@ export async function clearAllTransformersCaches(): Promise<boolean> {
   }
 
   return success;
+}
+
+// ----------------------------------------------------
+// Integrations Storage Helpers (Discord, Slack, n8n, Zapier)
+// ----------------------------------------------------
+export function loadStoredIntegrations(): IntegrationConfig[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(INTEGRATIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredIntegrations(integrations: IntegrationConfig[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(INTEGRATIONS_KEY, JSON.stringify(integrations));
+  } catch (err) {
+    console.error('Failed to save integrations:', err);
+  }
+}
+
+export function addOrUpdateIntegration(integration: IntegrationConfig): IntegrationConfig[] {
+  const current = loadStoredIntegrations();
+  const existingIdx = current.findIndex((item) => item.id === integration.id || item.platform === integration.platform);
+  let updated: IntegrationConfig[];
+  if (existingIdx >= 0) {
+    updated = [...current];
+    updated[existingIdx] = { ...updated[existingIdx], ...integration };
+  } else {
+    updated = [...current, integration];
+  }
+  saveStoredIntegrations(updated);
+  return updated;
+}
+
+export function removeStoredIntegration(id: string): IntegrationConfig[] {
+  const current = loadStoredIntegrations();
+  const updated = current.filter((item) => item.id !== id && item.platform !== id);
+  saveStoredIntegrations(updated);
+  return updated;
+}
+
+// ----------------------------------------------------
+// External API Keys Storage Helpers (OpenAI, Gemini, Anthropic, etc.)
+// ----------------------------------------------------
+export function loadStoredApiKey(providerId: ApiProviderId): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return localStorage.getItem(`${API_KEYS_PREFIX}${providerId}`) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveStoredApiKey(providerId: ApiProviderId, key: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const trimmed = key.trim();
+    if (trimmed) {
+      localStorage.setItem(`${API_KEYS_PREFIX}${providerId}`, trimmed);
+    } else {
+      localStorage.removeItem(`${API_KEYS_PREFIX}${providerId}`);
+    }
+  } catch (err) {
+    console.error(`Failed to save API key for ${providerId}:`, err);
+  }
+}
+
+export function loadStoredProviderModel(providerId: ApiProviderId): string {
+  if (typeof window === 'undefined') return API_PROVIDERS_CONFIG[providerId]?.defaultModel || '';
+  try {
+    const stored = localStorage.getItem(`${PROVIDER_MODEL_PREFIX}${providerId}`);
+    return stored || API_PROVIDERS_CONFIG[providerId]?.defaultModel || '';
+  } catch {
+    return API_PROVIDERS_CONFIG[providerId]?.defaultModel || '';
+  }
+}
+
+export function saveStoredProviderModel(providerId: ApiProviderId, modelName: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const trimmed = modelName.trim();
+    if (trimmed) {
+      localStorage.setItem(`${PROVIDER_MODEL_PREFIX}${providerId}`, trimmed);
+    }
+  } catch (err) {
+    console.error(`Failed to save selected model for ${providerId}:`, err);
+  }
 }

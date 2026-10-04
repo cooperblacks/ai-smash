@@ -655,19 +655,35 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
               </div>
             )}
 
-            {/* + Make Your Own Button */}
+            {/* Make Your Own Button */}
             <button
               type="button"
-              onClick={onOpenCreateModal}
-              className="w-full py-2.5 px-3.5 rounded-2xl border-2 border-dashed flex items-center justify-center gap-2 text-xs font-semibold transition-all duration-150 hover:scale-[1.01] active:scale-98"
+              onClick={() => {
+                if (!isPremiumUser) {
+                  onRequirePremium?.();
+                  return;
+                }
+                onOpenCreateModal();
+              }}
+              className="w-full py-2.5 px-3.5 rounded-2xl border-2 border-dashed flex items-center justify-between gap-2 text-xs font-semibold transition-all duration-150 hover:scale-[1.01] active:scale-98 cursor-pointer relative"
               style={{
                 borderColor: 'var(--theme-accent)',
                 backgroundColor: 'var(--theme-accent-soft)',
                 color: 'var(--theme-accent)',
               }}
             >
-              <Plus className="w-4 h-4 stroke-[2.5]" />
-              <span>+ Make Your Own</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <Plus className="w-4 h-4 stroke-[2.5] shrink-0" />
+                <span>Make Your Own</span>
+              </div>
+              {!isPremiumUser && (
+                <div className="px-2 py-0.5 rounded-full bg-neutral-950/85 border border-amber-400/50 text-amber-300 shadow-xs flex items-center gap-1 shrink-0">
+                  <Lock className="w-2.5 h-2.5 text-amber-400" />
+                  <span className="text-[9px] font-mono font-bold tracking-wider uppercase leading-none">
+                    PREMIUM ONLY
+                  </span>
+                </div>
+              )}
             </button>
           </section>
 

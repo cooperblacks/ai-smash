@@ -522,6 +522,226 @@ app.post('/api/chat', async (req: Request, res: Response) => {
   }
 });
 
+// Cloud streaming endpoint for external AI Model APIs
+// (OpenAI, Gemini, Anthropic, xAI, Groq, Z.ai, DeepSeek, Qwen, HuggingFace)
+app.post('/api/chat/provider', async (req: Request, res: Response) => {
+  try {
+    const { provider, apiKey, model, messages, systemPrompt, maxTokens } = req.body || {};
+    const effectivePrompt = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const outputTokens = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
+
+    const effectiveKey = (apiKey || '').trim() || (provider === 'gemini' ? process.env.GEMINI_API_KEY || '' : '');
+    if (!effectiveKey) {
+      return res.status(400).json({
+        error: `API key is required for ${provider || 'this provider'}. Please configure your API key in the Model Selector.`,
+      });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // 1. Google Gemini via @google/genai SDK
+    if (provider === 'gemini') {
+      const ai = new GoogleGenAI({ apiKey: effectiveKey });
+      const formattedContents = (messages || [])
+        .filter((m: { role: string }) => m.role !== 'system')
+        .map((msg: { role: string; content: string }) => ({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.content }],
+        }));
+
+      const targetModel = model || 'gemini-2.5-flash';
+      const responseStream = await ai.models.generateContentStream({
+        model: targetModel,
+        contents: formattedContents,
+        config: {
+          systemInstruction: effectivePrompt,
+          temperature: 0.85,
+          maxOutputTokens: outputTokens,
+        },
+      });
+
+      for await (const chunk of responseStream) {
+        if (chunk.text) {
+          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+        }
+      }
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      return res.end();
+    }
+
+    // 2. Anthropic Claude via native messages SSE API
+    if (provider === 'anthropic') {
+      const targetModel = model || 'claude-3-7-sonnet-20250219';
+      const cleanedMessages = (messages || [])
+        .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
+        .map((m: { role: string; content: string }) => ({
+          role: m.role,
+          content: m.content,
+        }));
+
+      const anthropicResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': effectiveKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({
+          model: targetModel,
+          max_tokens: outputTokens,
+          system: effectivePrompt,
+          messages: cleanedMessages,
+          stream: true,
+          temperature: 0.85,
+        }),
+      });
+
+      if (!anthropicResp.ok || !anthropicResp.body) {
+        const errText = await anthropicResp.text();
+        res.write(`data: ${JSON.stringify({ error: errText || `Anthropic API error (${anthropicResp.status})` })}\n\n`);
+        return res.end();
+      }
+
+      const reader = anthropicResp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const dataStr = trimmed.slice(6);
+            if (dataStr === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                res.write(`data: ${JSON.stringify({ text: parsed.delta.text })}\n\n`);
+              } else if (parsed.type === 'message_stop') {
+                res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+              }
+            } catch {
+              // ignore json parse error
+            }
+          }
+        }
+      }
+
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      return res.end();
+    }
+
+    // 3. OpenAI-Compatible Providers (OpenAI, xAI, Groq, DeepSeek, Z.ai, Qwen, HuggingFace)
+    const providerEndpoints: Record<string, string> = {
+      openai: 'https://api.openai.com/v1/chat/completions',
+      xai: 'https://api.x.ai/v1/chat/completions',
+      groq: 'https://api.groq.com/openai/v1/chat/completions',
+      deepseek: 'https://api.deepseek.com/chat/completions',
+      zai: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+      qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions',
+      huggingface: 'https://router.huggingface.co/hf-inference/v1/chat/completions',
+    };
+
+    const targetUrl = providerEndpoints[provider] || providerEndpoints.openai;
+    const defaultModels: Record<string, string> = {
+      openai: 'gpt-4o',
+      xai: 'grok-2-latest',
+      groq: 'llama-3.3-70b-versatile',
+      deepseek: 'deepseek-chat',
+      zai: 'glm-4-plus',
+      qwen: 'qwen-max',
+      huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
+    };
+
+    const targetModel = model || defaultModels[provider] || 'gpt-4o';
+    const cleanedHistory = (messages || [])
+      .filter((m: { role: string }) => m.role !== 'system')
+      .map((m: { role: string; content: string }) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+    const formattedMessages = [
+      { role: 'system', content: effectivePrompt },
+      ...cleanedHistory,
+    ];
+
+    const apiResp = await fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${effectiveKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({
+        model: targetModel,
+        messages: formattedMessages,
+        max_tokens: outputTokens,
+        temperature: 0.85,
+        stream: true,
+      }),
+    });
+
+    if (!apiResp.ok || !apiResp.body) {
+      const errText = await apiResp.text();
+      res.write(`data: ${JSON.stringify({ error: errText || `${provider} API error (${apiResp.status})` })}\n\n`);
+      return res.end();
+    }
+
+    const reader = apiResp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data: ')) {
+          const dataStr = trimmed.slice(6);
+          if (dataStr === '[DONE]') {
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(dataStr);
+            const piece = parsed.choices?.[0]?.delta?.content || '';
+            if (piece) {
+              res.write(`data: ${JSON.stringify({ text: piece })}\n\n`);
+            }
+          } catch {
+            // Ignore boundary chunk errors
+          }
+        }
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Error in external API streaming proxy';
+    console.error('Provider proxy error:', errorMsg);
+    if (!res.headersSent) {
+      res.status(500).json({ error: errorMsg });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
+      res.end();
+    }
+  }
+});
+
 // =====================================================================
 // NeonDB Account Authentication, Profile, Redeem & Sync Routes
 // =====================================================================

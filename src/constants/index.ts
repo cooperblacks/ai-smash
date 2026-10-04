@@ -13,7 +13,7 @@
  * - UI timings, timeouts, badge themes, and default settings
  */
 
-import type { UserSettings, ThemeDefinition, WardrobeOutfit } from '../types';
+import type { UserSettings, ThemeDefinition, WardrobeOutfit, ApiProviderConfig, ApiProviderId, IntegrationPlatform } from '../types';
 
 // =====================================================================
 // TYPOGRAPHY CONFIGURATION (Google Fonts)
@@ -160,6 +160,226 @@ export const PRESET_THEMES: ThemeDefinition[] = [
       assistantBubble: '#ffffff',
       assistantBubbleText: '#062920',
       headerBg: 'rgba(240, 253, 249, 0.88)',
+    },
+  },
+  {
+    id: 'lilac-dream',
+    name: 'Lilac Dream',
+    isDark: false,
+    description: 'Soft lavender mist with soothing purple accents.',
+    colors: {
+      bg: '#faf5ff',
+      surface: '#ffffff',
+      card: '#f3e8ff',
+      border: 'rgba(168, 85, 247, 0.18)',
+      text: '#2e1065',
+      textMuted: '#7e22ce',
+      accent: '#a855f7',
+      accentHover: '#9333ea',
+      accentSoft: 'rgba(168, 85, 247, 0.15)',
+      userBubble: '#9333ea',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#2e1065',
+      headerBg: 'rgba(250, 245, 255, 0.9)',
+    },
+  },
+  {
+    id: 'ocean-breeze',
+    name: 'Ocean Breeze',
+    isDark: false,
+    description: 'Fresh sea spray, crystal cyan, and airy light.',
+    colors: {
+      bg: '#ecfeff',
+      surface: '#ffffff',
+      card: '#cffafe',
+      border: 'rgba(6, 182, 212, 0.18)',
+      text: '#083344',
+      textMuted: '#0e7490',
+      accent: '#06b6d4',
+      accentHover: '#0891b2',
+      accentSoft: 'rgba(6, 182, 212, 0.15)',
+      userBubble: '#0891b2',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#083344',
+      headerBg: 'rgba(236, 254, 255, 0.9)',
+    },
+  },
+  {
+    id: 'cyber-velvet',
+    name: 'Cyber Velvet',
+    isDark: true,
+    description: 'Deep violet neon nightfall with vibrant luminescence.',
+    colors: {
+      bg: '#0b0b14',
+      surface: '#121222',
+      card: '#1a1a32',
+      border: 'rgba(192, 132, 252, 0.22)',
+      text: '#f5f3ff',
+      textMuted: '#c4b5fd',
+      accent: '#c084fc',
+      accentHover: '#d8b4fe',
+      accentSoft: 'rgba(192, 132, 252, 0.2)',
+      userBubble: '#c084fc',
+      userBubbleText: '#0b0b14',
+      assistantBubble: '#1a1a32',
+      assistantBubbleText: '#f5f3ff',
+      headerBg: 'rgba(18, 18, 34, 0.9)',
+    },
+  },
+  {
+    id: 'matcha-blossom',
+    name: 'Matcha Blossom',
+    isDark: false,
+    description: 'Serene Japanese green tea garden with fresh lime herbal notes.',
+    colors: {
+      bg: '#f7fee7',
+      surface: '#ffffff',
+      card: '#ecfccb',
+      border: 'rgba(132, 204, 22, 0.2)',
+      text: '#1a2e05',
+      textMuted: '#4d7c0f',
+      accent: '#84cc16',
+      accentHover: '#65a30d',
+      accentSoft: 'rgba(132, 204, 22, 0.16)',
+      userBubble: '#4d7c0f',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#1a2e05',
+      headerBg: 'rgba(247, 254, 231, 0.9)',
+    },
+  },
+  {
+    id: 'sunset-radiance',
+    name: 'Sunset Radiance',
+    isDark: false,
+    description: 'Warm coral, amber dusk, and golden horizon twilight.',
+    colors: {
+      bg: '#fff7ed',
+      surface: '#ffffff',
+      card: '#ffedd5',
+      border: 'rgba(234, 88, 12, 0.18)',
+      text: '#431407',
+      textMuted: '#9a3412',
+      accent: '#ea580c',
+      accentHover: '#c2410c',
+      accentSoft: 'rgba(234, 88, 12, 0.15)',
+      userBubble: '#ea580c',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#431407',
+      headerBg: 'rgba(255, 247, 237, 0.9)',
+    },
+  },
+  {
+    id: 'nordic-ice',
+    name: 'Nordic Ice',
+    isDark: false,
+    description: 'Chilled glacial blue, crisp polar snow, and airy daylight.',
+    colors: {
+      bg: '#f0f9ff',
+      surface: '#ffffff',
+      card: '#e0f2fe',
+      border: 'rgba(2, 132, 199, 0.18)',
+      text: '#082f49',
+      textMuted: '#0369a1',
+      accent: '#0284c7',
+      accentHover: '#0369a1',
+      accentSoft: 'rgba(2, 132, 199, 0.15)',
+      userBubble: '#0284c7',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#082f49',
+      headerBg: 'rgba(240, 249, 255, 0.9)',
+    },
+  },
+  {
+    id: 'midnight-sakura',
+    name: 'Midnight Sakura',
+    isDark: true,
+    description: 'Deep midnight plum nightfall with delicate cherry blossom petals.',
+    colors: {
+      bg: '#130e1a',
+      surface: '#1c1527',
+      card: '#271c36',
+      border: 'rgba(244, 114, 182, 0.22)',
+      text: '#fdf2f8',
+      textMuted: '#f472b6',
+      accent: '#f472b6',
+      accentHover: '#f687b3',
+      accentSoft: 'rgba(244, 114, 182, 0.2)',
+      userBubble: '#db2777',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#271c36',
+      assistantBubbleText: '#fdf2f8',
+      headerBg: 'rgba(28, 21, 39, 0.92)',
+    },
+  },
+  {
+    id: 'emerald-grove',
+    name: 'Emerald Grove',
+    isDark: false,
+    description: 'Lush botanical moss, deep forest canopy, and tranquil greens.',
+    colors: {
+      bg: '#f0fdf4',
+      surface: '#ffffff',
+      card: '#dcfce7',
+      border: 'rgba(22, 163, 74, 0.18)',
+      text: '#052e16',
+      textMuted: '#15803d',
+      accent: '#16a34a',
+      accentHover: '#15803d',
+      accentSoft: 'rgba(22, 163, 74, 0.15)',
+      userBubble: '#16a34a',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#052e16',
+      headerBg: 'rgba(240, 253, 244, 0.9)',
+    },
+  },
+  {
+    id: 'desert-honey',
+    name: 'Desert Honey',
+    isDark: false,
+    description: 'Sun-warmed sand dunes, caramelized amber, and raw wild honey.',
+    colors: {
+      bg: '#fffbeb',
+      surface: '#ffffff',
+      card: '#fef3c7',
+      border: 'rgba(217, 119, 6, 0.2)',
+      text: '#451a03',
+      textMuted: '#b45309',
+      accent: '#d97706',
+      accentHover: '#b45309',
+      accentSoft: 'rgba(217, 119, 6, 0.16)',
+      userBubble: '#d97706',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#451a03',
+      headerBg: 'rgba(255, 251, 235, 0.9)',
+    },
+  },
+  {
+    id: 'neon-synthwave',
+    name: 'Neon Synthwave',
+    isDark: true,
+    description: 'Electric magenta and cyan retrofuture nightscape.',
+    colors: {
+      bg: '#0b0d19',
+      surface: '#111528',
+      card: '#181d38',
+      border: 'rgba(236, 72, 153, 0.25)',
+      text: '#fdf4ff',
+      textMuted: '#f472b6',
+      accent: '#ec4899',
+      accentHover: '#f472b6',
+      accentSoft: 'rgba(236, 72, 153, 0.2)',
+      userBubble: '#ec4899',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#181d38',
+      assistantBubbleText: '#fdf4ff',
+      headerBg: 'rgba(17, 21, 40, 0.92)',
     },
   },
 ];
@@ -370,6 +590,21 @@ export const SPECIAL_THANKS_LINKS = [
     name: 'VRM Mixamo Retarget',
     url: 'https://github.com/saori-eth/vrm-mixamo-retargeter',
     description: 'Middleware for 3D animation-model compatibility',
+  },
+  {
+    name: 'Web Speech API',
+    url: 'https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API',
+    description: 'Voice synthesis engine',
+  },
+  {
+    name: 'GitHub Desktop',
+    url: 'https://desktop.github.com/download/',
+    description: 'Visually convenient CI/CD tool',
+  },
+  {
+    name: 'NeonDB',
+    url: 'https://neon.com/',
+    description: "PostgreSQL service that doesn't power down on their free tier",
   },
 ];
 
@@ -727,4 +962,303 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   autoScroll: true,
   bannerCycling: true,
   maxTokens: 512,
+};
+
+// =====================================================================
+// 13. INTEGRATIONS LIBRARY
+// =====================================================================
+export interface IntegrationLibraryItem {
+  platform: IntegrationPlatform;
+  name: string;
+  tagline: string;
+  description: string;
+  logoUrl: string;
+  category: 'Chat & Voice Bots' | 'Workflow Automation';
+  docsPath: string;
+  fields: Array<{
+    key: string;
+    label: string;
+    placeholder: string;
+    type: 'text' | 'password' | 'url' | 'boolean';
+    required: boolean;
+    helpText: string;
+  }>;
+  features: string[];
+  slashCommands?: Array<{
+    command: string;
+    description: string;
+  }>;
+}
+
+export const INTEGRATION_LIBRARY: IntegrationLibraryItem[] = [
+  {
+    platform: 'discord',
+    name: 'Discord Bot & Voice',
+    tagline: 'Bot mentions, DMs & Voice Channel TTS',
+    description:
+      'Connects your Discord bot. Messages that mention the bot or DMs automatically route to the selected LLM, returning responses. When in VC, outputs voice via Discord audio APIs.',
+    logoUrl: 'https://muxai.vercel.app/logos/discord.jpg',
+    category: 'Chat & Voice Bots',
+    docsPath: '/docs/integration/discord',
+    fields: [
+      {
+        key: 'botToken',
+        label: 'Bot Token',
+        placeholder: 'MTI3ODk0...',
+        type: 'password',
+        required: true,
+        helpText: 'Discord Bot Token from Discord Developer Portal with Bot & Message Content intents.',
+      },
+      {
+        key: 'guildId',
+        label: 'Server (Guild) ID',
+        placeholder: '123456789012345678',
+        type: 'text',
+        required: false,
+        helpText: 'Optional Discord Server ID to scope slash commands and voice interactions.',
+      },
+      {
+        key: 'channelId',
+        label: 'Active Channel ID',
+        placeholder: '987654321098765432',
+        type: 'text',
+        required: false,
+        helpText: 'Default text or voice channel ID to listen and output to.',
+      },
+      {
+        key: 'enableVoice',
+        label: 'Discord VC Voice Output',
+        placeholder: '',
+        type: 'boolean',
+        required: false,
+        helpText: 'Stream audio TTS directly to voice channel when joined via /joinvc.',
+      },
+    ],
+    slashCommands: [
+      { command: '/msg <prompt>', description: 'Sends a private hidden message that is not broadcast in the public text channel.' },
+      { command: '/joinvc', description: 'Bot connects to the voice channel that the sending user is currently in.' },
+      { command: '/exitvc', description: 'Bot disconnects from the current voice channel.' },
+    ],
+    features: [
+      'Auto-replies to @mentions and direct messages via selected LLM',
+      'Voice Channel audio synthesis and speech output',
+      'Slash command /msg for private hidden interactions',
+      'Slash commands /joinvc and /exitvc for live voice channel presence',
+    ],
+  },
+  {
+    platform: 'slack',
+    name: 'Slack Workspace',
+    tagline: 'Team mentions, direct messages & thread context',
+    description:
+      'Integrate your Slack workspace bot. Listens for app mentions or direct messages, queries the active LLM pipeline, and posts context-aware replies directly in thread.',
+    logoUrl: 'https://muxai.vercel.app/logos/slack.jpg',
+    category: 'Chat & Voice Bots',
+    docsPath: '/docs/integration/slack',
+    fields: [
+      {
+        key: 'botToken',
+        label: 'Bot User OAuth Token',
+        placeholder: 'xoxb-...',
+        type: 'password',
+        required: true,
+        helpText: 'Slack Bot User OAuth Token with app_mentions:read and chat:write scopes.',
+      },
+      {
+        key: 'webhookUrl',
+        label: 'Incoming Webhook URL',
+        placeholder: 'https://hooks.slack.com/services/...',
+        type: 'url',
+        required: false,
+        helpText: 'Optional incoming webhook URL for broadcasting system notifications.',
+      },
+      {
+        key: 'channelId',
+        label: 'Default Channel ID',
+        placeholder: 'C0123456789',
+        type: 'text',
+        required: false,
+        helpText: 'Default channel ID for announcements or team sync.',
+      },
+    ],
+    features: [
+      'Responds to @bot mentions and DMs across channels',
+      'Maintains conversational thread history',
+      'Custom webhook triggers and rich block formatting',
+    ],
+  },
+  {
+    platform: 'n8n',
+    name: 'n8n Automation',
+    tagline: 'Self-hosted and cloud workflow orchestration',
+    description:
+      'Connects your AI Smash session with n8n workflows. Triggers automated node pipelines on user input and feeds back structured execution outputs into the character persona.',
+    logoUrl: 'https://muxai.vercel.app/logos/n8n.jpg',
+    category: 'Workflow Automation',
+    docsPath: '/docs/integration/n8n',
+    fields: [
+      {
+        key: 'webhookUrl',
+        label: 'n8n Webhook URL',
+        placeholder: 'https://n8n.yourdomain.com/webhook/...',
+        type: 'url',
+        required: true,
+        helpText: 'Webhook URL created in your n8n workflow.',
+      },
+      {
+        key: 'apiKey',
+        label: 'API Key (Optional)',
+        placeholder: 'n8n_api_key_...',
+        type: 'password',
+        required: false,
+        helpText: 'Optional n8n Header Authentication key if your webhook requires auth.',
+      },
+    ],
+    features: [
+      'Two-way webhook sync between LLM chats and n8n nodes',
+      'Event triggers for databases, email, and CRM actions',
+      'Flexible JSON payload serialization',
+    ],
+  },
+  {
+    platform: 'zapier',
+    name: 'Zapier App Connector',
+    tagline: 'Connect 5,000+ web apps and automated Zaps',
+    description:
+      'Trigger Zapier Catch Hook workflows directly from chat responses. Automate task creation, spreadsheets, notifications, and webhooks effortlessly.',
+    logoUrl: 'https://muxai.vercel.app/logos/zapier.jpg',
+    category: 'Workflow Automation',
+    docsPath: '/docs/integration/zapier',
+    fields: [
+      {
+        key: 'webhookUrl',
+        label: 'Zapier Catch Hook URL',
+        placeholder: 'https://hooks.zapier.com/hooks/catch/...',
+        type: 'url',
+        required: true,
+        helpText: 'Your Zapier Catch Hook URL generated in the Zap editor.',
+      },
+      {
+        key: 'name',
+        label: 'Zap Label / Workflow Name',
+        placeholder: 'My AI Smash Zap',
+        type: 'text',
+        required: false,
+        helpText: 'Friendly name for this Zapier integration hook.',
+      },
+    ],
+    features: [
+      'Trigger Zapier Zaps instantly on chat messages',
+      'Connect with Google Sheets, Notion, Gmail, Slack, and Airtable',
+      'Automatic JSON payload formatting with user & assistant turn data',
+    ],
+  },
+];
+
+// =====================================================================
+// 14. EXTERNAL AI MODEL API PROVIDERS
+// =====================================================================
+export const API_PROVIDERS_CONFIG: Record<ApiProviderId, ApiProviderConfig> = {
+  openai: {
+    id: 'openai',
+    name: 'OpenAI API',
+    shortName: 'OpenAI',
+    tagline: 'GPT-4o, GPT-4o-mini & o3-mini',
+    logoUrl: 'https://muxai.vercel.app/logos/openai.jpg',
+    defaultModel: 'gpt-4o',
+    availableModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'gpt-4-turbo'],
+    docsPath: '/docs/api/openai',
+  },
+  gemini: {
+    id: 'gemini',
+    name: 'Gemini API',
+    shortName: 'Gemini',
+    tagline: 'Google Gemini 2.5 Flash & 2.5 Pro',
+    logoUrl: 'https://muxai.vercel.app/logos/gemini.jpg',
+    defaultModel: 'gemini-2.5-flash',
+    availableModels: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3.8-flash', 'gemini-2.0-flash'],
+    docsPath: '/docs/api/gemini',
+  },
+  anthropic: {
+    id: 'anthropic',
+    name: 'Anthropic API',
+    shortName: 'Claude',
+    tagline: 'Claude 3.7 Sonnet & 3.5 Haiku',
+    logoUrl: 'https://muxai.vercel.app/logos/claude.jpg',
+    defaultModel: 'claude-3-7-sonnet-20250219',
+    availableModels: [
+      'claude-3-7-sonnet-20250219',
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-haiku-20241022',
+    ],
+    docsPath: '/docs/api/anthropic',
+  },
+  xai: {
+    id: 'xai',
+    name: 'xAI API',
+    shortName: 'Grok',
+    tagline: 'Grok 2 & Grok Beta',
+    logoUrl: 'https://muxai.vercel.app/logos/grok.jpg',
+    defaultModel: 'grok-2-latest',
+    availableModels: ['grok-2-latest', 'grok-2', 'grok-beta'],
+    docsPath: '/docs/api/xai',
+  },
+  groq: {
+    id: 'groq',
+    name: 'Groq API',
+    shortName: 'Groq LPU',
+    tagline: 'Ultra-fast Llama 3.3 70B & 3.1 8B',
+    logoUrl: 'https://muxai.vercel.app/logos/groq.jpg',
+    defaultModel: 'llama-3.3-70b-versatile',
+    availableModels: [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'mixtral-8x7b-32768',
+    ],
+    docsPath: '/docs/api/groq',
+  },
+  zai: {
+    id: 'zai',
+    name: 'Z.ai API',
+    shortName: 'Z.ai GLM',
+    tagline: 'GLM-4 Plus & GLM-4 Flash',
+    logoUrl: 'https://muxai.vercel.app/logos/zai.jpg',
+    defaultModel: 'glm-4-plus',
+    availableModels: ['glm-4-plus', 'glm-4-flash', 'glm-4-air'],
+    docsPath: '/docs/api/zai',
+  },
+  deepseek: {
+    id: 'deepseek',
+    name: 'DeepSeek API',
+    shortName: 'DeepSeek',
+    tagline: 'DeepSeek-V3 & DeepSeek-R1',
+    logoUrl: 'https://muxai.vercel.app/logos/deepseek.jpg',
+    defaultModel: 'deepseek-chat',
+    availableModels: ['deepseek-chat', 'deepseek-reasoner'],
+    docsPath: '/docs/api/deepseek',
+  },
+  qwen: {
+    id: 'qwen',
+    name: 'Qwen API',
+    shortName: 'Qwen',
+    tagline: 'Alibaba Cloud Qwen-Max & Qwen-Turbo',
+    logoUrl: 'https://muxai.vercel.app/logos/qwen.jpg',
+    defaultModel: 'qwen-max',
+    availableModels: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
+    docsPath: '/docs/api/qwen',
+  },
+  huggingface: {
+    id: 'huggingface',
+    name: 'HuggingFace API',
+    shortName: 'HuggingFace',
+    tagline: 'Serverless Router & Inference endpoints',
+    logoUrl: 'https://muxai.vercel.app/logos/huggingface.jpg',
+    defaultModel: 'meta-llama/Llama-3.3-70B-Instruct',
+    availableModels: [
+      'meta-llama/Llama-3.3-70B-Instruct',
+      'Qwen/Qwen2.5-72B-Instruct',
+      'deepseek-ai/DeepSeek-R1-Distill-Qwen-32B',
+    ],
+    docsPath: '/docs/api/huggingface',
+  },
 };

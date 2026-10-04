@@ -3,7 +3,7 @@ import { ModelSpec, DownloadProgress, HardwareDevice, Message } from '../types';
 import { TOKEN_CONFIG, OLLAMA_CONFIG } from '../constants';
 import { getPersonaPrompt, cleanModelResponse } from './prompts';
 import { streamOllama } from './ollama';
-import { loadCustomOllamaUrl } from './storage';
+import { loadCustomOllamaUrl, loadStoredApiKey, loadStoredProviderModel } from './storage';
 
 // Configure Transformers.js for browser environment
 if (typeof window !== 'undefined') {
@@ -53,7 +53,7 @@ export async function loadModelPipeline(
   onProgress?: (prog: DownloadProgress) => void
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any> {
-  if (model.family === 'cloud' || model.family === 'ollama') {
+  if (model.family === 'cloud' || model.family === 'ollama' || model.family === 'api-provider') {
     return { cloud: true };
   }
 
@@ -276,6 +276,96 @@ export async function streamPersonaResponse({
             }
           } catch {
             // Ignore parse errors on SSE boundary
+          }
+        }
+      }
+    }
+
+    const cleanedFinal = cleanModelResponse(accumulatedText);
+    return cleanedFinal;
+  }
+
+  // If External AI Model API Provider (OpenAI, Gemini, Anthropic, xAI, Groq, Z.ai, DeepSeek, Qwen, HuggingFace)
+  if (model.family === 'api-provider') {
+    const providerId = model.providerId || 'openai';
+    const apiKey = loadStoredApiKey(providerId);
+    const configuredSubmodel = loadStoredProviderModel(providerId) || model.customModel || '';
+
+    if (!apiKey && providerId !== 'gemini') {
+      throw new Error(
+        `API Key required for ${model.name}. Please enter your ${model.name} API key in the Model Selector dropdown.`
+      );
+    }
+
+    const systemPrompt = getPersonaPrompt(false);
+    const messagesPayload = [
+      ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user', content: userMessage },
+    ];
+
+    const response = await fetch('/api/chat/provider', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: providerId,
+        apiKey,
+        model: configuredSubmodel,
+        messages: messagesPayload,
+        systemPrompt,
+        maxTokens,
+      }),
+      signal: abortController.signal,
+    });
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => ({}));
+      throw new Error(errJson.error || `${model.name} request failed (${response.status})`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('Response stream not readable');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.error) {
+              throw new Error(data.error);
+            }
+            if (data.text) {
+              if (firstTokenTime === null) {
+                firstTokenTime = performance.now();
+              }
+              tokenCount++;
+              accumulatedText += data.text;
+              onToken(data.text, cleanModelResponse(accumulatedText));
+
+              const now = performance.now();
+              const elapsedSec = (now - startTime) / 1000;
+              const tps = elapsedSec > 0 ? Math.round((tokenCount / elapsedSec) * 10) / 10 : 0;
+              onTelemetry?.({
+                ttftMs: Math.round(firstTokenTime - startTime),
+                tokensPerSec: tps,
+                totalMs: Math.round(now - startTime),
+                tokenCount,
+                device: 'api-provider',
+              });
+            }
+          } catch (jsonErr) {
+            if (jsonErr instanceof Error && jsonErr.message.includes('API')) {
+              throw jsonErr;
+            }
           }
         }
       }

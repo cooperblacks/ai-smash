@@ -9,6 +9,8 @@ import {
   UserSettings,
   ThemeDefinition,
   AccountUser,
+  AttachedFile,
+  IntegrationConfig,
 } from './types';
 import { DEFAULT_MODEL_ID, getModelById } from './lib/models';
 import {
@@ -35,6 +37,10 @@ import {
   getOrCreateDeviceFingerprint,
   getBrowserDeviceLabel,
   isUserPremium,
+  loadStoredIntegrations,
+  saveStoredIntegrations,
+  addOrUpdateIntegration,
+  removeStoredIntegration,
 } from './lib/storage';
 import {
   streamPersonaResponse,
@@ -73,6 +79,10 @@ import { VRMCanvas } from './components/VRMCanvas';
 import { VRMSubtitles } from './components/VRMSubtitles';
 import { SplashScreen } from './components/SplashScreen';
 import { LandingPage } from './components/LandingPage';
+import { AddIntegrationModal } from './components/AddIntegrationModal';
+import { DocsPage } from './components/DocsPage';
+import { IntegrationLibraryItem } from './constants';
+import { dispatchChatToWebhooks } from './lib/integrations';
 import { lipSyncManager } from './lib/lipSync';
 import { preloadVRMAssetsBehindTheScenes } from './lib/vrmCache';
 import { AlertCircle, ShieldAlert, Clock, Home } from 'lucide-react';
@@ -88,6 +98,9 @@ export default function App() {
         window.history.replaceState(null, '', '/chat');
         return '/chat';
       }
+      if (path.startsWith('/docs')) {
+        return path;
+      }
       return path.startsWith('/chat') ? '/chat' : '/';
     }
     return '/';
@@ -101,6 +114,10 @@ export default function App() {
         setCurrentRoute('/chat');
         return;
       }
+      if (path.startsWith('/docs')) {
+        setCurrentRoute(path);
+        return;
+      }
       setCurrentRoute(path.startsWith('/chat') ? '/chat' : '/');
     };
     window.addEventListener('popstate', handlePopState);
@@ -109,7 +126,12 @@ export default function App() {
 
   const navigateTo = (path: string) => {
     if (typeof window !== 'undefined') {
-      const normalized = path.startsWith('/chat') || path.startsWith('/app') ? '/chat' : '/';
+      let normalized = '/';
+      if (path.startsWith('/chat') || path.startsWith('/app')) {
+        normalized = '/chat';
+      } else if (path.startsWith('/docs')) {
+        normalized = path;
+      }
       window.history.pushState(null, '', normalized);
       setCurrentRoute(normalized);
       window.scrollTo(0, 0);
@@ -123,6 +145,71 @@ export default function App() {
   const [activeModel, setActiveModel] = useState<ModelSpec>(() => getModelById(DEFAULT_MODEL_ID));
   const [cacheStatuses, setCacheStatuses] = useState<Record<string, ModelCacheInfo>>({});
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+
+  // Attached files state (Images, documents, code, audio clips)
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+
+  // Integrations state (Discord, Slack, n8n, Zapier)
+  const [activeIntegrations, setActiveIntegrations] = useState<IntegrationConfig[]>(() =>
+    loadStoredIntegrations()
+  );
+  const [isAddIntegrationModalOpen, setIsAddIntegrationModalOpen] = useState(false);
+
+  const handleAddFiles = (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    const newItems: AttachedFile[] = fileArray.map((file) => {
+      const isImg = file.type.startsWith('image/');
+      return {
+        id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        isImage: isImg,
+        previewUrl: isImg ? URL.createObjectURL(file) : undefined,
+      };
+    });
+    setAttachedFiles((prev) => [...prev, ...newItems]);
+  };
+
+  const handleRemoveFile = (id: string) => {
+    setAttachedFiles((prev) => {
+      const target = prev.find((f) => f.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((f) => f.id !== id);
+    });
+  };
+
+  const handleClearAllFiles = () => {
+    attachedFiles.forEach((f) => {
+      if (f.previewUrl) URL.revokeObjectURL(f.previewUrl);
+    });
+    setAttachedFiles([]);
+  };
+
+  const handleAddIntegration = (libraryItem: IntegrationLibraryItem) => {
+    const newIntegration: IntegrationConfig = {
+      id: `int_${libraryItem.platform}_${Date.now().toString(36)}`,
+      platform: libraryItem.platform,
+      name: libraryItem.name,
+      enabled: true,
+      status: 'disconnected',
+    };
+    const updated = addOrUpdateIntegration(newIntegration);
+    setActiveIntegrations(updated);
+  };
+
+  const handleUpdateIntegration = (updated: IntegrationConfig) => {
+    const list = addOrUpdateIntegration(updated);
+    setActiveIntegrations(list);
+  };
+
+  const handleRemoveIntegration = (id: string) => {
+    const list = removeStoredIntegration(id);
+    setActiveIntegrations(list);
+  };
   const [userSettings, setUserSettings] = useState<UserSettings>(() => {
     const loaded = loadUserSettings();
     return { ...loaded, soundEffects: loaded.soundEffects !== false };
@@ -1365,8 +1452,8 @@ export default function App() {
   // Send Message Flow
   // ----------------------------------------------------
   const handleSendMessage = async (textToSend: string, customBaseHistory?: Message[]) => {
-    const trimmed = textToSend.trim();
-    if (!trimmed) return;
+    const rawTrimmed = textToSend.trim();
+    if (!rawTrimmed && attachedFiles.length === 0) return;
     if (isGenerating) return;
 
     if (isSoundActive) {
@@ -1376,10 +1463,19 @@ export default function App() {
     setInput('');
     setLastUserMessageAt(Date.now());
 
+    let promptToSend = rawTrimmed;
+    if (attachedFiles.length > 0) {
+      const fileSummary = attachedFiles
+        .map((f) => `📎 [${f.name} (${f.type || 'file'}, ${(f.size / 1024).toFixed(1)} KB)]`)
+        .join(' ');
+      promptToSend = rawTrimmed ? `${fileSummary}\n\n${rawTrimmed}` : fileSummary;
+      handleClearAllFiles();
+    }
+
     const userMessage: Message = {
       id: `msg_user_${Date.now()}`,
       role: 'user',
-      content: trimmed,
+      content: promptToSend,
       timestamp: Date.now(),
     };
 
@@ -1409,7 +1505,7 @@ export default function App() {
       const assistantText = await streamPersonaResponse({
         model: activeModel,
         history: updatedWithUser,
-        userMessage: trimmed,
+        userMessage: promptToSend,
         devicePref: userSettings.preferredDevice,
         maxTokens: userSettings.maxTokens || TOKEN_CONFIG.defaultTokens,
         onToken: (_piece, fullText) => {
@@ -1464,6 +1560,15 @@ export default function App() {
       };
 
       updateConversationMessages([...updatedWithUser, assistantMessage]);
+
+      // Dispatch chat events to active automation webhooks (n8n, Zapier)
+      dispatchChatToWebhooks(activeIntegrations, {
+        prompt: promptToSend,
+        response: assistantText,
+        modelUsed: activeModel.name,
+        timestamp: Date.now(),
+      });
+
       setStreamingText('');
       streamingTextRef.current = '';
       setDownloadProgress(null);
@@ -1612,12 +1717,30 @@ export default function App() {
     </div>
   );
 
+  // Render GitBook-style Documentation Page at '/docs' and subpaths
+  if (currentRoute.startsWith('/docs')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <DocsPage
+          currentPath={currentRoute}
+          onNavigate={navigateTo}
+          onBackToChat={() => navigateTo('/chat')}
+          onBackToHome={() => navigateTo('/')}
+        />
+      </>
+    );
+  }
+
   // Render Landing Page at default root route '/'
   if (currentRoute === '/') {
     return (
       <>
         {shockwaveOverlay}
-        <LandingPage onStartChat={() => navigateTo('/chat')} />
+        <LandingPage
+          onStartChat={() => navigateTo('/chat')}
+          onNavigateToDocs={(p) => navigateTo(p || '/docs')}
+        />
       </>
     );
   }
@@ -1701,6 +1824,7 @@ export default function App() {
         onUpdateProfile={handleUpdateProfile}
         onRedeemCode={handleRedeemCode}
         externalAuthModalRequest={externalAuthModalRequest}
+        onNavigateHome={() => navigateTo('/')}
       />
 
       {/* Right Sidebar (Themes & Wardrobe Live 3D Viewports) */}
@@ -1842,7 +1966,7 @@ export default function App() {
           onCancelDownload={handleStopGeneration}
         />
 
-        {/* Chat Input Panel with Model Selector & Max Tokens Customization */}
+        {/* Chat Input Panel with Model Selector, Plus Menu (+), Attached Files & Integrations */}
         <div className="relative z-20">
           <ChatInput
             input={input}
@@ -1857,9 +1981,27 @@ export default function App() {
             onChangeMaxTokens={(val) => handleUpdateSettings({ maxTokens: val })}
             ollamaStatus={ollamaStatus}
             onUpdateCustomUrl={handleUpdateCustomUrl}
+            attachedFiles={attachedFiles}
+            onAddFiles={handleAddFiles}
+            onRemoveFile={handleRemoveFile}
+            onClearAllFiles={handleClearAllFiles}
+            activeIntegrations={activeIntegrations}
+            onOpenAddIntegrationModal={() => setIsAddIntegrationModalOpen(true)}
+            onUpdateIntegration={handleUpdateIntegration}
+            onRemoveIntegration={handleRemoveIntegration}
+            onNavigateToDocs={navigateTo}
           />
         </div>
       </main>
+
+      {/* Integration Library Pop-up Modal */}
+      <AddIntegrationModal
+        isOpen={isAddIntegrationModalOpen}
+        onClose={() => setIsAddIntegrationModalOpen(false)}
+        activeIntegrations={activeIntegrations}
+        onAddIntegration={handleAddIntegration}
+        onNavigateToDocs={navigateTo}
+      />
 
       {/* Twitter/X Style Profile Preview Modal */}
       <TwitterProfileModal

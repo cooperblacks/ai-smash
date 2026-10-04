@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MuxAI 3D Preview — VRM / Mixamo</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f0f2f5;
+      color: #1e293b;
+    }
+
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Minimal collapsible control rail */
+    #ui-container {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      width: 52px;
+      max-width: calc(100vw - 32px);
+      background: rgba(255, 255, 255, 0.86);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 15px;
+      padding: 6px;
+      box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.14);
+      transition: width 0.2s ease, padding 0.2s ease;
+      overflow: hidden;
+    }
+
+    #ui-container.expanded {
+      width: min(320px, calc(100vw - 32px));
+      padding: 10px;
+    }
+
+    .ui-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 40px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+      opacity: 0;
+      transform: translateX(-4px);
+      transition: opacity 0.16s ease, transform 0.16s ease;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    #ui-container.expanded .brand {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .brand-mark {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #2563eb;
+      color: #fff;
+      flex: 0 0 auto;
+    }
+
+    h1 {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.1;
+    }
+
+    p.subtitle {
+      font-size: 0.7rem;
+      color: #64748b;
+      line-height: 1.2;
+      margin-top: 2px;
+    }
+
+    .icon-btn,
+    .tool-btn {
+      appearance: none;
+      -webkit-appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.94);
+      color: #334155;
+      cursor: pointer;
+      transition: background-color 0.16s ease, color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+    }
+
+    .icon-btn:hover,
+    .tool-btn:hover {
+      background: #f8fafc;
+      color: #0f172a;
+      border-color: #cbd5e1;
+    }
+
+    .icon-btn:active,
+    .tool-btn:active {
+      transform: scale(0.97);
+    }
+
+    .icon-btn:focus-visible,
+    .tool-btn:focus-visible {
+      outline: 2px solid #2563eb;
+      outline-offset: 2px;
+    }
+
+    #ui-container:not(.expanded) .brand + .icon-btn {
+      margin-left: auto;
+    }
+
+    .ui-content {
+      display: grid;
+      grid-template-rows: 0fr;
+      opacity: 0;
+      transition: grid-template-rows 0.2s ease, opacity 0.16s ease, margin-top 0.2s ease;
+      margin-top: 0;
+    }
+
+    .ui-content-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    #ui-container.expanded .ui-content {
+      grid-template-rows: 1fr;
+      opacity: 1;
+      margin-top: 8px;
+    }
+
+    .status-box {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      padding: 8px 10px;
+      border-radius: 9px;
+      background-color: #f8fafc;
+      border: 1px solid #e2e8f0;
+      color: #334155;
+      margin-bottom: 8px;
+      word-break: break-word;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      flex: 0 0 7px;
+      margin-top: 3px;
+      border-radius: 50%;
+      background: #22c55e;
+    }
+
+    #ui-container:not(.expanded) .status-box {
+      width: 40px;
+      min-height: 40px;
+      padding: 0;
+      margin: 0;
+      justify-content: center;
+      align-items: center;
+      border-radius: 10px;
+    }
+
+    #ui-container:not(.expanded) .status-box .status-dot {
+      margin: 0;
+    }
+
+    #ui-container:not(.expanded) .status-message {
+      display: none;
+    }
+
+    #ui-container:not(.expanded) .ui-content {
+      display: block;
+      grid-template-rows: 1fr;
+      opacity: 1;
+      margin-top: 6px;
+    }
+
+    #ui-container:not(.expanded) .ui-content-inner {
+      overflow: visible;
+    }
+
+    #ui-container:not(.expanded) .btn-group {
+      gap: 6px;
+    }
+
+    #ui-container:not(.expanded) .tool-btn {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      justify-content: center;
+      gap: 0;
+    }
+
+    #ui-container:not(.expanded) .tool-label {
+      display: none;
+    }
+
+    .btn-group {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 7px;
+    }
+
+    .tool-btn {
+      position: relative;
+      width: 100%;
+      height: 38px;
+      justify-content: flex-start;
+      gap: 10px;
+      padding: 0 11px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      box-shadow: none;
+    }
+
+    .tool-btn.primary {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+    }
+
+    .tool-btn.primary:hover {
+      background: #1d4ed8;
+      border-color: #1d4ed8;
+      color: #fff;
+    }
+
+    .tool-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+    }
+
+    .tool-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    #ui-container:not(.expanded) .ui-head {
+      justify-content: center;
+    }
+
+    #ui-container:not(.expanded) .ui-head .icon-btn {
+      margin: 0;
+    }
+
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(240, 242, 245, 0.85);
+      backdrop-filter: blur(8px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      transition: opacity 0.3s ease;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #2563eb;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 12px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 480px) {
+      #ui-container {
+        top: 10px;
+        left: 10px;
+      }
+
+      #ui-container.expanded {
+        width: min(300px, calc(100vw - 20px));
+      }
+    }
+  </style>
+
+  <!-- Stable Import Maps for Three.js & three-vrm -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.0.0/lib/three-vrm.module.js",
+        "vrm-mixamo-retarget": "https://cdn.jsdelivr.net/npm/vrm-mixamo-retarget@1.0.3/dist/index.esm.js"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <div id="canvas-container">
+    <!-- UI Controls Overlay -->
+    <div id="ui-container" class="collapsed" aria-label="MuxAI 3D Preview controls">
+      <div class="ui-head">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 3 4.5 7.2v9.6L12 21l7.5-4.2V7.2L12 3Z"/>
+              <path d="m4.5 7.2 7.5 4.3 7.5-4.3M12 11.5V21"/>
+            </svg>
+          </span>
+          <div>
+            <h1>MuxAI 3D Preview</h1>
+            <p class="subtitle">for VRM-Mixamo projects</p>
+          </div>
+        </div>
+
+        <button id="btn-toggle-panel" class="icon-btn" type="button"
+          aria-label="Expand controls" aria-expanded="false" title="Expand controls">
+          <svg id="toggle-icon" viewBox="0 0 24 24" width="17" height="17" fill="none"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="16" rx="3"/>
+            <path d="M9 8v8M13 8l3 4-3 4"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="ui-content">
+        <div class="ui-content-inner">
+          <div id="status-box" class="status-box" role="status" aria-live="polite">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span class="status-message">Ready to load VRM model.</span>
+          </div>
+
+          <div class="btn-group">
+            <button id="btn-load-pose" class="tool-btn primary" type="button"
+              title="Apply Laydown Pose" aria-label="Apply Laydown Pose">
+              <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6 17c1.5-2.8 3.2-4.6 5.4-4.6 1.7 0 2.6 1 3.7 2.2 1 1.1 1.9 2.4 3.9 2.4"/>
+                  <path d="M8.2 9.4a2.3 2.3 0 1 0 0-4.6 2.3 2.3 0 0 0 0 4.6Z"/>
+                  <path d="M4 19.5h16"/>
+                </svg>
+              </span>
+              <span class="tool-label">Apply Laydown Pose</span>
+            </button>
+
+            <button id="btn-reset-pose" class="tool-btn" type="button"
+              title="Reset to T-Pose" aria-label="Reset to T-Pose">
+              <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 12a8 8 0 1 0 2.3-5.6"/>
+                  <path d="M4 5v5h5"/>
+                </svg>
+              </span>
+              <span class="tool-label">Reset to T-Pose</span>
+            </button>
+
+            <label for="vrm-input" class="tool-btn" title="Upload Custom VRM" aria-label="Upload Custom VRM">
+              <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 16V4"/>
+                  <path d="m7 9 5-5 5 5"/>
+                  <path d="M5 20h14"/>
+                </svg>
+              </span>
+              <span class="tool-label">Upload Custom VRM</span>
+            </label>
+            <input type="file" id="vrm-input" accept=".vrm">
+
+            <label for="fbx-input" class="tool-btn" title="Upload Custom FBX Pose" aria-label="Upload Custom FBX Pose">
+              <span class="tool-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 17h16"/>
+                  <path d="M6 17V7h12v10"/>
+                  <path d="m9 11 3-2 3 2"/>
+                </svg>
+              </span>
+              <span class="tool-label">Upload Custom FBX Pose</span>
+            </label>
+            <input type="file" id="fbx-input" accept=".fbx">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading Screen (Hidden by default; controlled by JS) -->
+    <div id="loading-overlay" class="hidden">
+      <div class="spinner"></div>
+      <div id="loading-text" style="font-size: 0.875rem; color: #475569; font-weight: 500;">Loading Model...</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+    import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+    import { retargetAnimation } from 'vrm-mixamo-retarget';
+
+    // Model & Pose URLs
+    const DEFAULT_VRM_URL = 'https://ai.mux8.com/hana_v1.0_vrm1.vrm';
+    const LAYDOWN_POSE_URL = 'https://ai.mux8.com/mixamo_pose_laydownfront.fbx';
+
+
+    // DOM Elements
+    const container = document.getElementById('canvas-container');
+    const statusBox = document.getElementById('status-box');
+    const statusMessage = statusBox.querySelector('.status-message');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const loadingText = document.getElementById('loading-text');
+
+    // Three.js Core Globals
+    let scene, camera, renderer, controls;
+    let currentVrm = null;
+    let mixer = null;
+    let clock = new THREE.Clock();
+
+    function initStudio() {
+      try {
+        // 1. Scene Setup - Light Theme Studio Background
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf0f2f5);
+        scene.fog = new THREE.FogExp2(0xf0f2f5, 0.05);
+
+        // 2. Camera Setup
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        camera = new THREE.PerspectiveCamera(32, width / height, 0.1, 100.0);
+        camera.position.set(0, 1.2, 2.8);
+
+        // 3. Renderer Setup
+        renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        // 4. Orbit Controls
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 0.35, 0);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 + 0.05;
+
+        // 5. Studio Multi-Point Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+        scene.add(ambientLight);
+
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        keyLight.position.set(2.0, 3.5, 2.5);
+        keyLight.castShadow = true;
+        keyLight.shadow.mapSize.width = 2048;
+        keyLight.shadow.mapSize.height = 2048;
+        keyLight.shadow.bias = -0.0001;
+        scene.add(keyLight);
+
+        const fillLight = new THREE.DirectionalLight(0xdce3f0, 0.6);
+        fillLight.position.set(-2.0, 2.0, -1.5);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
+        rimLight.position.set(0.0, 3.0, -2.5);
+        scene.add(rimLight);
+
+        // 6. Floor Grid & Shadow Plane
+        const gridHelper = new THREE.GridHelper(10, 20, 0xcbd5e1, 0xe2e8f0);
+        gridHelper.position.y = -0.01;
+        scene.add(gridHelper);
+
+        const shadowPlane = new THREE.Mesh(
+          new THREE.PlaneGeometry(10, 10),
+          new THREE.ShadowMaterial({ opacity: 0.12 })
+        );
+        shadowPlane.rotation.x = -Math.PI / 2;
+        shadowPlane.receiveShadow = true;
+        scene.add(shadowPlane);
+
+        // Resize Listener
+        window.addEventListener('resize', onWindowResize);
+
+        // Start Loop
+        animate();
+
+        // Attempt Initial Remote Load
+        loadVRM(DEFAULT_VRM_URL);
+      } catch (err) {
+        console.error('Initialization error:', err);
+        updateStatus('Failed to initialize 3D studio: ' + err.message);
+        hideLoading();
+      }
+    }
+
+    // Load VRM Model
+    // Load VRM Model (Version-safe for @pixiv/three-vrm v3.x)
+function loadVRM(urlOrBuffer) {
+  showLoading('Loading VRM 3D Model...');
+  updateStatus('Loading VRM asset...');
+
+  const loader = new GLTFLoader();
+  loader.register((parser) => new VRMLoaderPlugin(parser));
+
+  const handleSuccess = (gltf) => {
+    try {
+      // 1. Extract VRM instance first; the production retargeter operates on the parsed VRM object.
+      const vrm = gltf.userData.vrm;
+      if (!vrm) {
+        updateStatus('Error: File does not contain VRM metadata.');
+        hideLoading();
+        return;
+      }
+
+      // 2. Match the production VRM preparation path used by the reference project.
+      if (VRMUtils && typeof VRMUtils.removeUnnecessaryVertices === 'function') {
+        VRMUtils.removeUnnecessaryVertices(gltf.scene);
+      }
+      if (VRMUtils && typeof VRMUtils.combineSkeletons === 'function') {
+        VRMUtils.combineSkeletons(gltf.scene);
+      }
+      try {
+        if (VRMUtils && typeof VRMUtils.rotateVRM0 === 'function') {
+          VRMUtils.rotateVRM0(vrm);
+        }
+      } catch {
+        // VRM 1.0 models do not need the VRM 0.0 rotation correction.
+      }
+
+      // 3. Dispose existing model if loaded.
+      if (currentVrm) {
+        scene.remove(currentVrm.scene);
+        if (VRMUtils && typeof VRMUtils.deepDispose === 'function') {
+          VRMUtils.deepDispose(currentVrm.scene);
+        }
+      }
+
+      currentVrm = vrm;
+      currentVrm.scene.position.set(0, 0, 0);
+
+      // 4. Configure shadows and frustum culling.
+      vrm.scene.traverse((obj) => {
+        obj.frustumCulled = false;
+        if (obj.isMesh) {
+          obj.castShadow = true;
+          obj.receiveShadow = true;
+        }
+      });
+
+      scene.add(vrm.scene);
+      mixer = new THREE.AnimationMixer(vrm.scene);
+
+      updateStatus('VRM loaded successfully. Ready for pose.');
+      hideLoading();
+    } catch (err) {
+      console.error('VRM processing error details:', err);
+      updateStatus(`VRM Processing Error: ${err.message || err}`);
+      hideLoading();
+    }
+  };
+
+  if (typeof urlOrBuffer === 'string') {
+    loader.load(
+      urlOrBuffer,
+      handleSuccess,
+      (progress) => {
+        if (progress.lengthComputable && progress.total > 0) {
+          const pct = Math.round((progress.loaded / progress.total) * 100);
+          showLoading(`Loading VRM Model (${pct}%)...`);
+        }
+      },
+      (err) => {
+        console.warn('Network/CORS error on default VRM:', err);
+        updateStatus('Remote VRM unavailable (CORS/Network). Upload a local .vrm file.');
+        hideLoading();
+      }
+    );
+  } else {
+    loader.parse(
+      urlOrBuffer,
+      '',
+      handleSuccess,
+      (err) => {
+        console.error('Parse error:', err);
+        updateStatus('Failed to parse uploaded VRM file.');
+        hideLoading();
+      }
+    );
+  }
+}
+
+    // Apply Mixamo FBX Pose to VRM using the same production retargeting library as VRMCanvas.tsx.
+    async function applyFBXPose(urlOrArrayBuffer) {
+      if (!currentVrm) {
+        updateStatus('Please upload or load a VRM model first!');
+        return;
+      }
+
+      showLoading('Processing Mixamo FBX Motion...');
+      updateStatus('Retargeting Mixamo animation to VRM humanoid...');
+
+      const fbxLoader = new FBXLoader();
+
+      try {
+        let fbx;
+        if (typeof urlOrArrayBuffer === 'string') {
+          fbx = await fbxLoader.loadAsync(urlOrArrayBuffer);
+        } else {
+          fbx = fbxLoader.parse(urlOrArrayBuffer, '');
+        }
+
+        if (!fbx.animations || fbx.animations.length === 0) {
+          updateStatus('Warning: No animation clips found inside FBX file.');
+          return;
+        }
+
+        // IMPORTANT: do not manually address FBX bones here.
+        // retargetAnimation() performs the Mixamo skeleton → VRM humanoid mapping,
+        // proportion/height handling, and coordinate-system correction.
+        const preferredClipName = fbx.animations.some((candidate) => candidate.name === 'mixamo.com')
+          ? 'mixamo.com'
+          : fbx.animations[0].name;
+
+        const clip = retargetAnimation(fbx, currentVrm, {
+          logWarnings: false,
+          animationClipName: preferredClipName || 'mixamo.com'
+        });
+
+        if (!clip) {
+          throw new Error('No compatible Mixamo humanoid tracks were produced by the retargeter.');
+        }
+
+        if (mixer) mixer.stopAllAction();
+        mixer = new THREE.AnimationMixer(currentVrm.scene);
+
+        const action = mixer.clipAction(clip);
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.enabled = true;
+        action.setEffectiveWeight(1);
+        action.setEffectiveTimeScale(1);
+        action.play();
+
+        currentVrm.humanoid?.update();
+        updateStatus('FBX Pose/Animation applied successfully.');
+      } catch (err) {
+        console.error('Animation retargeting error:', err);
+        updateStatus('Failed to retarget animation: ' + (err?.message || err));
+      } finally {
+        hideLoading();
+      }
+    }
+
+    // Animation Loop
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+
+      if (mixer) mixer.update(delta);
+      if (currentVrm) currentVrm.update(delta);
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // Helper Functions
+    function showLoading(msg) {
+      loadingText.textContent = msg;
+      loadingOverlay.classList.remove('hidden');
+    }
+
+    function hideLoading() {
+      loadingOverlay.classList.add('hidden');
+    }
+
+    function updateStatus(msg) {
+      if (statusMessage) statusMessage.textContent = msg;
+      else statusBox.textContent = msg;
+    }
+
+    function onWindowResize() {
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+
+    // UI Event Listeners
+    const togglePanelButton = document.getElementById('btn-toggle-panel');
+    const uiContainer = document.getElementById('ui-container');
+    const toggleIcon = document.getElementById('toggle-icon');
+    const PANEL_STORAGE_KEY = 'muxai-3d-preview-panel-collapsed';
+
+    function setPanelExpanded(expanded, persist = true) {
+      uiContainer.classList.toggle('expanded', expanded);
+      uiContainer.classList.toggle('collapsed', !expanded);
+      togglePanelButton.setAttribute('aria-expanded', String(expanded));
+      togglePanelButton.setAttribute('aria-label', expanded ? 'Collapse controls' : 'Expand controls');
+      togglePanelButton.title = expanded ? 'Collapse controls' : 'Expand controls';
+      toggleIcon.innerHTML = expanded
+        ? '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M15 8v8M11 8l-3 4 3 4"/>'
+        : '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 8v8M13 8l3 4-3 4"/>';
+      if (persist) {
+        try {
+          localStorage.setItem(PANEL_STORAGE_KEY, expanded ? '0' : '1');
+        } catch {
+          // Non-critical: panel state simply will not persist.
+        }
+      }
+    }
+
+    let storedCollapsed = null;
+    try {
+      storedCollapsed = localStorage.getItem(PANEL_STORAGE_KEY);
+    } catch {
+      // Keep the static preview usable when storage is unavailable.
+    }
+
+    // Default: compact icon-only rail. Remember the user's last choice when storage works.
+    setPanelExpanded(storedCollapsed === '0', false);
+
+    togglePanelButton.addEventListener('click', () => {
+      setPanelExpanded(!uiContainer.classList.contains('expanded'));
+    });
+
+    document.getElementById('btn-load-pose').addEventListener('click', () => {
+      applyFBXPose(LAYDOWN_POSE_URL);
+    });
+
+    document.getElementById('btn-reset-pose').addEventListener('click', () => {
+      if (mixer) mixer.stopAllAction();
+      if (currentVrm?.humanoid) {
+        currentVrm.humanoid.resetNormalizedPose();
+        currentVrm.humanoid.update();
+      }
+      updateStatus('Reset to default T-Pose.');
+    });
+
+    document.getElementById('vrm-input').addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => loadVRM(event.target.result);
+        reader.readAsArrayBuffer(file);
+      }
+    });
+
+    document.getElementById('fbx-input').addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => applyFBXPose(event.target.result);
+        reader.readAsArrayBuffer(file);
+      }
+    });
+
+    // Run Studio Initialization
+    initStudio();
+  </script>
+</body>
+</html>

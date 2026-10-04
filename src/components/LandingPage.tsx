@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Check, ChevronDown, Sparkles, MessageSquare, Shield, Box, Palette, Github, Linkedin, ExternalLink, Heart, Award } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, Sparkles, MessageSquare, Shield, Box, Palette, Github, Linkedin, ExternalLink, Heart, Award, BookOpen, Bot, Workflow, Key, Menu, X, Crown } from 'lucide-react';
 import { LandingHeroCanvas } from './LandingHeroCanvas';
-import { AI_PROFILE, SPECIAL_THANKS_LINKS, PRODUCT_HUNT_URL } from '../constants';
+import { AI_PROFILE, SPECIAL_THANKS_LINKS, PRODUCT_HUNT_URL, INTEGRATION_LIBRARY, API_PROVIDERS_CONFIG } from '../constants';
 
 interface LandingPageProps {
   onStartChat: () => void;
+  onNavigateToDocs?: (path?: string) => void;
 }
 
 interface AccordionItem {
@@ -56,9 +57,10 @@ const ACCORDION_DATA: AccordionItem[] = [
   },
 ];
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigateToDocs }) => {
   const [activeAccordion, setActiveAccordion] = useState<number>(0);
   const [scrollY, setScrollY] = useState(0);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   // Parallax scroll listener
   useEffect(() => {
@@ -85,7 +87,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
   const currentAccordion = ACCORDION_DATA[activeAccordion] || ACCORDION_DATA[0];
 
   return (
-    <div className="relative min-h-screen bg-[#f8f9fc] text-[#1e2029] font-sans overflow-x-hidden selection:bg-[#55d2f6]/20 selection:text-[#1e2029]">
+    <div className="relative min-h-screen bg-[#f8f9fc] text-[#1e2029] font-sans overflow-x-clip selection:bg-[#55d2f6]/20 selection:text-[#1e2029]">
       {/* Fixed Parallax 3D VRM Background (Active behind the Hero section) */}
       <div
         className="fixed inset-0 pointer-events-none z-0"
@@ -99,8 +101,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
         <LandingHeroCanvas />
       </div>
 
-      {/* Top Navbar */}
-      <header className="sticky top-0 z-30 w-full backdrop-blur-md bg-white/80 border-b border-black/[0.06] transition-all">
+      {/* Top Navbar (Sticky) */}
+      <header className="sticky top-0 z-50 w-full backdrop-blur-md bg-white/80 border-b border-black/[0.06] transition-all">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           {/* Brand Logo */}
           <div className="flex items-center gap-3">
@@ -119,25 +121,201 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
             </div>
           </div>
 
-          {/* Nav links & CTA */}
-          <div className="flex items-center gap-3 sm:gap-6">
+          {/* Desktop Nav links & CTA */}
+          <div className="hidden md:flex items-center gap-6">
             <a
               href="#why-it-matters"
               onClick={(e) => scrollToSection(e, 'why-it-matters')}
-              className="hidden sm:inline-block text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
             >
               Why It Matters
             </a>
+            <a
+              href="#integrations-apis"
+              onClick={(e) => scrollToSection(e, 'integrations-apis')}
+              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+            >
+              Extensions & APIs
+            </a>
+            <a
+              href="#pricing"
+              onClick={(e) => scrollToSection(e, 'pricing')}
+              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+            >
+              Pricing
+            </a>
+            <button
+              type="button"
+              onClick={() => onNavigateToDocs?.('/docs')}
+              className="text-xs font-semibold text-[#0f9bc7] hover:underline transition-colors flex items-center gap-1 cursor-pointer"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Docs</span>
+            </button>
             <button
               onClick={onStartChat}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-sm active:scale-95 transition-all group"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-sm active:scale-95 transition-all group cursor-pointer"
             >
               <span>Start Chatting</span>
               <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
             </button>
           </div>
+
+          {/* Mobile UI: Move "Start Chatting" button to the left and place a burger menu over there for showing all the other usual navbar entries as a collapsible sidebar */}
+          <div className="flex md:hidden items-center gap-2">
+            <button
+              onClick={onStartChat}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-sm active:scale-95 transition-all group cursor-pointer"
+            >
+              <span>Start Chatting</span>
+              <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
+              className="p-2 rounded-xl text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 border border-black/[0.08] active:scale-95 transition-all cursor-pointer"
+              aria-label="Toggle navigation menu"
+            >
+              {isMobileNavOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
       </header>
+
+      {/* Mobile Collapsible Navigation Sidebar Drawer */}
+      {isMobileNavOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex justify-end animate-in fade-in duration-150">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity"
+            onClick={() => setIsMobileNavOpen(false)}
+          />
+
+          {/* Drawer Content */}
+          <div className="relative w-72 max-w-[85vw] h-full bg-white shadow-2xl border-l border-black/[0.08] flex flex-col p-5 z-10 animate-in slide-in-from-right duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-black/[0.06] mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl overflow-hidden ring-1 ring-black/10 bg-white p-0.5 shadow-xs">
+                  <img
+                    src={AI_PROFILE.avatarUrl}
+                    alt={AI_PROFILE.name}
+                    className="w-full h-full object-cover rounded-lg"
+                  />
+                </div>
+                <span className="font-bold text-base tracking-tight font-heading">AI Smash</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileNavOpen(false)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Nav Links */}
+            <nav className="flex-1 space-y-1.5">
+              <a
+                href="#why-it-matters"
+                onClick={(e) => {
+                  scrollToSection(e, 'why-it-matters');
+                  setIsMobileNavOpen(false);
+                }}
+                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
+              >
+                <Shield className="w-4 h-4 text-neutral-400" />
+                <span>Why It Matters</span>
+              </a>
+
+              <a
+                href="#integrations-apis"
+                onClick={(e) => {
+                  scrollToSection(e, 'integrations-apis');
+                  setIsMobileNavOpen(false);
+                }}
+                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
+              >
+                <Sparkles className="w-4 h-4 text-neutral-400" />
+                <span>Extensions & APIs</span>
+              </a>
+
+              <a
+                href="#pricing"
+                onClick={(e) => {
+                  scrollToSection(e, 'pricing');
+                  setIsMobileNavOpen(false);
+                }}
+                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
+              >
+                <Crown className="w-4 h-4 text-amber-500" />
+                <span>Pricing</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileNavOpen(false);
+                  onNavigateToDocs?.('/docs');
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-[#0f9bc7] hover:bg-[#0f9bc7]/10 transition-colors text-left cursor-pointer"
+              >
+                <BookOpen className="w-4 h-4" />
+                <span>Documentation</span>
+              </button>
+
+              <a
+                href="#special-thanks"
+                onClick={(e) => {
+                  scrollToSection(e, 'special-thanks');
+                  setIsMobileNavOpen(false);
+                }}
+                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
+              >
+                <Heart className="w-4 h-4 text-rose-500" />
+                <span>Acknowledgements</span>
+              </a>
+            </nav>
+
+            {/* Bottom Actions in Drawer */}
+            <div className="pt-4 border-t border-black/[0.06] space-y-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileNavOpen(false);
+                  onStartChat();
+                }}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-[#55d2f6] text-neutral-950 hover:bg-[#34c4f0] shadow-sm active:scale-95 transition-all cursor-pointer"
+              >
+                <span>Start Chatting</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="flex items-center justify-center gap-4 text-xs text-neutral-400 pt-1">
+                <a
+                  href="https://github.com/muxai"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-neutral-700 flex items-center gap-1"
+                >
+                  <Github className="w-3.5 h-3.5" />
+                  <span>GitHub</span>
+                </a>
+                <span>&bull;</span>
+                <a
+                  href="https://www.linkedin.com/company/huanmux"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-neutral-700 flex items-center gap-1"
+                >
+                  <Linkedin className="w-3.5 h-3.5 text-blue-600" />
+                  <span>LinkedIn</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Content Area */}
       <main className="relative z-10">
@@ -350,6 +528,309 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
           </div>
         </section>
 
+        {/* SECTION: INTEGRATIONS & AI APIS (Directly below Why It Matters) */}
+        <section
+          id="integrations-apis"
+          className="relative z-20 py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-black/[0.06]"
+        >
+          {/* Section Header */}
+          <div className="text-center max-w-3xl mx-auto mb-14">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono uppercase tracking-widest bg-[var(--theme-accent-soft)] text-[#0f9bc7] font-semibold mb-3">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Extensions</span>
+            </span>
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold font-heading text-neutral-900 tracking-tight">
+              Integrations & AI APIs
+            </h2>
+            <p className="mt-4 text-base sm:text-lg text-neutral-600 leading-relaxed">
+              Bridge your AI companion to external platforms, bots, and the world&apos;s leading LLM providers with Hana via secure local credential storage
+            </p>
+          </div>
+
+          {/* 1. Bot & Workflow Integrations Grid */}
+          <div className="mb-14">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <Bot className="w-5 h-5 text-[#0f9bc7]" />
+                <h3 className="text-xl font-bold font-heading text-neutral-900">
+                  Bot & Workflow Integrations
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigateToDocs?.('/docs')}
+                className="text-xs font-semibold text-[#0f9bc7] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <span>View Integration Docs</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {INTEGRATION_LIBRARY.map((item) => (
+                <div
+                  key={item.platform}
+                  className="rounded-2xl p-5 sm:p-6 bg-white border border-black/[0.08] shadow-sm hover:shadow-md hover:border-[#55d2f6]/60 transition-all flex flex-col justify-between group"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-4 mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-xl overflow-hidden ring-1 ring-black/10 shadow-xs bg-white p-0.5 shrink-0">
+                          <img
+                            src={item.logoUrl}
+                            alt={item.name}
+                            className="w-full h-full object-cover rounded-lg"
+                          />
+                        </div>
+                        <div>
+                          <h4 className="text-lg font-bold font-heading text-neutral-900 group-hover:text-[#0f9bc7] transition-colors">
+                            {item.name}
+                          </h4>
+                          <span className="text-xs text-neutral-500 block mt-0.5">
+                            {item.tagline}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onNavigateToDocs?.(item.docsPath)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-[#0f9bc7] hover:underline cursor-pointer shrink-0 pt-1"
+                      >
+                        <span>Setup Guide</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <p className="text-sm text-neutral-600 leading-relaxed mb-4">
+                      {item.description}
+                    </p>
+
+                    <div className="space-y-1.5 pt-3 border-t border-black/[0.05]">
+                      {item.features.slice(0, 3).map((feat, fIdx) => (
+                        <div key={fIdx} className="flex items-center gap-2 text-xs text-neutral-700">
+                          <div className="w-4 h-4 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center shrink-0">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </div>
+                          <span>{feat}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 2. External AI Model APIs Grid */}
+          <div>
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-[#0f9bc7]" />
+                <h3 className="text-xl font-bold font-heading text-neutral-900">
+                  Supported External AI Model APIs
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigateToDocs?.('/docs')}
+                className="text-xs font-semibold text-[#0f9bc7] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <span>API Reference</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {Object.values(API_PROVIDERS_CONFIG).map((provider) => (
+                <div
+                  key={provider.id}
+                  onClick={() => onNavigateToDocs?.(provider.docsPath)}
+                  className="rounded-2xl p-4 bg-white border border-black/[0.08] shadow-xs hover:shadow-md hover:border-[#55d2f6]/60 transition-all flex items-center justify-between gap-3 cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl overflow-hidden ring-1 ring-black/10 shadow-xs bg-white p-0.5 shrink-0 group-hover:scale-105 transition-transform">
+                      <img
+                        src={provider.logoUrl}
+                        alt={provider.name}
+                        className="w-full h-full object-cover rounded-lg"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold font-heading text-neutral-900 group-hover:text-[#0f9bc7] transition-colors truncate">
+                        {provider.name}
+                      </h4>
+                      <p className="text-[11px] text-neutral-500 truncate">
+                        {provider.tagline}
+                      </p>
+                    </div>
+                  </div>
+
+                  <span className="text-[#0f9bc7] text-xs font-semibold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform shrink-0">
+                    <span>Docs</span>
+                    <ChevronDown className="w-3 h-3 -rotate-90" />
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 3. Documentation Callout Card */}
+          <div className="mt-12 rounded-3xl p-6 sm:p-8 bg-gradient-to-r from-neutral-900 via-neutral-950 to-[#093649] text-white flex flex-col sm:flex-row sm:items-center justify-between gap-6 shadow-xl">
+            <div className="space-y-1.5 max-w-xl">
+              <div className="inline-flex items-center gap-1.5 text-xs font-mono text-[#55d2f6] uppercase tracking-wider font-semibold">
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Documentation</span>
+              </div>
+              <h3 className="text-xl sm:text-2xl font-bold font-heading tracking-tight">
+                Explore Full Developer Guides
+              </h3>
+              <p className="text-xs sm:text-sm text-neutral-300 leading-relaxed">
+                Step-by-step documentation for how to make things work.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateToDocs?.('/docs')}
+              className="px-6 py-3 rounded-xl text-xs font-semibold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] shadow-md active:scale-95 transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
+            >
+              <span>Browse Docs (/docs)</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </section>
+
+        {/* SECTION: PRICING (Above Ready to Chat with Hana?) */}
+        <section
+          id="pricing"
+          className="relative z-20 py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto border-t border-black/[0.06]"
+        >
+          <div className="text-center max-w-2xl mx-auto mb-14">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono uppercase tracking-widest bg-[var(--theme-accent-soft)] text-[#0f9bc7] font-semibold mb-3">
+              <Crown className="w-3.5 h-3.5 text-amber-500" />
+              <span>Membership & Pricing</span>
+            </span>
+            <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold font-heading text-neutral-900 tracking-tight">
+              Simple, Transparent Pricing
+            </h2>
+            <p className="mt-4 text-base sm:text-lg text-neutral-600 leading-relaxed">
+              Experience private local AI for free, or unlock premium avatar wardrobe customizations, theme creation, and cloud sync.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto items-stretch">
+            {/* Fan Tier ($0) */}
+            <div className="rounded-3xl p-7 sm:p-8 bg-white border border-black/[0.08] shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-4">
+                  <h3 className="text-xl font-bold font-heading text-neutral-900">
+                    Fan Tier
+                  </h3>
+                </div>
+                <div className="mb-6">
+                  <span className="text-4xl sm:text-5xl font-extrabold font-heading text-neutral-900 tracking-tight">
+                    $0
+                  </span>
+                  <span className="text-xs text-neutral-500 font-mono ml-2">/ forever</span>
+                  <p className="text-xs text-neutral-500 mt-2">
+                    Everything you need
+                  </p>
+                </div>
+
+                <div className="space-y-3 pt-4 border-t border-black/[0.06]">
+                  {[
+                    'Unlimited conversation messages & turns',
+                    '3D mode with voice engine',
+                    'In-browser on-device SLM execution (WebGPU/Wasm)',
+                    'Connect custom local Ollama / vLLM servers',
+                    'Connect with APIs and integrations',
+                  ].map((feat, idx) => (
+                    <div key={idx} className="flex items-start gap-3 text-sm text-neutral-700">
+                      <div className="w-5 h-5 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+                        <Check className="w-3 h-3 stroke-[3]" />
+                      </div>
+                      <span>{feat}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-8 pt-4">
+                <button
+                  type="button"
+                  onClick={onStartChat}
+                  className="w-full py-3 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-neutral-100 hover:bg-neutral-200 text-neutral-900 shadow-xs active:scale-98 transition-all cursor-pointer"
+                >
+                  Selected
+                </button>
+              </div>
+            </div>
+
+            {/* VIP Tier ($5/month) */}
+            <div className="relative rounded-3xl p-7 sm:p-8 bg-gradient-to-b from-white to-[#f0faff] border-2 border-[#55d2f6] shadow-xl ring-1 ring-[#55d2f6]/40 flex flex-col justify-between">
+              {/* Highlight ribbon */}
+              <div className="absolute -top-3.5 right-6 px-3 py-1 rounded-full bg-[#55d2f6] text-neutral-950 text-[11px] font-bold tracking-wider uppercase shadow-xs flex items-center gap-1 font-mono">
+                <Crown className="w-3 h-3" />
+                <span>Premium</span>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-4">
+                  <h3 className="text-xl font-bold font-heading text-neutral-900 flex items-center gap-2">
+                    <span>VIP Tier</span>
+                  </h3>
+                </div>
+
+                <div className="mb-6">
+                  <span className="text-4xl sm:text-5xl font-extrabold font-heading text-neutral-900 tracking-tight">
+                    $5
+                  </span>
+                  <span className="text-xs text-neutral-500 font-mono ml-2">/ month</span>
+                  <p className="text-xs text-neutral-500 mt-2">
+                    Everything you want
+                  </p>
+                </div>
+
+                <div className="space-y-3 pt-4 border-t border-black/[0.06]">
+                  {[
+                    'Unlimited conversation messages & turns',
+                    '3D mode with voice engine',
+                    '3D avatar customizations',
+                    'Custom theme designer',
+                    'In-browser on-device SLM execution (WebGPU/Wasm)',
+                    'Connect custom local Ollama / vLLM servers',
+                    'Connect with APIs and integrations',
+                    'Sync account data, settings with cloud storage',
+                    'Enhanced customer support',
+                    'Early access to new features',
+                  ].map((feat, idx) => (
+                    <div key={idx} className="flex items-start gap-3 text-sm text-neutral-800">
+                      <div className="w-5 h-5 rounded-full bg-[#55d2f6]/25 text-[#0a7a9e] flex items-center justify-center shrink-0 mt-0.5">
+                        <Check className="w-3 h-3 stroke-[3]" />
+                      </div>
+                      <span className={idx === 2 || idx === 3 || idx === 7 ? 'font-medium text-neutral-950' : ''}>
+                        {feat}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-8 pt-4">
+                <a
+                  href="https://muks.gumroad.com/l/hana-vip?wanted=true"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold bg-[#55d2f6] hover:bg-[#32c5f2] text-neutral-950 shadow-md hover:shadow-lg shadow-[#55d2f6]/30 active:scale-98 transition-all cursor-pointer group"
+                >
+                  <Crown className="w-4 h-4 text-neutral-950" />
+                  <span>Subscribe</span>
+                  <ExternalLink className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* BOTTOM CALL TO ACTION STRIP */}
         <section className="py-16 sm:py-20 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto text-center">
           <div className="rounded-3xl p-8 sm:p-12 bg-white border border-black/[0.08] shadow-lg flex flex-col items-center">
@@ -477,11 +958,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat }) => {
             </a>
 
             <a
-              href="https://github.com/muxai"
+              href="https://github.com/MuxAI/hana.ai"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 hover:text-neutral-900 font-medium transition-colors"
-              title="MuxAI on GitHub"
+              title="Hana on GitHub"
             >
               <Github className="w-4 h-4 text-neutral-900" />
               <span>GitHub</span>

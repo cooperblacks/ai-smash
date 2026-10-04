@@ -1,8 +1,11 @@
 import React, { useRef, useEffect } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
-import { ModelSpec, ModelCacheInfo } from '../types';
+import { ModelSpec, ModelCacheInfo, AttachedFile, IntegrationConfig } from '../types';
 import { ModelSelector, OllamaStatusMap } from './ModelSelector';
 import { MaxTokensSelector } from './MaxTokensSelector';
+import { ChatPlusMenu } from './ChatPlusMenu';
+import { AttachedFilesPreview } from './AttachedFilesPreview';
+import { ProviderSubmodelSelector } from './ProviderSubmodelSelector';
 import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
 
 interface ChatInputProps {
@@ -18,6 +21,15 @@ interface ChatInputProps {
   onChangeMaxTokens: (val: number) => void;
   ollamaStatus?: OllamaStatusMap;
   onUpdateCustomUrl?: (url: string) => void;
+  attachedFiles: AttachedFile[];
+  onAddFiles: (files: FileList | File[]) => void;
+  onRemoveFile: (id: string) => void;
+  onClearAllFiles: () => void;
+  activeIntegrations: IntegrationConfig[];
+  onOpenAddIntegrationModal: () => void;
+  onUpdateIntegration: (updated: IntegrationConfig) => void;
+  onRemoveIntegration: (id: string) => void;
+  onNavigateToDocs?: (docsPath: string) => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -33,8 +45,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onChangeMaxTokens,
   ollamaStatus,
   onUpdateCustomUrl,
+  attachedFiles,
+  onAddFiles,
+  onRemoveFile,
+  onClearAllFiles,
+  activeIntegrations,
+  onOpenAddIntegrationModal,
+  onUpdateIntegration,
+  onRemoveIntegration,
+  onNavigateToDocs,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-resize textarea height
   useEffect(() => {
@@ -47,7 +69,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (input.trim() && !isGenerating) {
+      if ((input.trim() || attachedFiles.length > 0) && !isGenerating) {
         onSend(input);
       }
     }
@@ -55,10 +77,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (input.trim() && !isGenerating) {
+    if ((input.trim() || attachedFiles.length > 0) && !isGenerating) {
       onSend(input);
     }
   };
+
+  const canSubmit = input.trim().length > 0 || attachedFiles.length > 0;
 
   return (
     <div
@@ -68,6 +92,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         borderColor: 'var(--theme-border)',
       }}
     >
+      {/* Hidden File Input for "Attach files" */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            onAddFiles(e.target.files);
+            e.target.value = '';
+          }
+        }}
+        className="hidden"
+        accept="image/*,text/*,.pdf,.md,.json,.csv,.py,.ts,.tsx,.js,.jsx,.html,.css,audio/*"
+      />
+
       <form onSubmit={handleSubmit} className="max-w-4xl mx-auto flex flex-col gap-2">
         {/* Composer Container */}
         <div
@@ -77,22 +116,44 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             borderColor: 'var(--theme-border)',
           }}
         >
-          {/* Text Area */}
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={`Message ${AI_PROFILE.name}...`}
-            disabled={isGenerating}
-            className={`w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] ${THEME_COLORS.tokens.textareaText} focus:outline-none leading-relaxed min-h-[44px] max-h-[${UI_CONFIG.textareaMaxHeightPx}px] scrollbar-thin`}
+          {/* File Previews Above Composer Box */}
+          <AttachedFilesPreview
+            files={attachedFiles}
+            onRemoveFile={onRemoveFile}
+            onClearAll={onClearAllFiles}
           />
 
-          {/* Bottom Bar inside Composer: Model Selector & Max Tokens on Left, Send/Stop on Right */}
-          <div className="flex items-center justify-between px-3 pb-2.5 pt-1 gap-2">
-            {/* Left: Model Selector & Max Tokens Selector */}
-            <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Main Input Row: "+" Menu Button In-line with Textarea */}
+          <div className="flex items-start px-3 pt-2.5 gap-2">
+            <div className="pt-0.5 shrink-0">
+              <ChatPlusMenu
+                onAttachFilesClick={() => fileInputRef.current?.click()}
+                onOpenAddIntegrationModal={onOpenAddIntegrationModal}
+                activeIntegrations={activeIntegrations}
+                onUpdateIntegration={onUpdateIntegration}
+                onRemoveIntegration={onRemoveIntegration}
+                disabled={isGenerating}
+                onNavigateToDocs={onNavigateToDocs}
+              />
+            </div>
+
+            {/* Text Area */}
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={`Message ${AI_PROFILE.name}...`}
+              disabled={isGenerating}
+              className={`flex-1 resize-none bg-transparent pt-1 pb-1.5 text-[15px] ${THEME_COLORS.tokens.textareaText} focus:outline-none leading-relaxed min-h-[38px] max-h-[${UI_CONFIG.textareaMaxHeightPx}px] scrollbar-thin`}
+            />
+          </div>
+
+          {/* Bottom Bar inside Composer */}
+          <div className="flex items-end justify-between px-3 pb-2.5 pt-1 gap-2">
+            {/* Left: Model Selector, Provider Submodel Selector, Max Tokens Selector */}
+            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
               <ModelSelector
                 activeModel={activeModel}
                 cacheStatuses={cacheStatuses}
@@ -100,7 +161,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 disabled={isGenerating}
                 ollamaStatus={ollamaStatus}
                 onUpdateCustomUrl={onUpdateCustomUrl}
+                onNavigateToDocs={onNavigateToDocs}
               />
+
+              {activeModel.family === 'api-provider' && (
+                <ProviderSubmodelSelector
+                  activeModel={activeModel}
+                  onUpdateModel={onSelectModel}
+                  disabled={isGenerating}
+                  onNavigateToDocs={onNavigateToDocs}
+                />
+              )}
 
               <MaxTokensSelector
                 maxTokens={maxTokens}
@@ -110,12 +181,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             </div>
 
             {/* Right: Send or Stop button */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 shrink-0 self-end pb-0.5">
               {isGenerating ? (
                 <button
                   type="button"
                   onClick={onStop}
-                  className={`flex items-center justify-center w-8 h-8 rounded-full ${THEME_COLORS.tokens.stopButton} active:scale-90 transition-all shadow-sm`}
+                  className={`flex items-center justify-center w-8 h-8 rounded-full ${THEME_COLORS.tokens.stopButton} active:scale-90 transition-all shadow-sm cursor-pointer`}
                   style={{
                     backgroundColor: 'var(--theme-accent)',
                     color: 'var(--theme-user-bubble-text, #ffffff)',
@@ -127,14 +198,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               ) : (
                 <button
                   type="submit"
-                  disabled={!input.trim()}
-                  className={`flex items-center justify-center w-8 h-8 rounded-full transition-all duration-100 ${
-                    input.trim()
+                  disabled={!canSubmit}
+                  className={`flex items-center justify-center w-8 h-8 rounded-full transition-all duration-100 cursor-pointer ${
+                    canSubmit
                       ? `${THEME_COLORS.tokens.sendButtonActive} active:scale-90 shadow-sm`
-                      : `${THEME_COLORS.tokens.sendButtonDisabled} cursor-not-allowed`
+                      : `${THEME_COLORS.tokens.sendButtonDisabled} cursor-not-allowed opacity-40`
                   }`}
                   style={
-                    input.trim()
+                    canSubmit
                       ? {
                           backgroundColor: 'var(--theme-accent)',
                           color: '#ffffff',

@@ -20,13 +20,24 @@ export interface Conversation {
   modelId?: string;
 }
 
-export type HardwareDevice = 'webgpu' | 'wasm' | 'cpu' | 'cloud' | 'ollama';
+export type HardwareDevice = 'webgpu' | 'wasm' | 'cpu' | 'cloud' | 'ollama' | 'api-provider';
+
+export type ApiProviderId =
+  | 'openai'
+  | 'gemini'
+  | 'anthropic'
+  | 'xai'
+  | 'groq'
+  | 'zai'
+  | 'deepseek'
+  | 'qwen'
+  | 'huggingface';
 
 export interface ModelSpec {
   id: string;
   name: string;
   tagline: string;
-  family: 'browser-slm' | 'cloud' | 'ollama';
+  family: 'browser-slm' | 'cloud' | 'ollama' | 'api-provider';
   hfRepo: string;
   sizeLabel: string;
   approxParams: string;
@@ -40,6 +51,49 @@ export interface ModelSpec {
   isCustomOllama?: boolean;
   detectedModel?: string;
   customModel?: string;
+  providerId?: ApiProviderId;
+  logoUrl?: string;
+}
+
+export interface AttachedFile {
+  id: string;
+  file: File;
+  name: string;
+  size: number;
+  type: string;
+  previewUrl?: string;
+  textContent?: string;
+  isImage: boolean;
+}
+
+export type IntegrationPlatform = 'discord' | 'slack' | 'n8n' | 'zapier';
+
+export interface IntegrationConfig {
+  id: string;
+  platform: IntegrationPlatform;
+  name: string;
+  enabled: boolean;
+  botToken?: string;
+  appToken?: string;
+  webhookUrl?: string;
+  apiKey?: string;
+  channelId?: string;
+  guildId?: string;
+  enableVoice?: boolean;
+  lastSyncTime?: number;
+  status: 'connected' | 'disconnected' | 'polling' | 'error';
+  statusMessage?: string;
+}
+
+export interface ApiProviderConfig {
+  id: ApiProviderId;
+  name: string;
+  shortName: string;
+  tagline: string;
+  logoUrl: string;
+  defaultModel: string;
+  availableModels: string[];
+  docsPath: string;
 }
 
 export interface ModelCacheInfo {

@@ -19,6 +19,7 @@ import {
   Check,
   Loader2,
   User as UserIcon,
+  Home,
 } from 'lucide-react';
 import { APP_INFO, THEME_COLORS, UI_CONFIG, DEFAULT_USER_AVATAR_URL } from '../constants';
 import {
@@ -50,6 +51,7 @@ interface SidebarProps {
   }) => Promise<void>;
   onRedeemCode?: (code: string) => Promise<void>;
   externalAuthModalRequest?: number;
+  onNavigateHome?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -68,6 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onUpdateProfile,
   onRedeemCode,
   externalAuthModalRequest = 0,
+  onNavigateHome,
 }) => {
   const [fallbackAccountUser, setFallbackAccountUser] = useState<AccountUser | null>(() => loadAccountSession());
   const accountUser = propAccountUser !== undefined ? propAccountUser : fallbackAccountUser;
@@ -383,13 +386,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
             }}
           >
             {/* Sidebar Header */}
-            <div className="p-3 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
+            <div className="p-3 border-b border-neutral-100 dark:border-neutral-800 flex items-center gap-1.5 justify-between">
+              {onNavigateHome && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNavigateHome();
+                    onClose();
+                  }}
+                  className="p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-white/[0.08] active:scale-95 transition-all shrink-0 cursor-pointer"
+                  title="Home"
+                >
+                  <Home className="w-4 h-4" />
+                </button>
+              )}
+
               <button
                 onClick={() => {
                   onNewChat();
                   if (window.innerWidth < 1024) onClose();
                 }}
-                className={`flex-1 mr-2 flex items-center justify-center gap-2 py-2 px-3 rounded-xl ${THEME_COLORS.tokens.sidebarNewChatButton} active:scale-95 font-medium text-xs transition-all shadow-xs`}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl ${THEME_COLORS.tokens.sidebarNewChatButton} active:scale-95 font-medium text-xs transition-all shadow-xs`}
                 style={{
                   backgroundColor: 'var(--theme-accent)',
                   color: '#ffffff',
@@ -401,7 +418,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               <button
                 onClick={onClose}
-                className="p-2 rounded-xl text-neutral-400 hover:text-neutral-700 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-white/[0.08] active:scale-95 transition-all"
+                className="p-2 rounded-xl text-neutral-400 hover:text-neutral-700 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-white/[0.08] active:scale-95 transition-all shrink-0 cursor-pointer"
                 title="Close sidebar"
               >
                 <X className="w-4 h-4" />

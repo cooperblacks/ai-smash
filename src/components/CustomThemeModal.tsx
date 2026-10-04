@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Sparkles, Check, Sun, Moon, RotateCcw } from 'lucide-react';
+import { X, Sparkles, Check, Sun, Moon, RotateCcw, Lock } from 'lucide-react';
 import { ThemeDefinition, ThemeColors } from '../types';
 import { THEME_COLORS, AI_PROFILE } from '../constants';
 
@@ -90,6 +90,126 @@ const STARTER_PALETTES: Array<{ name: string; isDark: boolean; colors: ThemeColo
       assistantBubble: '#ffffff',
       assistantBubbleText: '#1a2e05',
       headerBg: 'rgba(247, 254, 231, 0.9)',
+    },
+  },
+  {
+    name: 'Sunset Radiance',
+    isDark: false,
+    colors: {
+      bg: '#fff7ed',
+      surface: '#ffffff',
+      card: '#ffedd5',
+      border: 'rgba(234, 88, 12, 0.18)',
+      text: '#431407',
+      textMuted: '#9a3412',
+      accent: '#ea580c',
+      accentHover: '#c2410c',
+      accentSoft: 'rgba(234, 88, 12, 0.15)',
+      userBubble: '#ea580c',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#431407',
+      headerBg: 'rgba(255, 247, 237, 0.9)',
+    },
+  },
+  {
+    name: 'Nordic Ice',
+    isDark: false,
+    colors: {
+      bg: '#f0f9ff',
+      surface: '#ffffff',
+      card: '#e0f2fe',
+      border: 'rgba(2, 132, 199, 0.18)',
+      text: '#082f49',
+      textMuted: '#0369a1',
+      accent: '#0284c7',
+      accentHover: '#0369a1',
+      accentSoft: 'rgba(2, 132, 199, 0.15)',
+      userBubble: '#0284c7',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#082f49',
+      headerBg: 'rgba(240, 249, 255, 0.9)',
+    },
+  },
+  {
+    name: 'Midnight Sakura',
+    isDark: true,
+    colors: {
+      bg: '#130e1a',
+      surface: '#1c1527',
+      card: '#271c36',
+      border: 'rgba(244, 114, 182, 0.22)',
+      text: '#fdf2f8',
+      textMuted: '#f472b6',
+      accent: '#f472b6',
+      accentHover: '#f687b3',
+      accentSoft: 'rgba(244, 114, 182, 0.2)',
+      userBubble: '#db2777',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#271c36',
+      assistantBubbleText: '#fdf2f8',
+      headerBg: 'rgba(28, 21, 39, 0.92)',
+    },
+  },
+  {
+    name: 'Emerald Grove',
+    isDark: false,
+    colors: {
+      bg: '#f0fdf4',
+      surface: '#ffffff',
+      card: '#dcfce7',
+      border: 'rgba(22, 163, 74, 0.18)',
+      text: '#052e16',
+      textMuted: '#15803d',
+      accent: '#16a34a',
+      accentHover: '#15803d',
+      accentSoft: 'rgba(22, 163, 74, 0.15)',
+      userBubble: '#16a34a',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#052e16',
+      headerBg: 'rgba(240, 253, 244, 0.9)',
+    },
+  },
+  {
+    name: 'Desert Honey',
+    isDark: false,
+    colors: {
+      bg: '#fffbeb',
+      surface: '#ffffff',
+      card: '#fef3c7',
+      border: 'rgba(217, 119, 6, 0.2)',
+      text: '#451a03',
+      textMuted: '#b45309',
+      accent: '#d97706',
+      accentHover: '#b45309',
+      accentSoft: 'rgba(217, 119, 6, 0.16)',
+      userBubble: '#d97706',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#ffffff',
+      assistantBubbleText: '#451a03',
+      headerBg: 'rgba(255, 251, 235, 0.9)',
+    },
+  },
+  {
+    name: 'Neon Synthwave',
+    isDark: true,
+    colors: {
+      bg: '#0b0d19',
+      surface: '#111528',
+      card: '#181d38',
+      border: 'rgba(236, 72, 153, 0.25)',
+      text: '#fdf4ff',
+      textMuted: '#f472b6',
+      accent: '#ec4899',
+      accentHover: '#f472b6',
+      accentSoft: 'rgba(236, 72, 153, 0.2)',
+      userBubble: '#ec4899',
+      userBubbleText: '#ffffff',
+      assistantBubble: '#181d38',
+      assistantBubbleText: '#fdf4ff',
+      headerBg: 'rgba(17, 21, 40, 0.92)',
     },
   },
 ];
@@ -205,9 +325,17 @@ export const CustomThemeModal: React.FC<CustomThemeModalProps> = ({
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-semibold tracking-tight font-heading">
-                Make Your Own Theme
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-semibold tracking-tight font-heading">
+                  Make Your Own Theme
+                </h2>
+                <div className="px-2 py-0.5 rounded-full bg-neutral-950/85 border border-amber-400/50 text-amber-300 shadow-xs flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5 text-amber-400" />
+                  <span className="text-[9px] font-mono font-bold tracking-wider uppercase leading-none">
+                    PREMIUM ONLY
+                  </span>
+                </div>
+              </div>
               <p className="text-xs text-neutral-400">
                 Pick colors and preview how your chat will look in real-time
               </p>
