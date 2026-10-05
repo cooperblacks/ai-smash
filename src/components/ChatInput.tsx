@@ -119,13 +119,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       clearTimeout(silenceTimerRef.current);
     }
     silenceTimerRef.current = setTimeout(() => {
-      // 5 seconds of silence detected -> send automatically
+      // 3 seconds of silence detected -> send automatically
       stopListening();
       const currentInput = inputRef.current.trim();
       if (currentInput.length > 0) {
         onSend(currentInput);
       }
-    }, 5000);
+    }, 3000);
   };
 
   const stopListening = () => {
@@ -390,7 +390,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
             {/* Right: Mic Button + Send or Stop button */}
             <div className="flex items-center gap-1.5 shrink-0 self-end pb-0.5">
-              {/* Mic Button: Speech to Text with 5s silence auto-send */}
+              {/* Mic Button: Speech to Text with silence detection auto-send */}
               <button
                 type="button"
                 onClick={toggleListening}
@@ -406,8 +406,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   micAvailable === false
                     ? 'No microphone detected or permission denied'
                     : isListening
-                    ? 'Listening... Speak now (auto-sends on 5s pause)'
-                    : 'Voice to Text (speaks into chat, auto-sends on 5s pause)'
+                    ? 'Listening... Speak now (auto-sends on pause)'
+                    : 'Voice to Text (speaks into chat, auto-sends on pause)'
                 }
                 aria-label="Toggle voice input"
               >

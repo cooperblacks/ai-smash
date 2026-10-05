@@ -631,12 +631,16 @@ export const AI_PROFILE = {
   },
   banners: [
     'https://muxai.vercel.app/Hana_banner1.png',
+    'https://muxai.vercel.app/Hana_banner2.png',
+    'https://muxai.vercel.app/Hana_banner3.png',
+    'https://muxai.vercel.app/Hana_banner4.png',
+    'https://muxai.vercel.app/Hana_banner5.png',
   ],
   vrmModelUrl: 'https://muxai.vercel.app/hana_v1.0_vrm1.vrm',
   socials: {
-    instagram: 'https://instagram.com/huanmux',
-    discord: 'https://discord.com/invite/hMjVaVJU76',
-    github: 'https://github.com/dwmk/ai-smash',
+    instagram: 'https://instagram.com/hana_mux',
+    discord: 'https://discord.gg/GRRHsFqHrK',
+    github: 'https://github.com/muxai/hana.ai',
   },
 };
 
