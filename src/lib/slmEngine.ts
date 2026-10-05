@@ -17,21 +17,6 @@ let activeGenerator: any = null;
 let activeModelId: string | null = null;
 let isModelLoading = false;
 let abortController: AbortController | null = null;
-let downloadAbortController: AbortController | null = null;
-let isDownloadCancelled = false;
-
-export function cancelModelDownload(): void {
-  isDownloadCancelled = true;
-  if (downloadAbortController) {
-    try {
-      downloadAbortController.abort();
-    } catch {
-      // ignore
-    }
-    downloadAbortController = null;
-  }
-  isModelLoading = false;
-}
 
 export async function detectBestHardwareDevice(preference: 'auto' | 'webgpu' | 'wasm' = 'auto'): Promise<HardwareDevice> {
   if (preference === 'wasm') return 'wasm';
@@ -88,17 +73,6 @@ export async function loadModelPipeline(
   }
 
   isModelLoading = true;
-  isDownloadCancelled = false;
-  downloadAbortController = new AbortController();
-  const currentController = downloadAbortController;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
-    if (currentController && !init?.signal) {
-      return originalFetch(input, { ...init, signal: currentController.signal });
-    }
-    return originalFetch(input, init);
-  };
-
   onProgress?.({
     modelId: model.id,
     status: 'downloading',
@@ -110,18 +84,11 @@ export async function loadModelPipeline(
   const device = await detectBestHardwareDevice(devicePref);
 
   try {
-    if (isDownloadCancelled) {
-      throw new Error('Download cancelled by user');
-    }
-
     // Pipeline creation with progress callback
     const generator = await pipeline('text-generation', model.hfRepo, {
       device: device === 'webgpu' ? 'webgpu' : 'wasm',
       dtype: model.defaultDtype,
       progress_callback: (item: { status?: string; progress?: number; loaded?: number; total?: number; file?: string }) => {
-        if (isDownloadCancelled) {
-          throw new Error('Download cancelled by user');
-        }
         if (!onProgress) return;
         const progressNum = typeof item.progress === 'number' ? Math.round(item.progress) : 0;
         onProgress({
@@ -134,10 +101,6 @@ export async function loadModelPipeline(
         });
       },
     });
-
-    if (isDownloadCancelled) {
-      throw new Error('Download cancelled by user');
-    }
 
     activeGenerator = generator;
     activeModelId = model.id;
@@ -155,23 +118,10 @@ export async function loadModelPipeline(
   } catch (error: unknown) {
     isModelLoading = false;
     const msg = error instanceof Error ? error.message : String(error);
-
-    // If cancelled by user, immediately abort without falling back to CPU or showing error
-    if (isDownloadCancelled || msg.includes('cancelled') || msg.includes('abort') || msg.includes('AbortError')) {
-      onProgress?.({
-        modelId: model.id,
-        status: 'idle',
-        progress: 0,
-        loadedBytes: 0,
-        totalBytes: 0,
-      });
-      throw new Error('Download cancelled by user');
-    }
-
     console.warn(`Failed to load ${model.name} with ${device}:`, msg);
 
     // If webgpu failed, try fallback to wasm
-    if (device === 'webgpu' && !isDownloadCancelled) {
+    if (device === 'webgpu') {
       try {
         console.log('Attempting fallback to WASM runtime...');
         onProgress?.({
@@ -187,9 +137,6 @@ export async function loadModelPipeline(
           device: 'wasm',
           dtype: 'q4',
           progress_callback: (item: { status?: string; progress?: number; loaded?: number; total?: number; file?: string }) => {
-            if (isDownloadCancelled) {
-              throw new Error('Download cancelled by user');
-            }
             if (!onProgress) return;
             const progressNum = typeof item.progress === 'number' ? Math.round(item.progress) : 0;
             onProgress({
@@ -203,10 +150,6 @@ export async function loadModelPipeline(
           },
         });
 
-        if (isDownloadCancelled) {
-          throw new Error('Download cancelled by user');
-        }
-
         activeGenerator = fallbackGenerator;
         activeModelId = model.id;
         isModelLoading = false;
@@ -219,9 +162,6 @@ export async function loadModelPipeline(
         });
         return fallbackGenerator;
       } catch (wasmErr) {
-        if (isDownloadCancelled) {
-          throw new Error('Download cancelled by user');
-        }
         console.error('WASM fallback also failed:', wasmErr);
       }
     }
@@ -236,11 +176,6 @@ export async function loadModelPipeline(
       error: msg,
     });
     throw new Error(msg);
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (downloadAbortController === currentController) {
-      downloadAbortController = null;
-    }
   }
 }
 
@@ -356,7 +291,7 @@ export async function streamPersonaResponse({
     const apiKey = loadStoredApiKey(providerId);
     const configuredSubmodel = loadStoredProviderModel(providerId) || model.customModel || '';
 
-    if (!apiKey) {
+    if (!apiKey && providerId !== 'gemini') {
       throw new Error(
         `API Key required for ${model.name}. Please enter your ${model.name} API key in the Model Selector dropdown.`
       );
@@ -527,7 +462,6 @@ export async function streamPersonaResponse({
 }
 
 export function stopCurrentGeneration(): void {
-  cancelModelDownload();
   if (abortController) {
     abortController.abort();
     abortController = null;

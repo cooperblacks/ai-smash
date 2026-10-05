@@ -1867,6 +1867,8 @@ export default function App() {
         isPremiumUser={isPremium}
         onRequirePremium={() => {
           setIsPremiumModalOpen(true);
+          setIsThemeSidebarOpen(false);
+          setIsSidebarOpen(false);
         }}
       />
 
