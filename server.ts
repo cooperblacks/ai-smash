@@ -20,6 +20,7 @@ import {
   redeemAccountCode,
   fetchUserSyncedData,
   syncUserConversationsAndThemes,
+  checkNeonDbConnected,
 } from './src/db/neondb';
 
 dotenv.config();
@@ -35,12 +36,24 @@ app.use(express.json({ limit: '10mb' }));
 const DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPTS.full;
 
 // Health check
-app.get('/api/health', (_req: Request, res: Response) => {
+app.get('/api/health', async (_req: Request, res: Response) => {
+  const hasDb = await checkNeonDbConnected();
   res.json({
     status: 'ok',
     persona: APP_INFO.name,
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+    hasNeonDb: hasDb,
   });
+});
+
+// Database & Account Status Check
+app.get('/api/account/status', async (_req: Request, res: Response) => {
+  try {
+    const connected = await checkNeonDbConnected();
+    res.json({ connected });
+  } catch {
+    res.json({ connected: false });
+  }
 });
 
 // Proxy endpoint for VRM 3D asset to bypass CORS redirect blocks
@@ -530,7 +543,7 @@ app.post('/api/chat/provider', async (req: Request, res: Response) => {
     const effectivePrompt = systemPrompt || DEFAULT_SYSTEM_PROMPT;
     const outputTokens = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
 
-    const effectiveKey = (apiKey || '').trim() || (provider === 'gemini' ? process.env.GEMINI_API_KEY || '' : '');
+    const effectiveKey = (apiKey || '').trim();
     if (!effectiveKey) {
       return res.status(400).json({
         error: `API key is required for ${provider || 'this provider'}. Please configure your API key in the Model Selector.`,
@@ -867,6 +880,81 @@ app.post('/api/account/sync', async (req: Request, res: Response) => {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to sync account data.';
     res.status(400).json({ error: message });
+  }
+});
+
+// ----------------------------------------------------
+// Discord Bot Gateway / REST API Proxy
+// ----------------------------------------------------
+app.post('/api/discord/test', async (req: Request, res: Response) => {
+  try {
+    const { botToken } = req.body || {};
+    const token = (botToken || '').trim();
+    if (!token) {
+      return res.status(400).json({ ok: false, message: 'Bot token cannot be empty.' });
+    }
+
+    const discordResp = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: {
+        Authorization: `Bot ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (discordResp.ok) {
+      const data = await discordResp.json();
+      return res.json({
+        ok: true,
+        message: `Connected successfully as @${data.username}#${data.discriminator || '0'} (ID: ${data.id})`,
+        details: data,
+      });
+    } else {
+      const err = await discordResp.json().catch(() => ({}));
+      return res.status(discordResp.status).json({
+        ok: false,
+        message: err.message || `Discord API error: ${discordResp.status} ${discordResp.statusText}`,
+      });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Network error communicating with Discord';
+    res.status(500).json({ ok: false, message: msg });
+  }
+});
+
+app.post('/api/discord/send', async (req: Request, res: Response) => {
+  try {
+    const { botToken, channelId, content, replyToMessageId } = req.body || {};
+    const token = (botToken || '').trim();
+    const chId = (channelId || '').trim();
+    const text = (content || '').trim();
+
+    if (!token || !chId || !text) {
+      return res.status(400).json({ ok: false, error: 'Missing botToken, channelId, or content' });
+    }
+
+    const payload: Record<string, unknown> = { content: text };
+    if (replyToMessageId) {
+      payload.message_reference = { message_id: replyToMessageId };
+    }
+
+    const discordResp = await fetch(`https://discord.com/api/v10/channels/${chId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bot ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await discordResp.json().catch(() => ({}));
+    if (discordResp.ok) {
+      return res.json({ ok: true, data });
+    } else {
+      return res.status(discordResp.status).json({ ok: false, error: data.message || 'Failed to send message' });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Error sending message to Discord';
+    res.status(500).json({ ok: false, error: msg });
   }
 });
 

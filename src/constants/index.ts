@@ -34,7 +34,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'classic-light',
     name: 'Classic Light',
     isDark: false,
-    description: 'Clean, crisp light canvas with angelic sky accents.',
+    description: 'Clean, crisp light',
     colors: {
       bg: '#f8f9fc',
       surface: '#ffffff',
@@ -56,7 +56,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'classic-dark',
     name: 'Classic Dark',
     isDark: true,
-    description: 'Midnight slate canvas with vibrant electric cyan.',
+    description: 'Midnight slate canvas',
     colors: {
       bg: '#0f1117',
       surface: '#13151f',
@@ -78,7 +78,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'strawberry-meadows',
     name: 'Strawberry Meadows',
     isDark: false,
-    description: 'Sweet ripe strawberries in a soft blooming rose meadow.',
+    description: 'Sweet ripe strawberries',
     colors: {
       bg: '#fff5f7',
       surface: '#ffffff',
@@ -100,7 +100,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'sunny-lemonade',
     name: 'Sunny Lemonade',
     isDark: false,
-    description: 'Sparkling sweet lemonade and warm sunny afternoons.',
+    description: 'Sparkling sweet lemonade',
     colors: {
       bg: '#fefce8',
       surface: '#ffffff',
@@ -122,7 +122,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'sweet-sunflowers',
     name: 'Sweet Sunflowers',
     isDark: false,
-    description: 'Golden sunlit petals, honey pollen, and rustic earth.',
+    description: 'Golden sunlit petals',
     colors: {
       bg: '#fdfaf3',
       surface: '#ffffff',
@@ -144,7 +144,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'peppermint-syrup',
     name: 'Peppermint Syrup',
     isDark: false,
-    description: 'Chilled botanical mint, herbal syrups, and crisp breeze.',
+    description: 'Chilled botanical mint',
     colors: {
       bg: '#f0fdf9',
       surface: '#ffffff',
@@ -166,7 +166,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'lilac-dream',
     name: 'Lilac Dream',
     isDark: false,
-    description: 'Soft lavender mist with soothing purple accents.',
+    description: 'Soft lavender mist',
     colors: {
       bg: '#faf5ff',
       surface: '#ffffff',
@@ -188,7 +188,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'ocean-breeze',
     name: 'Ocean Breeze',
     isDark: false,
-    description: 'Fresh sea spray, crystal cyan, and airy light.',
+    description: 'Fresh sea spray',
     colors: {
       bg: '#ecfeff',
       surface: '#ffffff',
@@ -210,7 +210,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'cyber-velvet',
     name: 'Cyber Velvet',
     isDark: true,
-    description: 'Deep violet neon nightfall with vibrant luminescence.',
+    description: 'Deep violet neon',
     colors: {
       bg: '#0b0b14',
       surface: '#121222',
@@ -232,7 +232,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'matcha-blossom',
     name: 'Matcha Blossom',
     isDark: false,
-    description: 'Serene Japanese green tea garden with fresh lime herbal notes.',
+    description: 'Serene Japanese green',
     colors: {
       bg: '#f7fee7',
       surface: '#ffffff',
@@ -254,7 +254,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'sunset-radiance',
     name: 'Sunset Radiance',
     isDark: false,
-    description: 'Warm coral, amber dusk, and golden horizon twilight.',
+    description: 'Warm coral, amber',
     colors: {
       bg: '#fff7ed',
       surface: '#ffffff',
@@ -276,7 +276,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'nordic-ice',
     name: 'Nordic Ice',
     isDark: false,
-    description: 'Chilled glacial blue, crisp polar snow, and airy daylight.',
+    description: 'Chilled glacial blue',
     colors: {
       bg: '#f0f9ff',
       surface: '#ffffff',
@@ -298,7 +298,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'midnight-sakura',
     name: 'Midnight Sakura',
     isDark: true,
-    description: 'Deep midnight plum nightfall with delicate cherry blossom petals.',
+    description: 'Deep midnight plum',
     colors: {
       bg: '#130e1a',
       surface: '#1c1527',
@@ -320,7 +320,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'emerald-grove',
     name: 'Emerald Grove',
     isDark: false,
-    description: 'Lush botanical moss, deep forest canopy, and tranquil greens.',
+    description: 'Lush botanical moss',
     colors: {
       bg: '#f0fdf4',
       surface: '#ffffff',
@@ -342,7 +342,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'desert-honey',
     name: 'Desert Honey',
     isDark: false,
-    description: 'Sun-warmed sand dunes, caramelized amber, and raw wild honey.',
+    description: 'Sun-warmed sand dunes',
     colors: {
       bg: '#fffbeb',
       surface: '#ffffff',
@@ -364,7 +364,7 @@ export const PRESET_THEMES: ThemeDefinition[] = [
     id: 'neon-synthwave',
     name: 'Neon Synthwave',
     isDark: true,
-    description: 'Electric magenta and cyan retrofuture nightscape.',
+    description: 'Electric magenta and',
     colors: {
       bg: '#0b0d19',
       surface: '#111528',
@@ -447,10 +447,10 @@ export const THEME_COLORS = {
     // Header & Navigation
     headerBg: 'bg-[var(--theme-header-bg)]',
     headerBorder: 'border-b border-[var(--theme-border)]',
-    headerGradientMaskBottom: 'bg-gradient-to-b from-white/70 via-white/85 to-white dark:from-[#13151f]/70 dark:via-[#13151f]/85 dark:to-[#13151f]',
-    headerGradientMaskX: 'bg-gradient-to-r from-white via-transparent to-white dark:from-[#13151f] dark:via-transparent dark:to-[#13151f]',
+    headerGradientMaskBottom: 'bg-gradient-to-b from-white/70 via-white/85 to-white dark:from-[var(--theme-surface)]/70 dark:via-[var(--theme-surface)]/85 dark:to-[var(--theme-surface)]',
+    headerGradientMaskX: 'bg-gradient-to-r from-white via-transparent to-white dark:from-[var(--theme-surface)] dark:via-transparent dark:to-[var(--theme-surface)]',
     avatarRing: 'ring-1 ring-black/10 dark:ring-white/10 group-hover:ring-[var(--theme-accent)]',
-    avatarBorder: 'border-white dark:border-[#13151f]',
+    avatarBorder: 'border-white dark:border-[var(--theme-surface)]',
 
     // Chat Composer & Input
     composerContainer: 'bg-[var(--theme-surface)] border-t border-[var(--theme-border)]',
@@ -462,7 +462,7 @@ export const THEME_COLORS = {
 
     // Message Bubbles
     userBubble: 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 font-normal rounded-tr-sm shadow-xs selection:bg-[var(--theme-accent-soft)] selection:text-[var(--theme-text)]',
-    assistantBubble: 'bg-white text-neutral-800 dark:bg-[#1c1f2e] dark:text-neutral-100 rounded-tl-sm border border-black/[0.08] dark:border-white/[0.08] shadow-xs',
+    assistantBubble: 'bg-white text-neutral-800 dark:bg-[var(--theme-card)] dark:text-neutral-100 rounded-tl-sm border border-black/[0.08] dark:border-white/[0.08] shadow-xs',
     dateSeparatorText: 'text-[var(--theme-text-muted)] bg-[var(--theme-bg)]',
     dateSeparatorLine: 'bg-[var(--theme-border)]',
     starterChip: 'bg-[var(--theme-card)] hover:bg-[var(--theme-surface)] border border-[var(--theme-border)] hover:border-[var(--theme-accent)] text-[var(--theme-text)]',

@@ -33,23 +33,6 @@
   --theme-header-bg: rgba(255, 255, 255, 0.88);
 }
 
-.dark {
-  --theme-bg: #0f1117;
-  --theme-surface: #13151f;
-  --theme-card: #1c1f2e;
-  --theme-border: rgba(255, 255, 255, 0.08);
-  --theme-text: #f1f2f6;
-  --theme-text-muted: #94a3b8;
-  --theme-accent: #55d2f6;
-  --theme-accent-hover: #8ce0fa;
-  --theme-accent-soft: rgba(85, 210, 246, 0.18);
-  --theme-user-bubble: #ffffff;
-  --theme-user-bubble-text: #0f1117;
-  --theme-assistant-bubble: #1c1f2e;
-  --theme-assistant-bubble-text: #f1f2f6;
-  --theme-header-bg: rgba(19, 21, 31, 0.88);
-}
-
 @layer base {
   html {
     scroll-behavior: smooth;
@@ -62,8 +45,8 @@
     cursor: url("http://huanmux.github.io/assets/image/diamond-cursor.cur"), url("https://huanmux.github.io/assets/image/diamond-cursor.cur"), auto;
   }
   .dark body, html.dark body {
-    background-color: var(--theme-bg, #0f1117);
-    color: var(--theme-text, #f1f2f6);
+    background-color: var(--theme-bg);
+    color: var(--theme-text);
   }
   h1, h2, h3 {
     font-family: 'Faculty Glyphic', serif, sans-serif;

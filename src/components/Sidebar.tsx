@@ -12,6 +12,7 @@ import {
   Settings,
   LogOut,
   Crown,
+  Cloud,
   Sparkles,
   UserPlus,
   LogIn,
@@ -95,6 +96,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [profileStatusMsg, setProfileStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
   const [isRedeeming, setIsRedeeming] = useState(false);
+
+  // Check NeonDB connection status
+  const [isDbConnected, setIsDbConnected] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetch('/api/account/status')
+      .then((r) => r.json())
+      .then((data) => {
+        if (isMounted) {
+          setIsDbConnected(Boolean(data?.connected));
+        }
+      })
+      .catch(() => {
+        if (isMounted) setIsDbConnected(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const holdIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const holdStartTimeRef = useRef<number>(0);
@@ -505,114 +526,134 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
 
-            {/* Bottom Account Section (Replaces Offline SLM Cache) */}
-            <div
-              className="p-3 border-t bg-neutral-50/80 dark:bg-white/[0.02] text-xs"
-              style={{ borderColor: 'var(--theme-border)' }}
-            >
-              {!accountUser ? (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5 font-semibold text-neutral-800 dark:text-neutral-200">
-                      <Crown className="w-3.5 h-3.5 text-amber-500" />
-                      <span>MuxAI Account</span>
-                    </span>
-                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold">
-                      Optional
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-snug">
-                    (Optional) Sync your conversations and customizations everywhere on other devices.
-                  </p>
-                  <div className="grid grid-cols-2 gap-2 pt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAuthModal('signup')}
-                      className="py-2 px-3 rounded-xl font-semibold text-xs text-white flex items-center justify-center gap-1.5 shadow-xs active:scale-95 transition-all cursor-pointer"
-                      style={{ backgroundColor: 'var(--theme-accent)' }}
-                    >
-                      <UserPlus className="w-3.5 h-3.5" />
-                      <span>Sign Up</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAuthModal('signin')}
-                      className="py-2 px-3 rounded-xl font-semibold text-xs border border-black/10 dark:border-white/10 bg-white dark:bg-white/[0.05] text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/[0.1] flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
-                    >
-                      <LogIn className="w-3.5 h-3.5" />
-                      <span>Sign In</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="relative w-9 h-9 rounded-full overflow-hidden ring-1 ring-black/10 dark:ring-white/15 shrink-0 bg-neutral-200 dark:bg-neutral-800">
-                      <img
-                        src={accountUser.avatar_url || DEFAULT_USER_AVATAR_URL}
-                        alt={accountUser.display_name}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src = DEFAULT_USER_AVATAR_URL;
-                        }}
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-xs text-neutral-900 dark:text-white truncate">
-                          {accountUser.display_name}
-                        </span>
-                        {isPremium ? (
-                          <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-300 font-bold shrink-0">
-                            PRO
-                          </span>
-                        ) : (
-                          <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 font-medium shrink-0">
-                            FREE
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[11px] text-neutral-400 dark:text-neutral-500 font-mono truncate block">
-                        @{accountUser.username}
+            {/* Bottom Account Section (Only shown if NeonDB is connected) */}
+            {isDbConnected && (
+              <div
+                className="p-3 border-t bg-neutral-50/80 dark:bg-white/[0.02] text-xs"
+                style={{ borderColor: 'var(--theme-border)' }}
+              >
+                {!accountUser ? (
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-neutral-800 dark:text-neutral-200">
+                        <Cloud className="w-3.5 h-3.5 text-sky-500" />
+                        <span>MuxAI Account</span>
+                      </span>
+                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold">
+                        Optional
                       </span>
                     </div>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-snug">
+                      (Optional) Sync your conversations and customizations everywhere on other devices.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAuthModal('signup')}
+                        className="py-2 px-3 rounded-xl font-semibold text-xs text-white flex items-center justify-center gap-1.5 shadow-xs active:scale-95 transition-all cursor-pointer"
+                        style={{ backgroundColor: 'var(--theme-accent)' }}
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>Sign Up</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAuthModal('signin')}
+                        className="py-2 px-3 rounded-xl font-semibold text-xs border border-black/10 dark:border-white/10 bg-white dark:bg-white/[0.05] text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-white/[0.1] flex items-center justify-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <LogIn className="w-3.5 h-3.5" />
+                        <span>Sign In</span>
+                      </button>
+                    </div>
                   </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="relative w-9 h-9 rounded-full overflow-hidden ring-1 ring-black/10 dark:ring-white/15 shrink-0 bg-neutral-200 dark:bg-neutral-800">
+                        <img
+                          src={accountUser.avatar_url || DEFAULT_USER_AVATAR_URL}
+                          alt={accountUser.display_name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src = DEFAULT_USER_AVATAR_URL;
+                          }}
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-xs text-neutral-900 dark:text-white truncate">
+                            {accountUser.display_name}
+                          </span>
+                          {isPremium ? (
+                            <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-300 font-bold shrink-0">
+                              PRO
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-mono uppercase px-1.5 py-0.2 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 font-medium shrink-0">
+                              FREE
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-neutral-400 dark:text-neutral-500 font-mono truncate block">
+                          @{accountUser.username}
+                        </span>
+                      </div>
+                    </div>
 
-                  {/* Settings Icon & Log Out Icon */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={handleOpenProfileSettings}
-                      className="p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200/60 dark:hover:bg-white/[0.08] active:scale-95 transition-all cursor-pointer"
-                      title="Edit profile, redeem codes & account settings"
-                      aria-label="Account settings"
-                    >
-                      <Settings className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSignOutClick}
-                      className="p-2 rounded-xl text-neutral-500 hover:text-red-600 dark:text-neutral-400 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 active:scale-95 transition-all cursor-pointer"
-                      title="Log out"
-                      aria-label="Log out"
-                    >
-                      <LogOut className="w-4 h-4" />
-                    </button>
+                    {/* Settings Icon & Log Out Icon */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={handleOpenProfileSettings}
+                        className="p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-neutral-200/60 dark:hover:bg-white/[0.08] active:scale-95 transition-all cursor-pointer"
+                        title="Edit profile, redeem codes & account settings"
+                        aria-label="Account settings"
+                      >
+                        <Settings className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSignOutClick}
+                        className="p-2 rounded-xl text-neutral-500 hover:text-red-600 dark:text-neutral-400 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 active:scale-95 transition-all cursor-pointer"
+                        title="Log out"
+                        aria-label="Log out"
+                      >
+                        <LogOut className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-
-              <div className="mt-2.5 pt-2 border-t border-neutral-200/60 dark:border-neutral-800/80 text-center">
-                <a
-                  href="https://mux8.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`text-[10px] font-mono text-neutral-400 dark:text-neutral-500 ${THEME_COLORS.tokens.accentTextHover} transition-colors`}
-                  title="Visit MuxAI"
-                >
-                  {APP_INFO.copyright}
-                </a>
+                )}
               </div>
+            )}
+
+            {/* No Database Connected Indicator (still appears if DB is not connected even when Account panel is hidden) */}
+            {isDbConnected === false && (
+              <div
+                className="p-3 border-t bg-neutral-50/80 dark:bg-white/[0.02] text-xs"
+                style={{ borderColor: 'var(--theme-border)' }}
+              >
+                <div className="py-2 px-2.5 rounded-xl bg-neutral-100 dark:bg-white/[0.04] border border-neutral-200/80 dark:border-white/[0.08] text-center flex items-center justify-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500/80 shrink-0" />
+                  <span className="text-[10px] font-mono font-medium text-neutral-500 dark:text-neutral-400">
+                    No Database Connected
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div
+              className="p-2.5 border-t text-center bg-neutral-50/50 dark:bg-white/[0.01]"
+              style={{ borderColor: 'var(--theme-border)' }}
+            >
+              <a
+                href="https://mux8.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`text-[10px] font-mono text-neutral-400 dark:text-neutral-500 ${THEME_COLORS.tokens.accentTextHover} transition-colors`}
+                title="Visit MuxAI"
+              >
+                {APP_INFO.copyright}
+              </a>
             </div>
           </aside>
         </>
@@ -643,7 +684,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     color: 'var(--theme-accent)',
                   }}
                 >
-                  <Crown className="w-5 h-5" />
+                  <UserIcon className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold font-heading text-neutral-900 dark:text-white">

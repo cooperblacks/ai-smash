@@ -477,7 +477,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   const currentSubmodel = providerModels[providerId] || config?.defaultModel || '';
                   const isExpanded = expandedProviderId === providerId;
                   const showKey = Boolean(showKeyMap[providerId]);
-                  const hasKey = Boolean(currentKey) || providerId === 'gemini';
+                  const hasKey = Boolean(currentKey);
 
                   return (
                     <div
@@ -524,9 +524,6 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               >
                                 {hasKey ? 'KEY READY' : 'KEY NEEDED'}
                               </span>
-                            </span>
-                            <span className="text-[10px] font-mono text-neutral-500 dark:text-neutral-400 shrink-0">
-                              {currentSubmodel}
                             </span>
                           </div>
 
@@ -588,11 +585,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                                   type={showKey ? 'text' : 'password'}
                                   value={currentKey}
                                   onChange={(e) => handleUpdateApiKey(providerId, e.target.value)}
-                                  placeholder={
-                                    providerId === 'gemini'
-                                      ? 'Optional custom Gemini key (or uses server key)'
-                                      : `Paste ${model.name} API key...`
-                                  }
+                                  placeholder={`Paste ${model.name} API key...`}
                                   className="w-full px-2.5 py-1 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
                                 />
                               </div>

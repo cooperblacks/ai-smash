@@ -118,6 +118,18 @@ function getNeonPool(): PoolType | null {
   return neonPool;
 }
 
+export async function checkNeonDbConnected(): Promise<boolean> {
+  const pool = getNeonPool();
+  if (!pool) return false;
+  try {
+    const client = await pool.connect();
+    client.release();
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
 const INIT_NEONDB_SQL = `
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,

@@ -81,6 +81,8 @@ import { SplashScreen } from './components/SplashScreen';
 import { LandingPage } from './components/LandingPage';
 import { AddIntegrationModal } from './components/AddIntegrationModal';
 import { DocsPage } from './components/DocsPage';
+import { ActDirectorPage } from './components/ActDirectorPage';
+import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
 import { dispatchChatToWebhooks } from './lib/integrations';
 import { lipSyncManager } from './lib/lipSync';
@@ -101,6 +103,9 @@ export default function App() {
       if (path.startsWith('/docs')) {
         return path;
       }
+      if (path.startsWith('/act')) {
+        return '/act';
+      }
       return path.startsWith('/chat') ? '/chat' : '/';
     }
     return '/';
@@ -118,6 +123,10 @@ export default function App() {
         setCurrentRoute(path);
         return;
       }
+      if (path.startsWith('/act')) {
+        setCurrentRoute('/act');
+        return;
+      }
       setCurrentRoute(path.startsWith('/chat') ? '/chat' : '/');
     };
     window.addEventListener('popstate', handlePopState);
@@ -131,6 +140,8 @@ export default function App() {
         normalized = '/chat';
       } else if (path.startsWith('/docs')) {
         normalized = path;
+      } else if (path.startsWith('/act')) {
+        normalized = '/act';
       }
       window.history.pushState(null, '', normalized);
       setCurrentRoute(normalized);
@@ -222,6 +233,7 @@ export default function App() {
   const [activeThemeId, setActiveThemeId] = useState<string>(() => loadActiveThemeId());
   const [isThemeSidebarOpen, setIsThemeSidebarOpen] = useState(false);
   const [isCustomThemeModalOpen, setIsCustomThemeModalOpen] = useState(false);
+  const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
 
   // Active theme resolved from presets and stored custom themes
   const activeTheme = useMemo(
@@ -1732,6 +1744,19 @@ export default function App() {
     );
   }
 
+  // Render Secret Director Stage at '/act'
+  if (currentRoute.startsWith('/act')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <ActDirectorPage
+          onBackToChat={() => navigateTo('/chat')}
+          onNavigateHome={() => navigateTo('/')}
+        />
+      </>
+    );
+  }
+
   // Render Landing Page at default root route '/'
   if (currentRoute === '/') {
     return (
@@ -1841,10 +1866,14 @@ export default function App() {
         onSelectOutfit={handleSelectOutfit}
         isPremiumUser={isPremium}
         onRequirePremium={() => {
-          setIsThemeSidebarOpen(false);
-          setIsSidebarOpen(true);
-          setExternalAuthModalRequest((n) => n + 1);
+          setIsPremiumModalOpen(true);
         }}
+      />
+
+      {/* Premium VIP Tier Pop-up Modal */}
+      <PremiumModal
+        isOpen={isPremiumModalOpen}
+        onClose={() => setIsPremiumModalOpen(false)}
       />
 
       {/* Main Viewport */}

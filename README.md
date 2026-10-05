@@ -36,6 +36,10 @@ The integrated 3D view features a humanoid VRM 1.0 avatar with retargeted Mixamo
 - **Cloud & Self-Hosted Ollama Support**: Connect to cloud Ollama servers or private local endpoints (e.g., `http://localhost:11434`), featuring live auto-ping, model tag enumeration, and CORS-friendly streaming.
 - **Continuous Health Check & Auto-Failover**: Automated 5-second health checks continuously monitor remote servers; if a connected server goes offline, the app seamlessly switches to a local in-browser model and alerts the user with an auto-dismissing notice.
 - **Comprehensive Session Management**: Complete client-side conversation storage, full-text dialogue search, message audio playback, editable user prompts, customizable token budgets, and granular cache/storage management.
+- **Dynamic Multi-Theme Engine & Custom Palette Creator**: Rich selection of dynamic light and dark theme presets (Classic Light, Classic Dark, Cyber Velvet, Midnight Sakura, Neon Synthwave, Strawberry Meadows, Sunny Lemonade, Sweet Sunflowers, Peppermint Syrup, Matcha Blossom, Emerald Grove, Desert Honey) with dynamic CSS variables, custom color picker modal, and persistent theme definitions.
+- **Wardrobe System with Live 3D Previews**: Switch between diverse VRM humanoid outfits (Mint Maid Apron, Candy Maid Apron, Imperial Noblewoman, Lavender Grace Dress, Sakura Spring, School Uniform, Streetlit Hoodie, Mux Future, Cozy Canadian Winter) rendered via shared WebGL offscreen portrait viewports.
+- **Optional Cloud Account Sync (NeonDB PostgreSQL)**: Optional account authentication and cloud backup for conversations, custom themes, and user settings across devices, preserving user privacy without mandatory lock-in.
+- **Webhook Integrations Ecosystem**: Connect AI Smash conversations with automated workflow pipelines including Discord, Slack, n8n, and Zapier webhooks.
 
 ---
 
@@ -43,42 +47,65 @@ The integrated 3D view features a humanoid VRM 1.0 avatar with retargeted Mixamo
 
 ```
 edge-ai-platform/
-├── server.ts                    # Express backend (VRM proxy, animation proxy, Ollama & Gemini streaming)
+├── server.ts                    # Express backend (VRM proxy, animation proxy, NeonDB auth, Ollama & Gemini streaming)
 ├── src/
 │   ├── App.tsx                  # Main application orchestrator & chat interface
 │   ├── components/
+│   │   ├── AddIntegrationModal.tsx # Webhook integrations modal (Discord, Slack, n8n, Zapier)
+│   │   ├── AttachedFilesPreview.tsx # Media, document, and attachment chips
 │   │   ├── ChatInput.tsx        # Message input, model selector trigger, token budget, and send controls
+│   │   ├── CustomThemeModal.tsx # Interactive color palette builder for custom themes
+│   │   ├── DocsPage.tsx         # Documentation and guide center
 │   │   ├── Header.tsx           # Navigation bar, profile access, 3D mode switch, and modal triggers
+│   │   ├── LandingHeroCanvas.tsx # Landing page interactive 3D hero viewport
+│   │   ├── LandingPage.tsx      # Platform overview, feature highlights & showcase
 │   │   ├── MaxTokensSelector.tsx # Configurable token budget dropdown
 │   │   ├── MessageItem.tsx      # Individual message card, speech synthesis, and token metrics
 │   │   ├── MessageList.tsx      # Conversation scrollable feed with starter prompts
 │   │   ├── ModelSelector.tsx    # Drop-up menu for in-browser SLMs and cloud/local Ollama models
 │   │   ├── SearchBar.tsx        # In-conversation search and message filter modal
 │   │   ├── SettingsModal.tsx    # Hardware acceleration preferences & browser storage manager
-│   │   ├── Sidebar.tsx          # Conversation session management, search, and delete drawer
+│   │   ├── Sidebar.tsx          # Conversation sessions, MuxAI account auth, and storage drawer
 │   │   ├── SplashScreen.tsx     # Startup brand intro screen with auto-dismiss
 │   │   ├── TelemetryBar.tsx     # Real-time hardware compute, speed, and latency status bar
+│   │   ├── ThemeSidebar.tsx     # Themes & live 3D wardrobe portrait gallery
 │   │   ├── TwitterProfileModal.tsx # Persona social profile modal with banner crossfade
-│   │   └── VRMCanvas.tsx        # Three.js 3D VRM humanoid avatar, Mixamo idle, look-at & full-body physics
+│   │   ├── VRMCanvas.tsx        # Three.js 3D VRM humanoid avatar, Mixamo idle, look-at & full-body physics
+│   │   └── VRMSubtitles.tsx     # Real-time karaoke-style viseme speech subtitles
 │   ├── constants/
 │   │   └── index.ts             # Central single configuration file (prompts, models, endpoints, constants)
+│   ├── db/
+│   │   ├── init_neondb.sql      # Database schema for accounts, sessions, conversations, and custom themes
+│   │   └── neondb.ts            # NeonDB PostgreSQL client for accounts and cloud sync
 │   ├── lib/
 │   │   ├── audio.ts             # Web Audio API acoustic effects and high-quality voice resolution
+│   │   ├── integrations.ts      # Webhook dispatch engine for Discord, Slack, n8n, and Zapier
 │   │   ├── lipSync.ts           # SpeechSynthesis phoneme-to-viseme mapping & facial articulation
 │   │   ├── models.ts            # Local SLM specifications, VRAM budgets, and model catalog
 │   │   ├── ollama.ts            # Ollama connectivity ping, tags enumeration, and streaming client
 │   │   ├── prompts.ts           # System prompt sanitization and text output cleanup
 │   │   ├── slmEngine.ts         # Transformers.js ONNX Web pipeline, device detection, and token streaming
-│   │   └── storage.ts           # Storage persistence, cache cleanup, and state management
+│   │   ├── storage.ts           # Storage persistence, cache cleanup, and state management
+│   │   └── vrmCache.ts          # Cache API & IndexedDB manager for 3D VRM models and animations
 │   ├── types/
 │   │   └── index.ts             # Core TypeScript interfaces for models, messages, and telemetry
-│   ├── index.css                # Tailwind CSS styling and custom animations
+│   ├── index.css                # Tailwind CSS styling, dynamic theme tokens, and custom animations
 │   └── main.tsx                 # React DOM root entry point
 ├── index.html                   # HTML entry point with metadata & OpenGraph tags
 ├── package.json                 # Project dependencies, scripts, and runtime engines
 ├── tsconfig.json                # TypeScript compiler configuration
 └── vite.config.ts               # Vite bundler configuration
 ```
+
+---
+
+## Cloud Sync & Cross-Device Portability
+
+AI Smash provides an optional, privacy-respecting account system:
+
+- **Optional by Design**: All core features—including 3D rendering, offline SLMs, sound synthesis, and local conversation history—work completely without creating an account.
+- **Encrypted Session Sync**: When logged into a MuxAI account, conversations and custom themes are synced automatically to serverless NeonDB PostgreSQL with debounced state synchronization.
+- **Profile Customization**: Users can personalize display names, handles, avatars, and redeem access codes for premium outfit tiers.
 
 ---
 
