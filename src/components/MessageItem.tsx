@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Copy, Check, RotateCcw, Volume2, CheckCheck, Pencil } from 'lucide-react';
 import { Message } from '../types';
 import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
+import { CodeBlockView } from './CodeBlockView';
 
 interface MessageItemProps {
   message: Message;
@@ -84,10 +85,50 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     });
   };
 
+  // Helper to render markdown-formatted code blocks and regular highlighted text
+  const renderFormattedContent = (content: string) => {
+    if (!content.includes('```')) {
+      return (
+        <div className="whitespace-pre-wrap break-words">
+          {renderHighlightedContent(content)}
+        </div>
+      );
+    }
+
+    const parts = content.split(/(```[\s\S]*?```)/g);
+    return (
+      <div className="space-y-1.5 break-words min-w-0 max-w-full w-full">
+        {parts.map((part, index) => {
+          if (part.startsWith('```') && part.endsWith('```')) {
+            const inner = part.slice(3, -3);
+            const firstNewline = inner.indexOf('\n');
+            let lang = '';
+            let code = inner;
+            if (firstNewline !== -1) {
+              lang = inner.slice(0, firstNewline).trim();
+              code = inner.slice(firstNewline + 1);
+            }
+            return (
+              <div key={index} className="my-1.5 select-text min-w-0 max-w-full w-full overflow-hidden">
+                <CodeBlockView code={code.trimEnd()} lang={lang || 'console'} />
+              </div>
+            );
+          }
+          if (!part.trim()) return null;
+          return (
+            <div key={index} className="whitespace-pre-wrap min-w-0 max-w-full break-words">
+              {renderHighlightedContent(part)}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div
       ref={itemRef}
-      className={`group w-full flex gap-3 px-3 sm:px-6 py-1.5 transition-colors ${
+      className={`group w-full min-w-0 flex gap-3 px-3 sm:px-6 py-1.5 transition-colors ${
         isUser ? 'justify-end' : 'justify-start'
       }`}
     >
@@ -110,7 +151,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
       )}
 
       {/* Message Bubble & Content Container */}
-      <div className={`flex flex-col max-w-[85%] sm:max-w-[75%] ${isUser ? 'items-end' : 'items-start'}`}>
+      <div className={`flex flex-col min-w-0 max-w-[85%] sm:max-w-[75%] ${isUser ? 'items-end' : 'items-start'}`}>
         {/* Timestamp header for assistant */}
         {!isUser && (
           <div className="flex items-center gap-2 mb-1 text-xs">
@@ -157,16 +198,14 @@ export const MessageItem: React.FC<MessageItemProps> = ({
           </div>
         ) : (
           <div
-            className={`relative px-4 py-2.5 rounded-2xl text-[14.5px] leading-relaxed transition-all ${
+            className={`relative px-4 py-2.5 rounded-2xl text-[14.5px] leading-relaxed transition-all min-w-0 max-w-full overflow-hidden ${
               isUser
                 ? `${THEME_COLORS.tokens.userBubble} theme-user-bubble`
                 : `${THEME_COLORS.tokens.assistantBubble} theme-assistant-bubble`
             }`}
           >
-            {/* Text Content with highlighted search matches */}
-            <div className="whitespace-pre-wrap break-words">
-              {renderHighlightedContent(message.content)}
-            </div>
+            {/* Text Content with highlighted search matches & markdown code syntax blocks */}
+            {renderFormattedContent(message.content)}
 
             {/* User Delivery tick & Timestamp inside bubble */}
             {isUser && (

@@ -2,7 +2,17 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Paperclip, ChevronDown, Trash2, Check, AlertCircle, ExternalLink, Settings, X, Volume2, ShieldAlert } from 'lucide-react';
 import { IntegrationConfig, IntegrationPlatform } from '../types';
 import { INTEGRATION_LIBRARY, IntegrationLibraryItem, THEME_COLORS } from '../constants';
-import { testDiscordConnection, testSlackConnection, testN8nConnection, testZapierConnection } from '../lib/integrations';
+import {
+  testDiscordConnection,
+  testSlackConnection,
+  testN8nConnection,
+  testZapierConnection,
+  testTwitchConnection,
+  testYouTubeConnection,
+  testGmailConnection,
+  testSheetsConnection,
+  testMcpConnection,
+} from '../lib/integrations';
 
 interface ChatPlusMenuProps {
   onAttachFilesClick: () => void;
@@ -81,6 +91,46 @@ export const ChatPlusMenu: React.FC<ChatPlusMenuProps> = ({
         });
       } else if (integration.platform === 'zapier') {
         const res = await testZapierConnection(integration.webhookUrl || '');
+        setTestStatus((prev) => ({ ...prev, [integration.id]: { ok: res.ok, msg: res.message } }));
+        onUpdateIntegration({
+          ...integration,
+          status: res.ok ? 'connected' : 'error',
+          statusMessage: res.message,
+        });
+      } else if (integration.platform === 'twitch') {
+        const res = await testTwitchConnection(integration.twitchChannel || '', integration.botToken);
+        setTestStatus((prev) => ({ ...prev, [integration.id]: { ok: res.ok, msg: res.message } }));
+        onUpdateIntegration({
+          ...integration,
+          status: res.ok ? 'connected' : 'error',
+          statusMessage: res.message,
+        });
+      } else if (integration.platform === 'youtube') {
+        const res = await testYouTubeConnection(integration.apiKey || '', integration.youtubeVideoId || '');
+        setTestStatus((prev) => ({ ...prev, [integration.id]: { ok: res.ok, msg: res.message } }));
+        onUpdateIntegration({
+          ...integration,
+          status: res.ok ? 'connected' : 'error',
+          statusMessage: res.message,
+        });
+      } else if (integration.platform === 'gmail') {
+        const res = await testGmailConnection(integration.googleAccessToken || '', integration.userEmail);
+        setTestStatus((prev) => ({ ...prev, [integration.id]: { ok: res.ok, msg: res.message } }));
+        onUpdateIntegration({
+          ...integration,
+          status: res.ok ? 'connected' : 'error',
+          statusMessage: res.message,
+        });
+      } else if (integration.platform === 'sheets') {
+        const res = await testSheetsConnection(integration.googleAccessToken || '', integration.spreadsheetId || '', integration.sheetRange);
+        setTestStatus((prev) => ({ ...prev, [integration.id]: { ok: res.ok, msg: res.message } }));
+        onUpdateIntegration({
+          ...integration,
+          status: res.ok ? 'connected' : 'error',
+          statusMessage: res.message,
+        });
+      } else if (integration.platform === 'mcp') {
+        const res = await testMcpConnection(integration.mcpServerUrl, integration.apiKey);
         setTestStatus((prev) => ({ ...prev, [integration.id]: { ok: res.ok, msg: res.message } }));
         onUpdateIntegration({
           ...integration,

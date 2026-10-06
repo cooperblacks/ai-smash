@@ -13,7 +13,7 @@
  * - UI timings, timeouts, badge themes, and default settings
  */
 
-import type { UserSettings, ThemeDefinition, WardrobeOutfit, ApiProviderConfig, ApiProviderId, IntegrationPlatform } from '../types';
+import type { UserSettings, ThemeDefinition, WardrobeOutfit, ApiProviderConfig, ApiProviderId, IntegrationPlatform, TimelineCue, ActEmotionItem } from '../types';
 
 // =====================================================================
 // TYPOGRAPHY CONFIGURATION (Google Fonts)
@@ -1157,6 +1157,198 @@ export const INTEGRATION_LIBRARY: IntegrationLibraryItem[] = [
       'Automatic JSON payload formatting with user & assistant turn data',
     ],
   },
+  {
+    platform: 'twitch',
+    name: 'Twitch Live Stream & Voice',
+    tagline: 'Viewer chat-to-input-to-output-to-voice pipeline',
+    description:
+      'Connect your Twitch stream chat. Listens to live stream messages via Twitch IRC WebSocket, pipes viewer chats to the AI persona, and synthesizes audio responses with 3D VRM lip sync.',
+    logoUrl: 'https://muxai.vercel.app/logos/twitch.jpg',
+    category: 'Chat & Voice Bots',
+    docsPath: '/docs/integration/twitch',
+    fields: [
+      {
+        key: 'twitchChannel',
+        label: 'Twitch Channel Name',
+        placeholder: 'e.g. your_twitch_channel',
+        type: 'text',
+        required: true,
+        helpText: 'Twitch username whose stream chat you want the AI persona to join and listen to.',
+      },
+      {
+        key: 'botToken',
+        label: 'OAuth Chat Token (Optional)',
+        placeholder: 'oauth:abcdef0123456789...',
+        type: 'password',
+        required: false,
+        helpText: 'Optional Twitch Chat OAuth token if you want the bot to also send text replies in your Twitch chat.',
+      },
+      {
+        key: 'enableVoice',
+        label: 'Enable Live TTS Voice Output',
+        placeholder: '',
+        type: 'boolean',
+        required: false,
+        helpText: 'Automatically speak AI answers aloud using persona voice and VRM mouth movements.',
+      },
+    ],
+    features: [
+      'Live stream chat listener via Twitch IRC WebSocket',
+      'Automatic chat-to-input-to-output-to-voice stream pipeline',
+      'Voice audio TTS and 3D VRM avatar lip sync',
+      'Optional in-stream chat reply broadcasting',
+    ],
+  },
+  {
+    platform: 'youtube',
+    name: 'YouTube Live Stream & Voice',
+    tagline: 'Live chat polling with voice & avatar lip sync',
+    description:
+      'Connect your YouTube Live broadcast. Automatically polls YouTube Live Chat messages using YouTube Data API v3, feeds questions to the AI, and speaks answers out loud with VRM facial expressions.',
+    logoUrl: 'https://muxai.vercel.app/logos/youtube.jpg',
+    category: 'Chat & Voice Bots',
+    docsPath: '/docs/integration/youtube',
+    fields: [
+      {
+        key: 'apiKey',
+        label: 'YouTube Data API v3 Key',
+        placeholder: 'AIzaSy...',
+        type: 'password',
+        required: true,
+        helpText: 'Google Cloud API Key with YouTube Data API v3 enabled.',
+      },
+      {
+        key: 'youtubeVideoId',
+        label: 'Live Broadcast Video ID',
+        placeholder: 'e.g. jfKfPfyJRdk',
+        type: 'text',
+        required: true,
+        helpText: 'The video ID of your active live stream (found after ?v= in the stream URL).',
+      },
+      {
+        key: 'enableVoice',
+        label: 'Enable Live TTS Voice Output',
+        placeholder: '',
+        type: 'boolean',
+        required: false,
+        helpText: 'Speak answers out loud and trigger 3D avatar animations for live viewers.',
+      },
+    ],
+    features: [
+      'Real-time live chat polling via YouTube Data API v3',
+      'Viewer chat-to-input-to-output-to-voice pipeline',
+      'Live TTS voice delivery and subtitle broadcasting',
+      'Viewer Q&A automation for VTubers and content creators',
+    ],
+  },
+  {
+    platform: 'gmail',
+    name: 'Gmail Workspace Connector',
+    tagline: 'Read unread inbox emails & compose draft replies',
+    description:
+      'Connect Google Gmail API. Inspect recent inbox messages, summarize unread email threads, and draft contextual email replies directly from your AI Smash persona.',
+    logoUrl: 'https://muxai.vercel.app/logos/gmail.jpg',
+    category: 'Workflow Automation',
+    docsPath: '/docs/integration/gmail',
+    fields: [
+      {
+        key: 'googleAccessToken',
+        label: 'Google OAuth Access Token',
+        placeholder: 'ya29.a0AfH6SM...',
+        type: 'password',
+        required: true,
+        helpText: 'Google OAuth Access Token with https://www.googleapis.com/auth/gmail.readonly or compose scope.',
+      },
+      {
+        key: 'userEmail',
+        label: 'Gmail Address',
+        placeholder: 'you@gmail.com',
+        type: 'text',
+        required: false,
+        helpText: 'Your Google Account email address.',
+      },
+    ],
+    features: [
+      'Check unread messages and incoming threads',
+      'Summarize important email threads with action points',
+      'Draft responses directly in your Gmail mailbox',
+    ],
+  },
+  {
+    platform: 'sheets',
+    name: 'Google Sheets Connector',
+    tagline: 'Read spreadsheet data & log conversations to rows',
+    description:
+      'Connect Google Sheets API. Query spreadsheet tables, fetch rows for character context, or automatically log chat questions and responses into spreadsheet rows.',
+    logoUrl: 'https://muxai.vercel.app/logos/sheets.jpg',
+    category: 'Workflow Automation',
+    docsPath: '/docs/integration/sheets',
+    fields: [
+      {
+        key: 'googleAccessToken',
+        label: 'Google OAuth Access Token',
+        placeholder: 'ya29.a0AfH6SM...',
+        type: 'password',
+        required: true,
+        helpText: 'Google OAuth Access Token with https://www.googleapis.com/auth/spreadsheets scope.',
+      },
+      {
+        key: 'spreadsheetId',
+        label: 'Google Spreadsheet ID',
+        placeholder: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+        type: 'text',
+        required: true,
+        helpText: 'The long ID from your spreadsheet URL (between /d/ and /edit).',
+      },
+      {
+        key: 'sheetRange',
+        label: 'Sheet Tab & Range',
+        placeholder: 'Sheet1!A:E',
+        type: 'text',
+        required: false,
+        helpText: 'Target sheet range to read from or append rows to.',
+      },
+    ],
+    features: [
+      'Read spreadsheet data directly into chat memory',
+      'Append user turns and assistant responses to spreadsheet rows',
+      'Works with Google Drive and Google Workspace spreadsheets',
+    ],
+  },
+  {
+    platform: 'mcp',
+    name: 'Model Context Protocol (MCP)',
+    tagline: 'Connect external apps, IDEs & tools via open protocol',
+    description:
+      'Standardized Model Context Protocol (MCP) connector. Connects external clients (Cursor, Claude Desktop, Windsurf, or custom scripts) to this AI model in /chat mode and allows querying external MCP servers.',
+    logoUrl: 'https://ai.mux8.com/logo0.png',
+    category: 'Workflow Automation',
+    docsPath: '/docs/integration/mcp',
+    fields: [
+      {
+        key: 'mcpServerUrl',
+        label: 'MCP Endpoint URL',
+        placeholder: '/api/mcp/sse or http://localhost:8000/sse',
+        type: 'url',
+        required: false,
+        helpText: 'Local or remote MCP SSE server URL (defaults to built-in /api/mcp/sse).',
+      },
+      {
+        key: 'apiKey',
+        label: 'Bearer Auth Token (Optional)',
+        placeholder: 'mcp_sk_...',
+        type: 'password',
+        required: false,
+        helpText: 'Optional authorization token for secured external MCP server endpoints.',
+      },
+    ],
+    features: [
+      'Universal MCP server endpoint (/api/mcp/sse) for external apps',
+      'Connect Claude Desktop, Cursor, and developer tools',
+      'Real-time tool invocation and memory resource sharing',
+      'Bidirectional context syncing during /chat sessions',
+    ],
+  },
 ];
 
 // =====================================================================
@@ -1265,4 +1457,179 @@ export const API_PROVIDERS_CONFIG: Record<ApiProviderId, ApiProviderConfig> = {
     ],
     docsPath: '/docs/api/huggingface',
   },
+};
+
+// =====================================================================
+// 15. SPEECH RECOGNITION (VOICE-TO-TEXT) CONFIGURATION
+// =====================================================================
+export const SPEECH_RECOGNITION_CONFIG = {
+  lang: 'en-US',
+  silenceTimeoutMs: 3000, // 3-second continuous silence threshold to auto-send
+  continuous: true,
+  interimResults: true,
+  errorMessages: {
+    denied: 'Microphone access denied. Please allow microphone permissions in your browser to speak with Hana.',
+    notFound: 'No microphone found on this device. Please connect a microphone to use voice input.',
+    unsupported: 'Speech recognition is not supported in this browser. Please use Google Chrome or a Chromium browser.',
+    generic: 'Microphone is unavailable or encountered an error.',
+  },
+};
+
+// =====================================================================
+// 16. CHAT ERROR MESSAGES & TEMPLATES
+// =====================================================================
+export const CHAT_ERROR_CONFIG = {
+  header: "Oops. Something went wrong. Here's what I can see:",
+  formatErrorMessage: (details: string): string => {
+    const cleaned = details.trim() || 'Unknown error occurred during generation.';
+    return `${CHAT_ERROR_CONFIG.header}\n\n\`\`\`console\n${cleaned}\n\`\`\``;
+  },
+};
+
+// =====================================================================
+// 17. ACT DIRECTOR CONFIGURATION & VRM EMOTIONS
+// =====================================================================
+export const ACT_EMOTIONS: ActEmotionItem[] = [
+  {
+    key: 'neutral',
+    name: 'Neutral',
+    emoji: '😐',
+    description: 'Natural resting baseline expression',
+    expressionPreset: 'neutral',
+    blendValues: {},
+  },
+  {
+    key: 'happy',
+    name: 'Happy',
+    emoji: '😊',
+    description: 'Bright cheerful smile',
+    expressionPreset: 'happy',
+    blendValues: { happy: 1.0, joy: 1.0 },
+  },
+  {
+    key: 'sad',
+    name: 'Sad',
+    emoji: '😢',
+    description: 'Melancholic sorrowful expression',
+    expressionPreset: 'sad',
+    blendValues: { sad: 1.0, sorrow: 1.0 },
+  },
+  {
+    key: 'angry',
+    name: 'Angry',
+    emoji: '😠',
+    description: 'Frustrated / furrowed brow',
+    expressionPreset: 'angry',
+    blendValues: { angry: 1.0 },
+  },
+  {
+    key: 'surprised',
+    name: 'Surprised',
+    emoji: '😲',
+    description: 'Shocked wide eyes',
+    expressionPreset: 'surprised',
+    blendValues: { surprised: 1.0 },
+  },
+  {
+    key: 'lovey',
+    name: 'Lovey',
+    emoji: '🥰',
+    description: 'Sweet loving gaze / heart eyes',
+    expressionPreset: 'lovey',
+    blendValues: { happy: 0.85, relaxed: 0.45, blink: 0.15 },
+  },
+  {
+    key: 'silly',
+    name: 'Silly',
+    emoji: '😜',
+    description: 'Cheeky derp face with wink',
+    expressionPreset: 'silly',
+    blendValues: { surprised: 0.45, happy: 0.7, blinkLeft: 0.85 },
+  },
+  {
+    key: 'wink',
+    name: 'Wink',
+    emoji: '😉',
+    description: 'Playful one-eye wink',
+    expressionPreset: 'wink',
+    blendValues: { happy: 0.6, blinkLeft: 1.0 },
+  },
+  {
+    key: 'relaxed',
+    name: 'Relaxed',
+    emoji: '😌',
+    description: 'Gentle relaxed posture and smile',
+    expressionPreset: 'relaxed',
+    blendValues: { relaxed: 0.9, fun: 0.9 },
+  },
+  {
+    key: 'smug',
+    name: 'Smug',
+    emoji: '😏',
+    description: 'Confident mischievous grin',
+    expressionPreset: 'smug',
+    blendValues: { happy: 0.5, angry: 0.25, blinkRight: 0.35 },
+  },
+  {
+    key: 'blush',
+    name: 'Embarrassed',
+    emoji: '😳',
+    description: 'Shy / flustered blushing expression',
+    expressionPreset: 'blush',
+    blendValues: { surprised: 0.4, happy: 0.4, blink: 0.2 },
+  },
+  {
+    key: 'sleepy',
+    name: 'Sleepy',
+    emoji: '😴',
+    description: 'Drowsy half-closed eyes',
+    expressionPreset: 'sleepy',
+    blendValues: { relaxed: 0.6, blink: 0.5 },
+  },
+];
+
+export const ACT_INITIAL_CUES: TimelineCue[] = [
+  {
+    id: 'cue_1',
+    name: 'Greeting',
+    text: "Hello! Welcome to the secret Act Studio.",
+    animationKey: 'wave',
+    emotionKey: 'happy',
+    durationSec: 3.5,
+  },
+  {
+    id: 'cue_2',
+    name: 'Waiting',
+    text: "Add any speech lines or choose any Mixamo animation below.",
+    animationKey: 'wait',
+    emotionKey: 'lovey',
+    durationSec: 4.0,
+  },
+  {
+    id: 'cue_3',
+    name: 'Silent Action',
+    text: '',
+    animationKey: 'yawn',
+    emotionKey: 'sleepy',
+    durationSec: 3.5,
+  },
+  {
+    id: 'cue_4',
+    name: 'Closing',
+    text: "I will speak your script sequentially with real-time lip sync!",
+    animationKey: 'idle',
+    emotionKey: 'silly',
+    durationSec: 3.5,
+  },
+];
+
+// =====================================================================
+// 18. DOCS CODE SYNTAX HIGHLIGHT CONFIGURATION
+// =====================================================================
+export const DOCS_CODE_CONFIG = {
+  themeBg: '#0d1117',
+  textColor: '#e2e8f0',
+  textMuted: '#94a3b8',
+  borderColor: 'rgba(255, 255, 255, 0.1)',
+  fontFamily: "'JetBrains Mono', monospace",
 };

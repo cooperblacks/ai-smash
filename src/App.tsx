@@ -63,6 +63,7 @@ import {
   DEFAULT_OUTFIT_ID,
   getThemeById,
   getOutfitById,
+  CHAT_ERROR_CONFIG,
 } from './constants';
 import { Header } from './components/Header';
 import { SearchBar } from './components/SearchBar';
@@ -85,9 +86,11 @@ import { ActDirectorPage } from './components/ActDirectorPage';
 import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
 import { dispatchChatToWebhooks } from './lib/integrations';
+import { discordBotRunner } from './lib/discordRunner';
+import { streamChatRunner } from './lib/streamChatRunner';
 import { lipSyncManager } from './lib/lipSync';
 import { preloadVRMAssetsBehindTheScenes } from './lib/vrmCache';
-import { AlertCircle, ShieldAlert, Clock, Home } from 'lucide-react';
+import { AlertCircle, ShieldAlert, Clock, Home, X } from 'lucide-react';
 
 export default function App() {
   // ----------------------------------------------------
@@ -165,6 +168,9 @@ export default function App() {
     loadStoredIntegrations()
   );
   const [isAddIntegrationModalOpen, setIsAddIntegrationModalOpen] = useState(false);
+
+  // Microphone status alert (when access is denied or hardware not found)
+  const [micAlert, setMicAlert] = useState<string | null>(null);
 
   const handleAddFiles = (files: FileList | File[]) => {
     const fileArray = Array.from(files);
@@ -1034,6 +1040,90 @@ export default function App() {
   };
 
   // ----------------------------------------------------
+  // Live Integration Runners (Discord, Twitch, YouTube Live)
+  // ----------------------------------------------------
+  useEffect(() => {
+    // 1. Discord Bot
+    const discordInt = activeIntegrations.find((i) => i.platform === 'discord' && i.enabled);
+    if (discordInt && discordInt.botToken) {
+      discordBotRunner.start(discordInt, (status, msg) => {
+        handleUpdateIntegration({ ...discordInt, status, statusMessage: msg });
+      });
+    } else {
+      discordBotRunner.stop();
+    }
+
+    // 2. Twitch Stream Chat Runner
+    const twitchInt = activeIntegrations.find((i) => i.platform === 'twitch' && i.enabled);
+    if (twitchInt && twitchInt.twitchChannel) {
+      streamChatRunner.startTwitch(twitchInt, (status, msg) => {
+        handleUpdateIntegration({ ...twitchInt, status, statusMessage: msg });
+      });
+    } else {
+      streamChatRunner.stopTwitch();
+    }
+
+    // 3. YouTube Live Stream Chat Poller
+    const ytInt = activeIntegrations.find((i) => i.platform === 'youtube' && i.enabled);
+    if (ytInt && ytInt.apiKey && ytInt.youtubeVideoId) {
+      streamChatRunner.startYouTube(ytInt, (status, msg) => {
+        handleUpdateIntegration({ ...ytInt, status, statusMessage: msg });
+      });
+    } else {
+      streamChatRunner.stopYouTube();
+    }
+  }, [activeIntegrations]);
+
+  // Connect live voice output from stream chat runner to TTS & lip sync
+  useEffect(() => {
+    streamChatRunner.setVoiceSpeakHandler((spokenText) => {
+      if (userSettings.soundEffects || is3DMode) {
+        speakAssistantMessage(`stream_voice_${Date.now()}`, spokenText);
+      }
+    });
+
+    const unsubscribe = streamChatRunner.addMessageListener((evt) => {
+      const streamUserMsg: Message = {
+        id: `stream_user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        role: 'user',
+        content: `[${evt.platform.toUpperCase()} Live Chat] ${evt.author}: ${evt.message}`,
+        timestamp: Date.now(),
+      };
+      const streamAsstMsg: Message = {
+        id: `stream_asst_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        role: 'assistant',
+        content: evt.aiReply,
+        timestamp: Date.now() + 100,
+        modelUsed: activeModel.name,
+      };
+
+      setConversations((prev) => {
+        const active = prev.find((c) => c.id === activeConvId);
+        if (!active) return prev;
+        const updated = prev.map((c) =>
+          c.id === activeConvId
+            ? { ...c, messages: [...c.messages, streamUserMsg, streamAsstMsg], updatedAt: Date.now() }
+            : c
+        );
+        saveStoredConversations(updated);
+        return updated;
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [activeConvId, activeModel.name, is3DMode, userSettings.soundEffects, speakAssistantMessage]);
+
+  useEffect(() => {
+    return () => {
+      discordBotRunner.stop();
+      streamChatRunner.stopTwitch();
+      streamChatRunner.stopYouTube();
+    };
+  }, []);
+
+  // ----------------------------------------------------
   // Initial Boot: Load persistent data & inspect cache
   // ----------------------------------------------------
   const refreshCacheStatuses = useCallback(async () => {
@@ -1396,11 +1486,11 @@ export default function App() {
     isGeneratingRef.current = isGenerating;
   }, [isGenerating]);
 
-  // Stop generation without discarding accumulated tokens
+  // Stop ongoing loading, caching, downloads, or generation immediately
   const handleStopGeneration = useCallback(() => {
-    if (!isGeneratingRef.current) return;
-
     stopCurrentGeneration();
+    setDownloadProgress(null);
+    const wasGenerating = isGeneratingRef.current;
     isGeneratingRef.current = false;
     setIsGenerating(false);
 
@@ -1414,7 +1504,7 @@ export default function App() {
 
     // Preserve the partial message generated so far as a completed message
     const partialText = streamingTextRef.current.trim();
-    if (partialText.length > 0) {
+    if (partialText.length > 0 && wasGenerating) {
       const stoppedAssistantMessage: Message = {
         id: `msg_asst_${Date.now()}`,
         role: 'assistant',
@@ -1605,12 +1695,18 @@ export default function App() {
         triggerFallbackNotice(activeModel.name);
       }
 
+      const errorDetails = err instanceof Error
+        ? `${err.name}: ${err.message}${err.stack ? `\n\nStack:\n${err.stack}` : ''}`
+        : typeof err === 'object' && err !== null
+        ? JSON.stringify(err, null, 2)
+        : String(err);
+
       const fallbackAssistantMessage: Message = {
         id: `msg_asst_err_${Date.now()}`,
         role: 'assistant',
         content: isOllama
-          ? `Connection to ${activeModel.name} was interrupted. I have automatically switched to local Tiny Brain.`
-          : "My memory stalled loading those weights into your browser. If your device is low on RAM, try Tiny Brain.",
+          ? `Connection to ${activeModel.name} was interrupted. I have automatically switched to local Tiny Brain.\n\n${CHAT_ERROR_CONFIG.formatErrorMessage(errorDetails)}`
+          : CHAT_ERROR_CONFIG.formatErrorMessage(errorDetails),
         timestamp: Date.now(),
         modelUsed: activeModel.name,
         error: true,
@@ -1987,6 +2083,26 @@ export default function App() {
           </div>
         )}
 
+        {/* Microphone Alert (Above Chat Input Panel Status Bar) */}
+        {micAlert && (
+          <div className="flex justify-center px-4 mb-2">
+            <div className="px-3.5 py-1.5 rounded-2xl text-xs font-medium flex items-center justify-between gap-3 shadow-md border z-30 bg-red-500/10 dark:bg-red-950/40 border-red-500/30 text-red-600 dark:text-red-300 backdrop-blur-md animate-in fade-in slide-in-from-bottom-1 max-w-2xl w-full sm:w-auto">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                <span className="leading-snug">{micAlert}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMicAlert(null)}
+                className="p-1 rounded-full hover:bg-black/10 dark:hover:bg-white/10 text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors cursor-pointer shrink-0"
+                title="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Telemetry Status Bar (Directly Above Chat Input Panel) */}
         <TelemetryBar
           activeModel={activeModel}
@@ -2021,6 +2137,7 @@ export default function App() {
             onUpdateIntegration={handleUpdateIntegration}
             onRemoveIntegration={handleRemoveIntegration}
             onNavigateToDocs={navigateTo}
+            onMicAlert={setMicAlert}
           />
         </div>
       </main>

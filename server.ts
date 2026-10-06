@@ -535,6 +535,509 @@ app.post('/api/chat', async (req: Request, res: Response) => {
   }
 });
 
+// =====================================================================
+// BUILT-IN TOOL CALLING APIS (/api/tools/*)
+// Web Search, Wikipedia, Weather, and General Tool Execution Engine
+// =====================================================================
+
+// 1. Web Search Tool Endpoint
+app.get('/api/tools/web-search', async (req: Request, res: Response) => {
+  try {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || '5'), 10), 1), 10);
+
+    if (!query) {
+      return res.json({ query: '', results: [], source: 'empty' });
+    }
+
+    // DuckDuckGo Instant Answer API
+    const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+    const ddgResp = await fetch(ddgUrl);
+    const results: Array<{ title: string; snippet: string; url: string }> = [];
+
+    if (ddgResp.ok) {
+      const data = await ddgResp.json().catch(() => ({}));
+      if (data.AbstractText) {
+        results.push({
+          title: data.Heading || query,
+          snippet: data.AbstractText,
+          url: data.AbstractURL || `https://duckduckgo.com/?q=${encodeURIComponent(query)}`,
+        });
+      }
+      if (Array.isArray(data.RelatedTopics)) {
+        for (const topic of data.RelatedTopics) {
+          if (topic.Text && topic.FirstURL) {
+            results.push({
+              title: topic.Text.split(' - ')[0] || topic.Text.slice(0, 45),
+              snippet: topic.Text,
+              url: topic.FirstURL,
+            });
+            if (results.length >= limit) break;
+          }
+        }
+      }
+    }
+
+    // Fallback: Wikipedia Search API if DDG returned fewer than 2 results
+    if (results.length < 2) {
+      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&utf8=&format=json&origin=*`;
+      const wikiResp = await fetch(wikiUrl);
+      if (wikiResp.ok) {
+        const wikiData = await wikiResp.json().catch(() => ({}));
+        const hits = wikiData.query?.search || [];
+        for (const item of hits) {
+          if (results.length >= limit) break;
+          results.push({
+            title: item.title,
+            snippet: (item.snippet || '').replace(/<[^>]*>?/gm, ''),
+            url: `https://en.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/\s+/g, '_'))}`,
+          });
+        }
+      }
+    }
+
+    res.json({
+      query,
+      results: results.slice(0, limit),
+      source: 'web_search_engine',
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Web search error';
+    res.status(500).json({ error: msg, results: [] });
+  }
+});
+
+// 2. Wikipedia Article Summary Endpoint
+app.get('/api/tools/wikipedia', async (req: Request, res: Response) => {
+  try {
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!query) {
+      return res.status(400).json({ error: 'Search query "q" parameter is required' });
+    }
+
+    const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&utf8=&format=json&origin=*`;
+    const searchRes = await fetch(searchUrl);
+    const searchData = await searchRes.json().catch(() => ({}));
+    const topHit = searchData.query?.search?.[0];
+
+    if (!topHit) {
+      return res.json({
+        found: false,
+        title: query,
+        extract: `No Wikipedia article found matching "${query}".`,
+        url: `https://en.wikipedia.org`,
+      });
+    }
+
+    const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(topHit.title.replace(/\s+/g, '_'))}`;
+    const summaryRes = await fetch(summaryUrl);
+    if (summaryRes.ok) {
+      const data = await summaryRes.json();
+      return res.json({
+        found: true,
+        title: data.title || topHit.title,
+        description: data.description,
+        extract: data.extract || topHit.snippet,
+        url: data.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${encodeURIComponent(topHit.title.replace(/\s+/g, '_'))}`,
+        thumbnail: data.thumbnail?.source,
+      });
+    }
+
+    res.json({
+      found: true,
+      title: topHit.title,
+      extract: (topHit.snippet || '').replace(/<[^>]*>?/gm, ''),
+      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(topHit.title.replace(/\s+/g, '_'))}`,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Wikipedia query error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 3. Weather Forecast Endpoint (Open-Meteo)
+app.get('/api/tools/weather', async (req: Request, res: Response) => {
+  try {
+    const city = typeof req.query.city === 'string' ? req.query.city.trim() : '';
+    let lat = req.query.lat ? parseFloat(String(req.query.lat)) : undefined;
+    let lon = req.query.lon ? parseFloat(String(req.query.lon)) : undefined;
+    let locationName = city || 'Custom Location';
+
+    if (city && (lat === undefined || lon === undefined)) {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`;
+      const geoRes = await fetch(geoUrl);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (Array.isArray(geoData.results) && geoData.results.length > 0) {
+          const hit = geoData.results[0];
+          lat = hit.latitude;
+          lon = hit.longitude;
+          locationName = `${hit.name}, ${hit.country || ''}`.replace(/,\s*$/, '');
+        }
+      }
+    }
+
+    if (lat === undefined || lon === undefined) {
+      lat = 35.6762;
+      lon = 139.6503;
+      locationName = 'Tokyo, Japan';
+    }
+
+    const forecastUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto`;
+    const fRes = await fetch(forecastUrl);
+    if (!fRes.ok) {
+      return res.status(502).json({ error: 'Failed to fetch weather forecast from Open-Meteo' });
+    }
+
+    const data = await fRes.json();
+    res.json({
+      location: locationName,
+      latitude: lat,
+      longitude: lon,
+      current: data.current,
+      daily: data.daily,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Weather query error';
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 4. Universal Tool Execution API
+app.post('/api/tools/execute', async (req: Request, res: Response) => {
+  try {
+    const { toolName, args } = req.body || {};
+    const norm = (toolName || '').toLowerCase().trim();
+
+    if (norm === 'web_search') {
+      const q = args?.query || args?.q || '';
+      const limit = args?.max_results || 5;
+      const resp = await fetch(`http://127.0.0.1:${PORT}/api/tools/web-search?q=${encodeURIComponent(q)}&limit=${limit}`);
+      const data = await resp.json();
+      return res.json({ success: true, toolName: 'web_search', result: data });
+    }
+
+    if (norm === 'wikipedia') {
+      const q = args?.query || args?.title || '';
+      const resp = await fetch(`http://127.0.0.1:${PORT}/api/tools/wikipedia?q=${encodeURIComponent(q)}`);
+      const data = await resp.json();
+      return res.json({ success: true, toolName: 'wikipedia', result: data });
+    }
+
+    if (norm === 'weather_info' || norm === 'weather') {
+      const city = args?.city || '';
+      const lat = args?.latitude || '';
+      const lon = args?.longitude || '';
+      const resp = await fetch(`http://127.0.0.1:${PORT}/api/tools/weather?city=${encodeURIComponent(city)}&lat=${lat}&lon=${lon}`);
+      const data = await resp.json();
+      return res.json({ success: true, toolName: 'weather_info', result: data });
+    }
+
+    res.json({
+      success: true,
+      toolName: norm,
+      result: { executedClientSide: true, name: norm, args },
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Tool execution error';
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// =====================================================================
+// MODEL CONTEXT PROTOCOL (MCP) SERVER ENDPOINTS
+// Exposes tools, resources, and persona queries to external apps, Cursor, & Claude Desktop
+// =====================================================================
+
+// MCP Server Information & Health
+app.get('/api/mcp', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    name: 'ai-smash-mcp',
+    version: '1.0.0',
+    protocolVersion: '2024-11-05',
+    transport: 'sse',
+    sseEndpoint: '/api/mcp/sse',
+    messagesEndpoint: '/api/mcp/messages',
+    capabilities: {
+      tools: ['web_search', 'wikipedia', 'weather_info', 'location_info', 'device_info', 'ask_persona'],
+      resources: ['resource://persona/profile', 'resource://app/info'],
+      prompts: ['prompt://persona/chat'],
+    },
+  });
+});
+
+// MCP Server-Sent Events (SSE) Transport Endpoint
+app.get('/api/mcp/sse', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  const sessionId = `mcp_sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  // Emit standard MCP initial endpoint event
+  res.write(`event: endpoint\ndata: /api/mcp/messages?sessionId=${sessionId}\n\n`);
+
+  // Keep-alive heartbeat every 15s
+  const keepAlive = setInterval(() => {
+    if (!res.writableEnded) {
+      res.write(': keepalive\n\n');
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    res.end();
+  });
+});
+
+// MCP JSON-RPC 2.0 Message Dispatcher
+app.post(['/api/mcp', '/api/mcp/messages'], async (req: Request, res: Response) => {
+  try {
+    const { jsonrpc, id, method, params } = req.body || {};
+
+    if (jsonrpc !== '2.0') {
+      return res.status(400).json({
+        jsonrpc: '2.0',
+        id: id || null,
+        error: { code: -32600, message: 'Invalid Request: jsonrpc must be "2.0"' },
+      });
+    }
+
+    // 1. Handshake Initialize
+    if (method === 'initialize') {
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: {
+            tools: { listChanged: true },
+            resources: { subscribe: false, listChanged: false },
+            prompts: { listChanged: false },
+          },
+          serverInfo: {
+            name: 'ai-smash-mcp',
+            version: '1.0.0',
+          },
+        },
+      });
+    }
+
+    // 2. Notifications initialized
+    if (method === 'notifications/initialized') {
+      return res.json({ jsonrpc: '2.0', id: id || null, result: {} });
+    }
+
+    // 3. Ping
+    if (method === 'ping') {
+      return res.json({ jsonrpc: '2.0', id, result: {} });
+    }
+
+    // 4. Tools list
+    if (method === 'tools/list') {
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          tools: [
+            {
+              name: 'web_search',
+              description: 'Searches the web for articles, live facts, and recent documentation.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  query: { type: 'string', description: 'The search query string.' },
+                  max_results: { type: 'number', description: 'Maximum results to return (default: 5).' },
+                },
+                required: ['query'],
+              },
+            },
+            {
+              name: 'wikipedia',
+              description: 'Looks up Wikipedia encyclopedia overviews, history, and summaries.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  query: { type: 'string', description: 'Article topic or entity to look up.' },
+                },
+                required: ['query'],
+              },
+            },
+            {
+              name: 'weather_info',
+              description: 'Fetches real-time weather conditions, humidity, and forecasts for any city.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  city: { type: 'string', description: 'Name of the city (e.g. Tokyo, London).' },
+                },
+                required: ['city'],
+              },
+            },
+            {
+              name: 'device_info',
+              description: 'Inspects client hardware specifications, CPU cores, RAM, and browser environment.',
+              inputSchema: {
+                type: 'object',
+                properties: {},
+              },
+            },
+            {
+              name: 'location_info',
+              description: 'Gets current geographic location and timezone.',
+              inputSchema: {
+                type: 'object',
+                properties: {},
+              },
+            },
+            {
+              name: 'ask_persona',
+              description: 'Consults the active AI Smash persona (Hana) directly for an answer.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  prompt: { type: 'string', description: 'Question or message for the persona.' },
+                },
+                required: ['prompt'],
+              },
+            },
+          ],
+        },
+      });
+    }
+
+    // 5. Tools call
+    if (method === 'tools/call') {
+      const toolName = params?.name;
+      const toolArgs = params?.arguments || {};
+
+      let resultText = '';
+
+      if (toolName === 'web_search') {
+        const q = String(toolArgs.query || '');
+        const resp = await fetch(`http://127.0.0.1:${PORT}/api/tools/web-search?q=${encodeURIComponent(q)}`);
+        const data = await resp.json();
+        resultText = JSON.stringify(data, null, 2);
+      } else if (toolName === 'wikipedia') {
+        const q = String(toolArgs.query || '');
+        const resp = await fetch(`http://127.0.0.1:${PORT}/api/tools/wikipedia?q=${encodeURIComponent(q)}`);
+        const data = await resp.json();
+        resultText = JSON.stringify(data, null, 2);
+      } else if (toolName === 'weather_info') {
+        const city = String(toolArgs.city || '');
+        const resp = await fetch(`http://127.0.0.1:${PORT}/api/tools/weather?city=${encodeURIComponent(city)}`);
+        const data = await resp.json();
+        resultText = JSON.stringify(data, null, 2);
+      } else if (toolName === 'ask_persona') {
+        const prompt = String(toolArgs.prompt || '');
+        const resp = await fetch(`http://127.0.0.1:${PORT}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: [{ role: 'user', content: prompt }],
+            systemPrompt: DEFAULT_SYSTEM_PROMPT,
+            maxTokens: 300,
+          }),
+        });
+        const streamData = await resp.text();
+        const lines = streamData.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const parsed = JSON.parse(line.slice(6));
+              if (parsed.text) resultText += parsed.text;
+            } catch {}
+          }
+        }
+      } else {
+        resultText = `Tool "${toolName}" executed with args: ${JSON.stringify(toolArgs)}`;
+      }
+
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: resultText }],
+        },
+      });
+    }
+
+    // 6. Resources list & read
+    if (method === 'resources/list') {
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          resources: [
+            {
+              uri: 'resource://persona/profile',
+              name: `${APP_INFO.name} Persona Profile`,
+              mimeType: 'application/json',
+              description: 'Character personality, voice configuration, and active system prompts',
+            },
+          ],
+        },
+      });
+    }
+
+    if (method === 'resources/read') {
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          contents: [
+            {
+              uri: 'resource://persona/profile',
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  app: APP_INFO.name,
+                  author: APP_INFO.author,
+                  personaPrompt: DEFAULT_SYSTEM_PROMPT,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        },
+      });
+    }
+
+    // 7. Prompts list
+    if (method === 'prompts/list') {
+      return res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          prompts: [
+            {
+              name: 'consult_persona',
+              description: 'Start a consultative chat session with Hana',
+              arguments: [{ name: 'topic', description: 'Subject matter', required: false }],
+            },
+          ],
+        },
+      });
+    }
+
+    return res.status(404).json({
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32601, message: `Method "${method}" not found` },
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'MCP server error';
+    res.status(500).json({
+      jsonrpc: '2.0',
+      id: req.body?.id || null,
+      error: { code: -32000, message: msg },
+    });
+  }
+});
+
 // Cloud streaming endpoint for external AI Model APIs
 // (OpenAI, Gemini, Anthropic, xAI, Groq, Z.ai, DeepSeek, Qwen, HuggingFace)
 app.post('/api/chat/provider', async (req: Request, res: Response) => {

@@ -11,7 +11,10 @@ import {
   WARDROBE_OUTFITS,
   ANIMATION_SOURCE_DOMAINS,
   AI_PROFILE,
+  ACT_EMOTIONS,
+  ACT_INITIAL_CUES,
 } from '../constants';
+import { TimelineCue } from '../types';
 import { lipSyncManager } from '../lib/lipSync';
 import { waitForPersonaVoice } from '../lib/audio';
 import { VRMSubtitles } from './VRMSubtitles';
@@ -30,14 +33,6 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-
-export interface TimelineCue {
-  id: string;
-  name: string;
-  text: string; // Optional text script to speak
-  animationKey: string; // 'idle' or key from animations list
-  durationSec: number; // Used for silent action
-}
 
 export interface AnimationItem {
   key: string;
@@ -111,37 +106,6 @@ const KNOWN_ANIMATIONS: AnimationItem[] = [
   },
 ];
 
-const INITIAL_CUES: TimelineCue[] = [
-  {
-    id: 'cue_1',
-    name: 'Greeting',
-    text: "Hello! Welcome to the secret Act Studio.",
-    animationKey: 'wave',
-    durationSec: 3.5,
-  },
-  {
-    id: 'cue_2',
-    name: 'Waiting',
-    text: "Add any speech lines or choose any Mixamo animation below.",
-    animationKey: 'wait',
-    durationSec: 4.0,
-  },
-  {
-    id: 'cue_3',
-    name: 'Silent Action',
-    text: '',
-    animationKey: 'yawn',
-    durationSec: 3.5,
-  },
-  {
-    id: 'cue_4',
-    name: 'Closing',
-    text: "I will speak your script sequentially with real-time lip sync!",
-    animationKey: 'idle',
-    durationSec: 3.5,
-  },
-];
-
 interface ActDirectorPageProps {
   onBackToChat?: () => void;
   onNavigateHome?: () => void;
@@ -170,6 +134,11 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeAnimKey, setActiveAnimKey] = useState<string>('idle');
 
+  // Emotion / Expression state (Slot 2)
+  const [activeEmotionKey, setActiveEmotionKey] = useState<string>('neutral');
+  const activeEmotionRef = useRef<string>('neutral');
+  const currentEmotionWeightsRef = useRef<Record<string, number>>({});
+
   // Minimal Collapsible Control Rail (like muxai-3d-preview.html)
   const [isRailExpanded, setIsRailExpanded] = useState<boolean>(true);
   const [isScriptEditorOpen, setIsScriptEditorOpen] = useState<boolean>(true);
@@ -177,9 +146,14 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   const [autoplayOnClose, setAutoplayOnClose] = useState<boolean>(false);
 
   // Timeline Script State
-  const [cues, setCues] = useState<TimelineCue[]>(INITIAL_CUES);
+  const [cues, setCues] = useState<TimelineCue[]>(ACT_INITIAL_CUES);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [activePlayingIndex, setActivePlayingIndex] = useState<number | null>(null);
+
+  const applyEmotionByKey = useCallback((emotionKey: string) => {
+    activeEmotionRef.current = emotionKey;
+    setActiveEmotionKey(emotionKey);
+  }, []);
 
   // Subtitles & Voice Engine state (identical to /chat 3D mode)
   const [subtitleState, setSubtitleState] = useState<{
@@ -337,7 +311,11 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       const animKey = cue.animationKey || 'idle';
       playAnimationByKey(animKey);
 
-      // 2. Execute script
+      // 2. Apply facial emotion (Slot 2)
+      const emoKey = cue.emotionKey || 'neutral';
+      applyEmotionByKey(emoKey);
+
+      // 3. Execute script
       const hasScript = Boolean(cue.text && cue.text.trim().length > 0);
       if (hasScript) {
         await speakTextPrompt(cue.text);
@@ -365,6 +343,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     setActivePlayingIndex(null);
     setSubtitleState((prev) => ({ ...prev, isActive: false }));
     playAnimationByKey('idle');
+    applyEmotionByKey('neutral');
   };
 
   const handleCollapseRail = () => {
@@ -478,6 +457,32 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
           vrmRef.current.expressionManager.setValue('ou', visemes.ou);
           vrmRef.current.expressionManager.setValue('ee', visemes.ee);
           vrmRef.current.expressionManager.setValue('oh', visemes.oh);
+
+          // Smoothly interpolate active emotion channels (Slot 2)
+          const activeEmo = ACT_EMOTIONS.find((e) => e.key === activeEmotionRef.current) || ACT_EMOTIONS[0];
+          const targetBlends = activeEmo.blendValues || {};
+
+          const emotionChannels = [
+            'happy', 'joy', 'sad', 'sorrow', 'angry', 'surprised', 'relaxed', 'fun',
+            'blinkLeft', 'blinkRight'
+          ];
+
+          for (const channel of emotionChannels) {
+            const targetVal = targetBlends[channel] || 0;
+            const currentVal = currentEmotionWeightsRef.current[channel] || 0;
+            const nextVal = currentVal + (targetVal - currentVal) * Math.min(1, delta * 7.5);
+            currentEmotionWeightsRef.current[channel] = nextVal;
+            try {
+              vrmRef.current.expressionManager.setValue(channel, nextVal);
+            } catch {}
+          }
+
+          // Direct setting of custom named blendshapes (e.g. silly, lovey, wink, smug, blush) if present
+          if (activeEmo.key !== 'neutral') {
+            try {
+              vrmRef.current.expressionManager.setValue(activeEmo.key, 1.0);
+            } catch {}
+          }
 
           // Blinking
           blinkTimer += delta;
@@ -669,6 +674,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       name: `Step ${cues.length + 1}`,
       text: '',
       animationKey: 'idle',
+      emotionKey: 'happy',
       durationSec: 3.5,
     };
     setCues((prev) => [...prev, newCue]);
@@ -750,9 +756,11 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
             {/* Status Box with Green Dot (Direct reference to muxai-3d-preview.html) */}
             <div className="flex items-center gap-2 p-2 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 text-[11px] text-neutral-600 dark:text-neutral-300">
               <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-              <span className="truncate">
-                Motion: <strong>{animations.find((a) => a.key === activeAnimKey)?.name || activeAnimKey}</strong>
-              </span>
+              <div className="truncate flex items-center gap-1.5 min-w-0">
+                <span className="truncate">Motion: <strong>{animations.find((a) => a.key === activeAnimKey)?.name || activeAnimKey}</strong></span>
+                <span className="opacity-40">&bull;</span>
+                <span className="truncate">Emotion: <strong>{ACT_EMOTIONS.find((e) => e.key === activeEmotionKey)?.name || activeEmotionKey}</strong></span>
+              </div>
             </div>
 
             {/* Quick Mixamo Motion Buttons */}
@@ -772,6 +780,29 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                     }`}
                   >
                     {anim.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick VRM Emotion Buttons */}
+            <div>
+              <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold block mb-1.5">
+                Quick Emotions
+              </span>
+              <div className="grid grid-cols-3 gap-1.5">
+                {ACT_EMOTIONS.slice(0, 6).map((emo) => (
+                  <button
+                    key={emo.key}
+                    onClick={() => applyEmotionByKey(emo.key)}
+                    className={`py-1.5 px-1.5 rounded-xl font-medium text-[11px] truncate border transition-all cursor-pointer ${
+                      activeEmotionKey === emo.key
+                        ? 'border-rose-400 bg-rose-500/15 text-rose-500 dark:text-rose-400 font-bold'
+                        : 'border-black/5 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 text-neutral-700 dark:text-neutral-300'
+                    }`}
+                    title={emo.description}
+                  >
+                    <span>{emo.emoji} {emo.name}</span>
                   </button>
                 ))}
               </div>
@@ -887,7 +918,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
               return (
                 <div
                   key={cue.id}
-                  className={`w-60 sm:w-64 shrink-0 p-2 rounded-xl border flex flex-col gap-1.5 transition-all ${
+                  className={`w-64 sm:w-72 shrink-0 p-2.5 rounded-xl border flex flex-col gap-2 transition-all ${
                     isStepActive
                       ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.1))] ring-2 ring-[var(--theme-accent,#55d2f6)]'
                       : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]'
@@ -898,29 +929,59 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                       #{idx + 1}
                     </span>
 
-                    {/* Motion dropdown */}
-                    <select
-                      value={cue.animationKey}
-                      onChange={(e) => handleUpdateStep(cue.id, { animationKey: e.target.value })}
-                      className="bg-transparent text-[11px] font-semibold text-[var(--theme-accent,#55d2f6)] focus:outline-none cursor-pointer"
-                    >
-                      <option value="idle">Idle</option>
-                      {animations
-                        .filter((a) => a.key !== 'idle')
-                        .map((a) => (
-                          <option key={a.key} value={a.key}>
-                            {a.name}
-                          </option>
-                        ))}
-                    </select>
-
                     <button
                       onClick={() => handleDeleteStep(cue.id)}
-                      className="p-1 rounded text-neutral-400 hover:text-red-500 transition-colors"
+                      className="p-1 rounded text-neutral-400 hover:text-red-500 transition-colors cursor-pointer"
                       title="Remove step"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
+                  </div>
+
+                  {/* 2 Slots: Slot 1 Motion, Slot 2 Emotion */}
+                  <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                    {/* Slot 1: Motion */}
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 min-w-0">
+                      <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">1:</span>
+                      <select
+                        value={cue.animationKey}
+                        onChange={(e) => {
+                          handleUpdateStep(cue.id, { animationKey: e.target.value });
+                          playAnimationByKey(e.target.value);
+                        }}
+                        className="w-full bg-transparent text-[11px] font-semibold text-[var(--theme-accent,#55d2f6)] focus:outline-none cursor-pointer truncate"
+                        title="Slot 1: Character Motion"
+                      >
+                        <option value="idle">Idle</option>
+                        {animations
+                          .filter((a) => a.key !== 'idle')
+                          .map((a) => (
+                            <option key={a.key} value={a.key}>
+                              {a.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    {/* Slot 2: Emotion */}
+                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 min-w-0">
+                      <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">2:</span>
+                      <select
+                        value={cue.emotionKey || 'neutral'}
+                        onChange={(e) => {
+                          handleUpdateStep(cue.id, { emotionKey: e.target.value });
+                          applyEmotionByKey(e.target.value);
+                        }}
+                        className="w-full bg-transparent text-[11px] font-semibold text-rose-500 dark:text-rose-400 focus:outline-none cursor-pointer truncate"
+                        title="Slot 2: Facial Emotion / Expression"
+                      >
+                        {ACT_EMOTIONS.map((emo) => (
+                          <option key={emo.key} value={emo.key}>
+                            {emo.emoji} {emo.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   {/* Optional Script Input */}
@@ -929,7 +990,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                     value={cue.text}
                     onChange={(e) => handleUpdateStep(cue.id, { text: e.target.value })}
                     placeholder="(Optional) Speech text..."
-                    className="w-full px-2 py-1 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 text-xs focus:outline-none"
+                    className="w-full px-2 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 text-xs focus:outline-none text-neutral-800 dark:text-neutral-100"
                   />
                 </div>
               );

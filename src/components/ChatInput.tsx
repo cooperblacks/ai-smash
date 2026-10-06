@@ -6,7 +6,7 @@ import { MaxTokensSelector } from './MaxTokensSelector';
 import { ChatPlusMenu } from './ChatPlusMenu';
 import { AttachedFilesPreview } from './AttachedFilesPreview';
 import { ProviderSubmodelSelector } from './ProviderSubmodelSelector';
-import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
+import { AI_PROFILE, THEME_COLORS, UI_CONFIG, SPEECH_RECOGNITION_CONFIG } from '../constants';
 
 interface ChatInputProps {
   input: string;
@@ -30,6 +30,7 @@ interface ChatInputProps {
   onUpdateIntegration: (updated: IntegrationConfig) => void;
   onRemoveIntegration: (id: string) => void;
   onNavigateToDocs?: (docsPath: string) => void;
+  onMicAlert?: (alert: string | null) => void;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -54,12 +55,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onUpdateIntegration,
   onRemoveIntegration,
   onNavigateToDocs,
+  onMicAlert,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ------------------------------------------------------------------
-  // Web Speech API: Real-time Voice to Text with 5-second silence auto-send
+  // Web Speech API: Continuous Voice to Text with silence detection auto-send
+  // Mic stays ON until the user explicitly turns it off.
   // ------------------------------------------------------------------
   const [isListening, setIsListening] = useState(false);
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
@@ -67,10 +70,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef(input);
+  const initialTextRef = useRef('');
+  const isGeneratingRef = useRef(isGenerating);
 
   useEffect(() => {
     inputRef.current = input;
   }, [input]);
+
+  useEffect(() => {
+    isGeneratingRef.current = isGenerating;
+  }, [isGenerating]);
 
   // Check microphone hardware / browser capability on mount
   useEffect(() => {
@@ -80,7 +89,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       if (typeof window === 'undefined') return;
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (!SpeechRec) {
-        if (isMounted) setMicAvailable(false);
+        if (isMounted) {
+          setMicAvailable(false);
+          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.unsupported);
+        }
         return;
       }
 
@@ -90,6 +102,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           const hasAudioInput = devices.some((d) => d.kind === 'audioinput');
           if (isMounted) {
             setMicAvailable(hasAudioInput);
+            if (!hasAudioInput) {
+              onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.notFound);
+            }
           }
         } catch {
           if (isMounted) setMicAvailable(true);
@@ -118,14 +133,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
     }
+    // Only schedule auto-send after continuous silence for the configured duration
     silenceTimerRef.current = setTimeout(() => {
-      // 3 seconds of silence detected -> send automatically
-      stopListening();
+      // If currently generating, do not auto-send mid-reply; reset timer and wait
+      if (isGeneratingRef.current) {
+        resetSilenceTimer();
+        return;
+      }
+
       const currentInput = inputRef.current.trim();
       if (currentInput.length > 0) {
+        // Continuous silence detected for the configured time (3 seconds):
+        // Auto-send the message WITHOUT turning off the mic!
         onSend(currentInput);
+        setInput('');
+        inputRef.current = '';
+        initialTextRef.current = '';
+
+        // Restart recognition so internal transcript buffer is cleared for next sentence
+        try {
+          recognitionRef.current?.stop();
+        } catch {}
       }
-    }, 3000);
+      silenceTimerRef.current = null;
+    }, SPEECH_RECOGNITION_CONFIG.silenceTimeoutMs);
   };
 
   const stopListening = () => {
@@ -151,10 +182,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
     if (!SpeechRec) {
       setMicAvailable(false);
+      onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.unsupported);
       return;
     }
 
-    // Explicitly ask for microphone permission via getUserMedia
+    // Clear previous mic alert upon manual retry
+    onMicAlert?.(null);
+
+    // Explicitly test microphone permission via getUserMedia
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -162,13 +197,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         setMicAvailable(true);
       } catch (err: any) {
         console.warn('Microphone permission denied or device unavailable:', err);
+        setMicAvailable(false);
         if (
           err.name === 'NotAllowedError' ||
-          err.name === 'PermissionDeniedError' ||
+          err.name === 'PermissionDeniedError'
+        ) {
+          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.denied);
+          return;
+        } else if (
           err.name === 'NotFoundError' ||
           err.name === 'DevicesNotFoundError'
         ) {
-          setMicAvailable(false);
+          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.notFound);
+          return;
+        } else {
+          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.generic);
           return;
         }
       }
@@ -176,16 +219,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
     try {
       const recognition = new SpeechRec();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
+      recognition.continuous = SPEECH_RECOGNITION_CONFIG.continuous;
+      recognition.interimResults = SPEECH_RECOGNITION_CONFIG.interimResults;
+      recognition.lang = SPEECH_RECOGNITION_CONFIG.lang;
 
-      const initialText = inputRef.current ? inputRef.current.trim() : '';
+      initialTextRef.current = inputRef.current ? inputRef.current.trim() : '';
 
       recognition.onstart = () => {
         isListeningRef.current = true;
         setIsListening(true);
-        resetSilenceTimer();
       };
 
       recognition.onresult = (event: any) => {
@@ -201,8 +243,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           }
         }
 
-        const combined = (initialText ? initialText + ' ' : '') + sessionFinal + sessionInterim;
-        setInput(combined.trimStart());
+        const base = initialTextRef.current ? initialTextRef.current + ' ' : '';
+        const combined = (base + sessionFinal + sessionInterim).trimStart();
+        setInput(combined);
+        inputRef.current = combined;
+
+        // Reset continuous silence timer whenever user speaks
         resetSilenceTimer();
       };
 
@@ -210,19 +256,31 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         console.warn('SpeechRecognition error:', event.error);
         if (event.error === 'not-allowed') {
           setMicAvailable(false);
-        }
-        if (event.error !== 'no-speech') {
+          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.denied);
+          stopListening();
+        } else if (event.error === 'audio-capture') {
+          setMicAvailable(false);
+          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.notFound);
           stopListening();
         }
+        // For 'no-speech' or other network glitches, do NOT turn off mic
       };
 
       recognition.onend = () => {
+        // Continuous listening: if user hasn't toggled off, keep microphone listening!
         if (isListeningRef.current) {
           try {
             recognition.start();
           } catch {
-            isListeningRef.current = false;
-            setIsListening(false);
+            setTimeout(() => {
+              if (isListeningRef.current) {
+                try {
+                  recognition.start();
+                } catch {
+                  // transient error, will try again if still listening
+                }
+              }
+            }, 120);
           }
         } else {
           setIsListening(false);
@@ -233,9 +291,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       isListeningRef.current = true;
       setIsListening(true);
       recognition.start();
-      resetSilenceTimer();
     } catch (err) {
       console.error('Failed to start speech recognition:', err);
+      setMicAvailable(false);
+      onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.generic);
       isListeningRef.current = false;
       setIsListening(false);
     }
@@ -248,12 +307,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       startListening();
     }
   };
-
-  useEffect(() => {
-    if (isGenerating && isListening) {
-      stopListening();
-    }
-  }, [isGenerating]);
 
   useEffect(() => {
     return () => {

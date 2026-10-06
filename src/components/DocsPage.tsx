@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import { AI_PROFILE } from '../constants';
+import { CodeBlockView } from './CodeBlockView';
 
 interface DocsPageProps {
   currentPath: string;
@@ -819,6 +820,11 @@ export const DocsPage: React.FC<DocsPageProps> = ({
                     <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-1 leading-relaxed">
                       {st.desc}
                     </p>
+                    {st.code && (
+                      <div className="mt-2">
+                        <CodeBlockView code={st.code} lang={st.lang || 'bash'} />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -915,30 +921,12 @@ export const DocsPage: React.FC<DocsPageProps> = ({
                   <Terminal className="w-3.5 h-3.5" />
                   Code / Request Example ({activeArticle.content.codeExample.lang})
                 </h3>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleCopyCode(activeArticle.content.codeExample!.code, 100)
-                  }
-                  className="text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
-                >
-                  {copiedCodeIndex === 100 ? (
-                    <>
-                      <Check className="w-3 h-3 text-emerald-500" />
-                      <span className="text-emerald-500">Copied!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3 h-3" />
-                      <span>Copy</span>
-                    </>
-                  )}
-                </button>
               </div>
 
-              <div className="relative rounded-2xl bg-[#090b10] border border-black/20 dark:border-white/10 p-4 font-mono text-xs text-sky-200 overflow-x-auto shadow-inner leading-relaxed">
-                <pre>{activeArticle.content.codeExample.code}</pre>
-              </div>
+              <CodeBlockView
+                code={activeArticle.content.codeExample.code}
+                lang={activeArticle.content.codeExample.lang}
+              />
             </section>
           )}
 

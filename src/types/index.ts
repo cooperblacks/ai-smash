@@ -66,7 +66,16 @@ export interface AttachedFile {
   isImage: boolean;
 }
 
-export type IntegrationPlatform = 'discord' | 'slack' | 'n8n' | 'zapier';
+export type IntegrationPlatform =
+  | 'discord'
+  | 'slack'
+  | 'n8n'
+  | 'zapier'
+  | 'twitch'
+  | 'youtube'
+  | 'gmail'
+  | 'sheets'
+  | 'mcp';
 
 export interface IntegrationConfig {
   id: string;
@@ -83,6 +92,37 @@ export interface IntegrationConfig {
   lastSyncTime?: number;
   status: 'connected' | 'disconnected' | 'polling' | 'error';
   statusMessage?: string;
+  twitchChannel?: string;
+  youtubeVideoId?: string;
+  googleAccessToken?: string;
+  spreadsheetId?: string;
+  sheetRange?: string;
+  userEmail?: string;
+  mcpServerUrl?: string;
+}
+
+export interface ToolParameterProperty {
+  type: string;
+  description: string;
+  enum?: string[];
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: {
+    type: 'object';
+    properties: Record<string, ToolParameterProperty>;
+    required?: string[];
+  };
+}
+
+export interface ToolExecutionResult {
+  toolName: string;
+  success: boolean;
+  result: any;
+  error?: string;
+  renderedSummary?: string;
 }
 
 export interface ApiProviderConfig {
@@ -188,5 +228,23 @@ export interface WardrobeOutfit {
   fallbackModelUrl: string;
   isPremium: boolean;
   isDefault?: boolean;
+}
+
+export interface TimelineCue {
+  id: string;
+  name: string;
+  text: string;
+  animationKey: string;
+  emotionKey: string;
+  durationSec: number;
+}
+
+export interface ActEmotionItem {
+  key: string;
+  name: string;
+  emoji: string;
+  description: string;
+  expressionPreset: string;
+  blendValues: Record<string, number>;
 }
 
