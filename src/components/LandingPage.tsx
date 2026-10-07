@@ -63,7 +63,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [showAllIntegrations, setShowAllIntegrations] = useState(false);
   const [showAllApiProviders, setShowAllApiProviders] = useState(false);
-  const [activeMcpTab, setActiveMcpTab] = useState<'claude' | 'cursor' | 'jsonrpc'>('claude');
+  const [activeMcpTab, setActiveMcpTab] = useState<'claude' | 'cursor' | 'jsonrpc' | 'act'>('claude');
   const [copiedMcpConfig, setCopiedMcpConfig] = useState(false);
 
   const copyMcpConfig = (text: string) => {
@@ -890,16 +890,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
               {/* Tools Palette Grid */}
               <div className="rounded-3xl p-6 sm:p-7 bg-white border border-black/[0.08] shadow-sm">
                 <h4 className="text-sm font-bold font-heading text-neutral-900 uppercase tracking-wider text-neutral-500 mb-3">
-                  Exposed MCP Tools &amp; Resources
+                  Tool Calling Samples
                 </h4>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                   {[
+                    { name: 'avatar_act', desc: 'Execute /act cues & script' },
+                    { name: 'avatar_say', desc: 'Live speech & lip sync' },
                     { name: 'web_search', desc: 'Real-time web snippets' },
                     { name: 'wikipedia', desc: 'Encyclopedia summaries' },
                     { name: 'weather_info', desc: 'Forecast & temperatures' },
                     { name: 'ask_persona', desc: 'Direct persona response' },
-                    { name: 'device_info', desc: 'Client CPU/RAM specs' },
-                    { name: 'location_info', desc: 'Geographic timezone' },
                   ].map((tool) => (
                     <div
                       key={tool.name}
@@ -960,6 +960,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
                       >
                         cURL
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveMcpTab('act')}
+                        className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors cursor-pointer ${
+                          activeMcpTab === 'act'
+                            ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold'
+                            : 'text-neutral-300 hover:text-white'
+                        }`}
+                      >
+                        Act Script
+                      </button>
                     </div>
                   </div>
 
@@ -971,6 +982,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
                         `// .cursor/mcp.json\n{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp/sse",\n      "type": "sse"\n    }\n  }\n}`}
                       {activeMcpTab === 'jsonrpc' &&
                         `# JSON-RPC 2.0 tool execution\ncurl -X POST "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "jsonrpc": "2.0",\n    "id": 1,\n    "method": "tools/call",\n    "params": {\n      "name": "web_search",\n      "arguments": {"query": "latest news"}\n    }\n  }'`}
+                      {activeMcpTab === 'act' &&
+                        `# Control 3D avatar & act out the /act default script\ncurl -X POST "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "jsonrpc": "2.0",\n    "id": 1,\n    "method": "tools/call",\n    "params": {\n      "name": "avatar_act",\n      "arguments": {\n        "cues": [\n          {"name":"Greeting","text":"Hello! Welcome to the secret Act Studio.","animationKey":"wave","emotionKey":"happy","durationSec":3.5},\n          {"name":"Waiting","text":"Add any speech lines or choose any Mixamo animation below.","animationKey":"wait","emotionKey":"lovey","durationSec":4.0},\n          {"name":"Silent Action","text":"","animationKey":"yawn","emotionKey":"sleepy","durationSec":3.5},\n          {"name":"Closing","text":"I will speak your script sequentially with real-time lip sync!","animationKey":"idle","emotionKey":"silly","durationSec":3.5}\n        ]\n      }\n    }\n  }'`}
                     </pre>
 
                     <button
@@ -982,6 +995,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
                             ? `{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${origin}/api/mcp/sse",\n      "transport": "sse"\n    }\n  }\n}`
                             : activeMcpTab === 'cursor'
                             ? `{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${origin}/api/mcp/sse",\n      "type": "sse"\n    }\n  }\n}`
+                            : activeMcpTab === 'act'
+                            ? `curl -X POST "${origin}/api/mcp" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"avatar_act","arguments":{"cues":[{"name":"Greeting","text":"Hello! Welcome to the secret Act Studio.","animationKey":"wave","emotionKey":"happy","durationSec":3.5},{"name":"Waiting","text":"Add any speech lines or choose any Mixamo animation below.","animationKey":"wait","emotionKey":"lovey","durationSec":4.0},{"name":"Silent Action","text":"","animationKey":"yawn","emotionKey":"sleepy","durationSec":3.5},{"name":"Closing","text":"I will speak your script sequentially with real-time lip sync!","animationKey":"idle","emotionKey":"silly","durationSec":3.5}]}}}'`
                             : `curl -X POST "${origin}/api/mcp" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"latest news"}}}'`;
                         copyMcpConfig(snippet);
                       }}
@@ -1242,20 +1257,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
           {/* Company branding */}
           <div className="flex items-center gap-3">
-            <span className="font-bold text-lg tracking-tight font-heading text-neutral-900">
-              AI Smash
-            </span>
-            <span className="text-xs text-neutral-400 font-mono">
-              by{' '}
-              <a
-                href="https://mux8.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-neutral-700 font-semibold hover:text-neutral-900 hover:underline transition-colors"
-              >
-                MuxAI
-              </a>
-            </span>
+            <a
+              href="https://mux8.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-bold text-lg tracking-tight font-heading text-neutral-900 hover:text-[var(--theme-accent,#0f9bc7)] transition-colors"
+            >
+              MuxAI
+            </a>
           </div>
 
           {/* Social Links */}

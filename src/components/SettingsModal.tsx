@@ -354,15 +354,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Modal Footer */}
         <div className="p-4 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/70 dark:bg-white/[0.02] flex items-center justify-between">
-          <a
-            href={AI_PROFILE.stats.websiteUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`text-xs text-neutral-400 dark:text-neutral-500 ${THEME_COLORS.tokens.accentTextHover} font-mono transition-colors underline decoration-dotted underline-offset-2`}
-            title={`Visit ${APP_INFO.author}`}
-          >
-            {APP_INFO.copyright}
-          </a>
+          <span className="text-xs text-neutral-400 dark:text-neutral-500 font-mono select-none">
+            © MuxAI 2.5 2026
+          </span>
           <button
             onClick={onClose}
             className={`px-4 py-2 rounded-xl ${THEME_COLORS.tokens.modalPrimaryButton} text-xs active:scale-95 transition-all shadow-xs cursor-pointer`}
