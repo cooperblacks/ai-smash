@@ -219,7 +219,7 @@ class DiscordBotRunner {
     if (!cleanedQuery) return;
 
     try {
-      // Generate response using AI Persona (Hana / Serafina)
+      // Generate response using AI Persona
       const replyText = await this.generateAiResponse(cleanedQuery, msg.author.username);
 
       if (replyText) {

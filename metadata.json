@@ -1,6 +1,6 @@
 {
-  "name": "Serafina",
-  "description": "Talk with Serafina - your private consultant online for all things sensible or uncanny. Decentralized and self-hosted LLM platform brought to you by MuxAI.",
+  "name": "Hana",
+  "description": "Talk with Hana. Decentralized and self-hosted LLM platform brought to you by MuxAI.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
