@@ -355,7 +355,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Modal Footer */}
         <div className="p-4 border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/70 dark:bg-white/[0.02] flex items-center justify-between">
           <span className="text-xs text-neutral-400 dark:text-neutral-500 font-mono select-none">
-            © MuxAI 2.5 2026
+            MuxAI 2.5
           </span>
           <button
             onClick={onClose}
