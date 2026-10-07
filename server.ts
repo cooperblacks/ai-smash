@@ -745,9 +745,93 @@ app.post('/api/tools/execute', async (req: Request, res: Response) => {
 });
 
 // =====================================================================
-// MODEL CONTEXT PROTOCOL (MCP) SERVER ENDPOINTS
-// Exposes tools, resources, and persona queries to external apps, Cursor, & Claude Desktop
+// MODEL CONTEXT PROTOCOL (MCP) SERVER ENDPOINTS & LIVE AVATAR CONTROL
+// Exposes tools, resources, live avatar controls, and persona queries
 // =====================================================================
+
+// Live Avatar Control Event Clients (SSE pub/sub)
+const avatarEventClients: Set<Response> = new Set();
+
+function broadcastAvatarEvent(event: any) {
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  avatarEventClients.forEach((client) => {
+    try {
+      client.write(payload);
+    } catch {
+      avatarEventClients.delete(client);
+    }
+  });
+}
+
+// Live SSE Stream for connected avatar instances (/chat & /act clients)
+app.get('/api/avatar/events', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  avatarEventClients.add(res);
+
+  // Send initial connection event
+  res.write(`data: ${JSON.stringify({ type: 'connected', time: Date.now() })}\n\n`);
+
+  const keepAlive = setInterval(() => {
+    if (!res.writableEnded) {
+      res.write(': keepalive\n\n');
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    avatarEventClients.delete(res);
+  });
+});
+
+// Direct REST endpoint for controlling the live 3D avatar
+app.post('/api/avatar/action', (req: Request, res: Response) => {
+  const { action, text, emotion, animation, cues } = req.body || {};
+  if (!action && !text && !cues) {
+    return res.status(400).json({ error: 'Missing action or payload parameters' });
+  }
+
+  const eventPayload = {
+    type: action || (cues ? 'act' : 'speak'),
+    text: text || '',
+    emotion: emotion || 'happy',
+    animation: animation || 'wave',
+    cues: cues || [],
+    timestamp: Date.now(),
+  };
+
+  broadcastAvatarEvent(eventPayload);
+
+  res.json({
+    status: 'ok',
+    dispatched: true,
+    activeSubscribers: avatarEventClients.size,
+    event: eventPayload,
+  });
+});
+
+// Full-message emotion detection endpoint
+app.post('/api/emotion', (req: Request, res: Response) => {
+  const text = String(req.body?.text || '').toLowerCase();
+  let detected = 'neutral';
+
+  if (/\b(sad|sorry|crying|tears|apolog|depress|heartbroken|hurt|miss you|grief|mourn)\b/.test(text)) {
+    detected = 'sad';
+  } else if (/\b(angry|furious|mad|annoy|hate|disgust|stupid|idiot|how dare|shut up)\b/.test(text)) {
+    detected = 'angry';
+  } else if (/\b(happy|glad|delight|joy|wonderful|great|awesome|love|congrat|celebrat|yay|hooray|smile)\b/.test(text)) {
+    detected = 'happy';
+  } else if (/\b(smug|smirk|obvious|of course|naturally|told you so|darling|too easy|heh|genius)\b/.test(text)) {
+    detected = 'smug';
+  } else if (/\b(surpris|shock|amaz|whoa|wow|omg|unbeliev|gasp|really\?|wait what)\b/.test(text) || /\?!/.test(text)) {
+    detected = 'surprised';
+  }
+
+  res.json({ emotion: detected });
+});
 
 // MCP Server Information & Health
 app.get('/api/mcp', (_req: Request, res: Response) => {
@@ -760,7 +844,18 @@ app.get('/api/mcp', (_req: Request, res: Response) => {
     sseEndpoint: '/api/mcp/sse',
     messagesEndpoint: '/api/mcp/messages',
     capabilities: {
-      tools: ['web_search', 'wikipedia', 'weather_info', 'location_info', 'device_info', 'ask_persona'],
+      tools: [
+        'avatar_act',
+        'avatar_say',
+        'avatar_emotion',
+        'avatar_animation',
+        'web_search',
+        'wikipedia',
+        'weather_info',
+        'location_info',
+        'device_info',
+        'ask_persona',
+      ],
       resources: ['resource://persona/profile', 'resource://app/info'],
       prompts: ['prompt://persona/chat'],
     },

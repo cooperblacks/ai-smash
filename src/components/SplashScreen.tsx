@@ -60,6 +60,14 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
             alt={SPLASH_CONFIG.title}
             className="w-24 h-24 sm:w-28 sm:h-28 object-contain drop-shadow-xl transition-transform duration-300 group-hover:scale-105"
             draggable={false}
+            loading="eager"
+            decoding="sync"
+            onError={(e) => {
+              const target = e.currentTarget;
+              if (target.src !== 'https://ai.mux8.com/logo0.png') {
+                target.src = 'https://ai.mux8.com/logo0.png';
+              }
+            }}
           />
         </div>
 
