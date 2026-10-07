@@ -151,15 +151,22 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
     camera.position.set(0.0, 1.05, 2.3);
     camera.lookAt(0.0, 1.0, 0.0);
 
-    // 3. Renderer with transparent background to blend seamlessly with theme
+    // 3. Renderer with hardware-adaptive pixel ratio to eliminate GPU fill rate lag
+    const isLowPowerDevice =
+      typeof navigator !== 'undefined' &&
+      ((navigator.hardwareConcurrency || 4) <= 4 || /Mobi|Android|iPhone/i.test(navigator.userAgent));
+    const targetPixelRatio = isLowPowerDevice
+      ? Math.min(window.devicePixelRatio || 1, 1.25)
+      : Math.min(window.devicePixelRatio || 1, 1.5);
+
     const renderer = new THREE.WebGLRenderer({
       canvas,
       alpha: true,
-      antialias: true,
+      antialias: !isLowPowerDevice,
       powerPreference: 'high-performance',
     });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(targetPixelRatio);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
@@ -406,10 +413,47 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
       camera.aspect = newWidth / newHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(newWidth, newHeight);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(targetPixelRatio);
     };
 
     window.addEventListener('resize', handleResize);
+
+    // Pre-allocated scratch objects to prevent garbage collection thrashing in the 60fps render loop
+    const scratchHeadWorldPos = new THREE.Vector3();
+    const scratchHeadScreenPos = new THREE.Vector3();
+    const scratchGazeTarget = new THREE.Vector3();
+
+    // Viewport & Tab Visibility Throttling: Pause render loop when scrolled off-screen or tab is hidden
+    let isInViewport = true;
+    let isTabVisible = typeof document === 'undefined' ? true : !document.hidden;
+
+    const handleVisibilityChange = () => {
+      isTabVisible = typeof document === 'undefined' ? true : !document.hidden;
+      if (isTabVisible && isInViewport && !isDisposed) {
+        lastTime = performance.now();
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = requestAnimationFrame(animate);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const intersectionObserver = typeof IntersectionObserver !== 'undefined'
+      ? new IntersectionObserver(
+          ([entry]) => {
+            isInViewport = entry.isIntersecting;
+            if (isInViewport && isTabVisible && !isDisposed) {
+              lastTime = performance.now();
+              cancelAnimationFrame(animationFrameId);
+              animationFrameId = requestAnimationFrame(animate);
+            }
+          },
+          { threshold: 0.05 }
+        )
+      : null;
+
+    if (intersectionObserver && container) {
+      intersectionObserver.observe(container);
+    }
 
     // Animation Render Loop
     let lastTime = performance.now();
@@ -418,8 +462,8 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
     const walkSpeed = 0.68; // Speed of walking in units per second
 
     const animate = (time: number) => {
+      if (!isTabVisible || !isInViewport || isDisposed) return;
       animationFrameId = requestAnimationFrame(animate);
-      if (isDisposed) return;
 
       const delta = Math.min((time - lastTime) / 1000, 0.05);
       lastTime = time;
@@ -540,27 +584,25 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
             }
 
             // Get current 3D world position of the head (at eye level) and project to camera NDC space
-            vrm.scene.updateMatrixWorld(true);
-            const headWorldPos = new THREE.Vector3();
             if (head) {
-              head.getWorldPosition(headWorldPos);
-              headWorldPos.y += 0.06;
+              head.getWorldPosition(scratchHeadWorldPos);
+              scratchHeadWorldPos.y += 0.06;
             } else {
-              headWorldPos.set(vrm.scene.position.x, 1.16, vrm.scene.position.z);
+              scratchHeadWorldPos.set(vrm.scene.position.x, 1.16, vrm.scene.position.z);
             }
 
-            const headScreenPos = headWorldPos.clone().project(camera);
+            scratchHeadScreenPos.copy(scratchHeadWorldPos).project(camera);
 
             const mouse = pointerClientRef.current.hasMoved
               ? mouseRef.current
-              : { x: headScreenPos.x, y: headScreenPos.y };
+              : { x: scratchHeadScreenPos.x, y: scratchHeadScreenPos.y };
 
             // Pointer delta relative to the head's current projected position on screen
-            const deltaX = mouse.x - headScreenPos.x;
-            const deltaY = mouse.y - headScreenPos.y;
+            const deltaX = mouse.x - scratchHeadScreenPos.x;
+            const deltaY = mouse.y - scratchHeadScreenPos.y;
 
             // Convert screen-space delta into 3D world offset at the head's depth using camera frustum
-            const distToHead = Math.max(0.5, camera.position.z - headWorldPos.z);
+            const distToHead = Math.max(0.5, camera.position.z - scratchHeadWorldPos.z);
             const halfFrustumH = distToHead * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
             const halfFrustumW = halfFrustumH * camera.aspect;
 
@@ -585,12 +627,12 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
             }
 
             // Also update VRM LookAt target vector calibrated to current head world coordinates
-            const gazeTarget = new THREE.Vector3(
-              headWorldPos.x + worldOffsetX,
-              headWorldPos.y + worldOffsetY,
-              headWorldPos.z + lookDepth
+            scratchGazeTarget.set(
+              scratchHeadWorldPos.x + worldOffsetX,
+              scratchHeadWorldPos.y + worldOffsetY,
+              scratchHeadWorldPos.z + lookDepth
             );
-            vrm.lookAt?.lookAt(gazeTarget);
+            vrm.lookAt?.lookAt(scratchGazeTarget);
           }
         }
 
@@ -630,6 +672,8 @@ export const LandingHeroCanvas: React.FC<LandingHeroCanvasProps> = ({ onSequence
     return () => {
       isDisposed = true;
       cancelAnimationFrame(animationFrameId);
+      intersectionObserver?.disconnect();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       simulatedBoundaryTimeouts.forEach((t) => clearTimeout(t));
       window.removeEventListener('pointerdown', handleUserGestureUnlockSpeech);
       window.removeEventListener('pointermove', handlePointerMove);

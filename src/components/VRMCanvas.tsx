@@ -137,15 +137,22 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     adjustCameraFraming();
 
-    // 3. Renderer Setup
+    // 3. Renderer Setup with hardware-adaptive pixel ratio to eliminate GPU lag
+    const isLowPowerDevice =
+      typeof navigator !== 'undefined' &&
+      ((navigator.hardwareConcurrency || 4) <= 4 || /Mobi|Android|iPhone/i.test(navigator.userAgent));
+    const targetPixelRatio = isLowPowerDevice
+      ? Math.min(window.devicePixelRatio || 1, 1.25)
+      : Math.min(window.devicePixelRatio || 1, 1.6);
+
     const renderer = new THREE.WebGLRenderer({
       canvas,
       alpha: true,
-      antialias: true,
+      antialias: !isLowPowerDevice,
       powerPreference: 'high-performance',
     });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(targetPixelRatio);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.0;
@@ -646,8 +653,23 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       setTimeout(handleFallComplete, fallDuration + 150);
     };
 
-    // 7. Render & Animation Loop
+    // Pre-allocated scratch objects to prevent per-frame garbage collection
+    const scratchHeadWorldPos = new THREE.Vector3();
+
+    // 7. Render & Animation Loop with Tab Visibility Pausing
+    let isTabVisible = typeof document === 'undefined' ? true : !document.hidden;
+    const handleVisibilityChange = () => {
+      isTabVisible = typeof document === 'undefined' ? true : !document.hidden;
+      if (isTabVisible && !isDisposed) {
+        lastAnimTime = performance.now();
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = requestAnimationFrame(animate);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     const animate = () => {
+      if (!isTabVisible || isDisposed) return;
       animationFrameId = requestAnimationFrame(animate);
 
       const now = performance.now();
@@ -871,11 +893,10 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         const isWaitPlaying = Boolean(activeWaitActionRef.current);
 
         if (!isFalling && !isWaitPlaying && headNode && cameraRef.current) {
-          const headWorldPos = new THREE.Vector3();
-          headNode.getWorldPosition(headWorldPos);
-          headWorldPos.y += 0.055;
+          headNode.getWorldPosition(scratchHeadWorldPos);
+          scratchHeadWorldPos.y += 0.055;
 
-          const headScreenPos = headWorldPos.project(cameraRef.current);
+          const headScreenPos = scratchHeadWorldPos.project(cameraRef.current);
 
           const deltaX = mouseRef.current.x - headScreenPos.x;
           const deltaY = mouseRef.current.y - headScreenPos.y;
@@ -1059,6 +1080,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       if (waitFinishTimeoutId) clearTimeout(waitFinishTimeoutId);
       clickTimestampsRef.current = [];
       cancelAnimationFrame(animationFrameId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('pointermove', handlePointerMove);
       container.removeEventListener('pointerdown', handlePointerDown);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Check, ChevronDown, Sparkles, MessageSquare, Shield, Box, Palette, Github, Linkedin, ExternalLink, Heart, Award, BookOpen, Bot, Workflow, Key, Menu, X, Crown } from 'lucide-react';
+import { ArrowRight, Check, ChevronDown, Sparkles, MessageSquare, Shield, Box, Palette, Github, Linkedin, ExternalLink, Heart, Award, BookOpen, Bot, Workflow, Key, Menu, X, Crown, Terminal, Copy } from 'lucide-react';
 import { LandingHeroCanvas } from './LandingHeroCanvas';
 import { AI_PROFILE, SPECIAL_THANKS_LINKS, PRODUCT_HUNT_URL, INTEGRATION_LIBRARY, API_PROVIDERS_CONFIG } from '../constants';
 
@@ -61,6 +61,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
   const [activeAccordion, setActiveAccordion] = useState<number>(0);
   const [scrollY, setScrollY] = useState(0);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [showAllIntegrations, setShowAllIntegrations] = useState(false);
+  const [showAllApiProviders, setShowAllApiProviders] = useState(false);
+  const [activeMcpTab, setActiveMcpTab] = useState<'claude' | 'cursor' | 'jsonrpc'>('claude');
+  const [copiedMcpConfig, setCopiedMcpConfig] = useState(false);
+
+  const copyMcpConfig = (text: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedMcpConfig(true);
+      setTimeout(() => setCopiedMcpConfig(false), 2000);
+    }
+  };
 
   // Parallax scroll listener
   useEffect(() => {
@@ -116,7 +128,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
             </div>
             <div>
               <span className="font-bold text-lg tracking-tight font-heading block leading-none">
-                AI Smash
+                MuxAI <span className="text-[var(--theme-accent,#0f9bc7)]">Hana</span>
               </span>
             </div>
           </div>
@@ -136,6 +148,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
               className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
             >
               Extensions & APIs
+            </a>
+            <a
+              href="#mcp"
+              onClick={(e) => scrollToSection(e, 'mcp')}
+              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
+            >
+              MCP
             </a>
             <a
               href="#pricing"
@@ -203,7 +222,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
                     className="w-full h-full object-cover rounded-lg"
                   />
                 </div>
-                <span className="font-bold text-base tracking-tight font-heading">AI Smash</span>
+                <span className="font-bold text-base tracking-tight font-heading">
+                  MuxAI <span className="text-[var(--theme-accent,#0f9bc7)]">Hana</span>
+                </span>
               </div>
               <button
                 type="button"
@@ -238,6 +259,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
               >
                 <Sparkles className="w-4 h-4 text-neutral-400" />
                 <span>Extensions & APIs</span>
+              </a>
+
+              <a
+                href="#mcp"
+                onClick={(e) => {
+                  scrollToSection(e, 'mcp');
+                  setIsMobileNavOpen(false);
+                }}
+                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
+              >
+                <Terminal className="w-4 h-4 text-neutral-400" />
+                <span>MCP</span>
               </a>
 
               <a
@@ -553,7 +586,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
               <div className="flex items-center gap-2">
                 <Bot className="w-5 h-5 text-[#0f9bc7]" />
                 <h3 className="text-xl font-bold font-heading text-neutral-900">
-                  Bot & Workflow Integrations
+                  Bot &amp; Workflow Integrations
                 </h3>
               </div>
               <button
@@ -566,58 +599,82 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {INTEGRATION_LIBRARY.map((item) => (
-                <div
-                  key={item.platform}
-                  className="rounded-2xl p-5 sm:p-6 bg-white border border-black/[0.08] shadow-sm hover:shadow-md hover:border-[#55d2f6]/60 transition-all flex flex-col justify-between group"
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-4 mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-xl overflow-hidden ring-1 ring-black/10 shadow-xs bg-white p-0.5 shrink-0">
-                          <img
-                            src={item.logoUrl}
-                            alt={item.name}
-                            className="w-full h-full object-cover rounded-lg"
-                          />
-                        </div>
-                        <div>
-                          <h4 className="text-lg font-bold font-heading text-neutral-900 group-hover:text-[#0f9bc7] transition-colors">
-                            {item.name}
-                          </h4>
-                          <span className="text-xs text-neutral-500 block mt-0.5">
-                            {item.tagline}
-                          </span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => onNavigateToDocs?.(item.docsPath)}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-[#0f9bc7] hover:underline cursor-pointer shrink-0 pt-1"
-                      >
-                        <span>Setup Guide</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <p className="text-sm text-neutral-600 leading-relaxed mb-4">
-                      {item.description}
-                    </p>
-
-                    <div className="space-y-1.5 pt-3 border-t border-black/[0.05]">
-                      {item.features.slice(0, 3).map((feat, fIdx) => (
-                        <div key={fIdx} className="flex items-center gap-2 text-xs text-neutral-700">
-                          <div className="w-4 h-4 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center shrink-0">
-                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+            <div className="relative">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {(showAllIntegrations
+                  ? INTEGRATION_LIBRARY.filter((item) => item.platform !== 'mcp')
+                  : INTEGRATION_LIBRARY.filter((item) => item.platform !== 'mcp').slice(0, 4)
+                ).map((item) => (
+                  <div
+                    key={item.platform}
+                    className="rounded-2xl p-5 sm:p-6 bg-white border border-black/[0.08] shadow-sm hover:shadow-md hover:border-[#55d2f6]/60 transition-all flex flex-col justify-between group"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded-xl overflow-hidden ring-1 ring-black/10 shadow-xs bg-white p-0.5 shrink-0">
+                            <img
+                              src={item.logoUrl}
+                              alt={item.name}
+                              className="w-full h-full object-cover rounded-lg"
+                            />
                           </div>
-                          <span>{feat}</span>
+                          <div>
+                            <h4 className="text-lg font-bold font-heading text-neutral-900 group-hover:text-[#0f9bc7] transition-colors">
+                              {item.name}
+                            </h4>
+                            <span className="text-xs text-neutral-500 block mt-0.5">
+                              {item.tagline}
+                            </span>
+                          </div>
                         </div>
-                      ))}
+                        <button
+                          type="button"
+                          onClick={() => onNavigateToDocs?.(item.docsPath)}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-[#0f9bc7] hover:underline cursor-pointer shrink-0 pt-1"
+                        >
+                          <span>Setup Guide</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <p className="text-sm text-neutral-600 leading-relaxed mb-4">
+                        {item.description}
+                      </p>
+
+                      <div className="space-y-1.5 pt-3 border-t border-black/[0.05]">
+                        {item.features.slice(0, 3).map((feat, fIdx) => (
+                          <div key={fIdx} className="flex items-center gap-2 text-xs text-neutral-700">
+                            <div className="w-4 h-4 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center shrink-0">
+                              <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            </div>
+                            <span>{feat}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+
+              {!showAllIntegrations && INTEGRATION_LIBRARY.filter((item) => item.platform !== 'mcp').length > 4 && (
+                <div className="absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-[#f8f9fc] via-[#f8f9fc]/90 to-transparent pointer-events-none z-10" />
+              )}
+
+              <div className={`flex justify-center ${!showAllIntegrations ? 'relative z-20 -mt-6' : 'mt-8'}`}>
+                <button
+                  type="button"
+                  onClick={() => setShowAllIntegrations(!showAllIntegrations)}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full text-xs font-semibold bg-white border border-black/10 text-neutral-800 hover:text-black hover:border-[var(--theme-accent)] shadow-sm hover:shadow active:scale-95 transition-all cursor-pointer group"
+                >
+                  <span>{showAllIntegrations ? 'Show Less' : 'Show More'}</span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                      showAllIntegrations ? 'rotate-180' : 'group-hover:translate-y-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -640,37 +697,61 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Object.values(API_PROVIDERS_CONFIG).map((provider) => (
-                <div
-                  key={provider.id}
-                  onClick={() => onNavigateToDocs?.(provider.docsPath)}
-                  className="rounded-2xl p-4 bg-white border border-black/[0.08] shadow-xs hover:shadow-md hover:border-[#55d2f6]/60 transition-all flex items-center justify-between gap-3 cursor-pointer group"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl overflow-hidden ring-1 ring-black/10 shadow-xs bg-white p-0.5 shrink-0 group-hover:scale-105 transition-transform">
-                      <img
-                        src={provider.logoUrl}
-                        alt={provider.name}
-                        className="w-full h-full object-cover rounded-lg"
-                      />
+            <div className="relative">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {(showAllApiProviders
+                  ? Object.values(API_PROVIDERS_CONFIG)
+                  : Object.values(API_PROVIDERS_CONFIG).slice(0, 4)
+                ).map((provider) => (
+                  <div
+                    key={provider.id}
+                    onClick={() => onNavigateToDocs?.(provider.docsPath)}
+                    className="rounded-2xl p-4 bg-white border border-black/[0.08] shadow-xs hover:shadow-md hover:border-[#55d2f6]/60 transition-all flex items-center justify-between gap-3 cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl overflow-hidden ring-1 ring-black/10 shadow-xs bg-white p-0.5 shrink-0 group-hover:scale-105 transition-transform">
+                        <img
+                          src={provider.logoUrl}
+                          alt={provider.name}
+                          className="w-full h-full object-cover rounded-lg"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-bold font-heading text-neutral-900 group-hover:text-[#0f9bc7] transition-colors truncate">
+                          {provider.name}
+                        </h4>
+                        <p className="text-[11px] text-neutral-500 truncate">
+                          {provider.tagline}
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <h4 className="text-sm font-bold font-heading text-neutral-900 group-hover:text-[#0f9bc7] transition-colors truncate">
-                        {provider.name}
-                      </h4>
-                      <p className="text-[11px] text-neutral-500 truncate">
-                        {provider.tagline}
-                      </p>
-                    </div>
-                  </div>
 
-                  <span className="text-[#0f9bc7] text-xs font-semibold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform shrink-0">
-                    <span>Docs</span>
-                    <ChevronDown className="w-3 h-3 -rotate-90" />
-                  </span>
-                </div>
-              ))}
+                    <span className="text-[#0f9bc7] text-xs font-semibold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform shrink-0">
+                      <span>Docs</span>
+                      <ChevronDown className="w-3 h-3 -rotate-90" />
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {!showAllApiProviders && Object.values(API_PROVIDERS_CONFIG).length > 4 && (
+                <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[#f8f9fc] via-[#f8f9fc]/90 to-transparent pointer-events-none z-10" />
+              )}
+
+              <div className={`flex justify-center ${!showAllApiProviders ? 'relative z-20 -mt-6' : 'mt-8'}`}>
+                <button
+                  type="button"
+                  onClick={() => setShowAllApiProviders(!showAllApiProviders)}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full text-xs font-semibold bg-white border border-black/10 text-neutral-800 hover:text-black hover:border-[var(--theme-accent)] shadow-sm hover:shadow active:scale-95 transition-all cursor-pointer group"
+                >
+                  <span>{showAllApiProviders ? 'Show Less' : 'Show More'}</span>
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                      showAllApiProviders ? 'rotate-180' : 'group-hover:translate-y-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -696,6 +777,239 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
               <span>Browse Docs (/docs)</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
+          </div>
+        </section>
+
+        {/* SECTION: MODEL CONTEXT PROTOCOL (MCP) (Dedicated section above Pricing) */}
+        <section
+          id="mcp"
+          className="relative z-20 py-16 sm:py-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto border-t border-black/[0.06]"
+        >
+          {/* Section Header */}
+          <div className="text-center max-w-3xl mx-auto mb-14">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono uppercase tracking-widest bg-[var(--theme-accent-soft)] text-[#0f9bc7] font-semibold mb-3">
+              <Terminal className="w-3.5 h-3.5" />
+              <span>Standardized Protocol</span>
+            </span>
+            <div className="flex items-center justify-center gap-3">
+              <img
+                src="https://ai.mux8.com/logo0.png"
+                alt="MCP"
+                className="w-10 h-10 rounded-xl shadow-xs border border-black/10 bg-white p-0.5"
+              />
+              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold font-heading text-neutral-900 tracking-tight">
+                Model Context Protocol (MCP)
+              </h2>
+            </div>
+            <p className="mt-4 text-base sm:text-lg text-neutral-600 leading-relaxed">
+              Standardized open architecture connecting Cursor IDE, Claude Desktop, Windsurf, and custom external tool suites directly into this AI runtime in /chat mode
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+            {/* Left 7 cols: Server Endpoints & Available Tools */}
+            <div className="lg:col-span-7 flex flex-col gap-6">
+              {/* Endpoint Card */}
+              <div className="rounded-3xl p-6 sm:p-7 bg-white border border-black/[0.08] shadow-sm flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <h3 className="text-lg font-bold font-heading text-neutral-900">
+                        Built-in Live MCP Server
+                      </h3>
+                    </div>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
+                      PROTOCOL 2024-11-05
+                    </span>
+                  </div>
+                  <p className="text-xs sm:text-sm text-neutral-600 mb-4 leading-relaxed">
+                    AI Smash runs an active Model Context Protocol server. External clients can connect over Server-Sent Events (SSE) or JSON-RPC 2.0 to access character context, execute built-in tools, and query the active model during /chat mode.
+                  </p>
+
+                  <div className="space-y-2">
+                    <div className="p-3 rounded-xl bg-neutral-50 border border-black/[0.06] flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="text-[10px] uppercase font-mono tracking-wider text-neutral-400 block font-semibold">
+                          SSE Transport Stream
+                        </span>
+                        <code className="text-xs font-mono text-neutral-900 font-bold truncate block">
+                          /api/mcp/sse
+                        </code>
+                      </div>
+                      <span className="text-[11px] font-medium text-emerald-600 shrink-0">
+                        Active SSE
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-neutral-50 border border-black/[0.06] flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="text-[10px] uppercase font-mono tracking-wider text-neutral-400 block font-semibold">
+                          JSON-RPC 2.0 Messages
+                        </span>
+                        <code className="text-xs font-mono text-neutral-900 font-bold truncate block">
+                          POST /api/mcp
+                        </code>
+                      </div>
+                      <span className="text-[11px] font-medium text-neutral-500 shrink-0">
+                        Method Dispatcher
+                      </span>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-neutral-50 border border-black/[0.06] flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="text-[10px] uppercase font-mono tracking-wider text-neutral-400 block font-semibold">
+                          Server Info &amp; Discovery
+                        </span>
+                        <code className="text-xs font-mono text-neutral-900 font-bold truncate block">
+                          GET /api/mcp
+                        </code>
+                      </div>
+                      <span className="text-[11px] font-medium text-neutral-500 shrink-0">
+                        Manifest JSON
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-4 border-t border-black/[0.06] flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-xs text-neutral-500">
+                    Connect from Claude Desktop or Cursor IDE in seconds.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onNavigateToDocs?.('/docs/integration/mcp')}
+                    className="text-xs font-semibold text-[#0f9bc7] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Read MCP Spec Guide</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Tools Palette Grid */}
+              <div className="rounded-3xl p-6 sm:p-7 bg-white border border-black/[0.08] shadow-sm">
+                <h4 className="text-sm font-bold font-heading text-neutral-900 uppercase tracking-wider text-neutral-500 mb-3">
+                  Exposed MCP Tools &amp; Resources
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {[
+                    { name: 'web_search', desc: 'Real-time web snippets' },
+                    { name: 'wikipedia', desc: 'Encyclopedia summaries' },
+                    { name: 'weather_info', desc: 'Forecast & temperatures' },
+                    { name: 'ask_persona', desc: 'Direct persona response' },
+                    { name: 'device_info', desc: 'Client CPU/RAM specs' },
+                    { name: 'location_info', desc: 'Geographic timezone' },
+                  ].map((tool) => (
+                    <div
+                      key={tool.name}
+                      className="p-2.5 rounded-xl bg-neutral-50 border border-black/[0.05] hover:border-[var(--theme-accent)]/50 transition-colors"
+                    >
+                      <code className="text-xs font-mono font-bold text-neutral-900 block truncate">
+                        {tool.name}
+                      </code>
+                      <span className="text-[10px] text-neutral-500 block truncate mt-0.5">
+                        {tool.desc}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Right 5 cols: Client Configuration & /chat Integration */}
+            <div className="lg:col-span-5 flex flex-col gap-6">
+              {/* Code Snippet Box with Tabs */}
+              <div className="rounded-3xl p-6 sm:p-7 bg-[#13151f] text-white border border-white/10 shadow-lg flex-1 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-xs font-mono text-neutral-400 uppercase tracking-wider">
+                      Client Integration
+                    </span>
+                    <div className="flex items-center gap-1 bg-white/10 p-0.5 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => setActiveMcpTab('claude')}
+                        className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors cursor-pointer ${
+                          activeMcpTab === 'claude'
+                            ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold'
+                            : 'text-neutral-300 hover:text-white'
+                        }`}
+                      >
+                        Claude
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveMcpTab('cursor')}
+                        className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors cursor-pointer ${
+                          activeMcpTab === 'cursor'
+                            ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold'
+                            : 'text-neutral-300 hover:text-white'
+                        }`}
+                      >
+                        Cursor
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveMcpTab('jsonrpc')}
+                        className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors cursor-pointer ${
+                          activeMcpTab === 'jsonrpc'
+                            ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold'
+                            : 'text-neutral-300 hover:text-white'
+                        }`}
+                      >
+                        cURL
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <pre className="p-4 rounded-xl bg-black/50 border border-white/10 text-xs font-mono text-neutral-200 overflow-x-auto scrollbar-thin max-h-56 leading-relaxed">
+                      {activeMcpTab === 'claude' &&
+                        `// claude_desktop_config.json\n{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp/sse",\n      "transport": "sse"\n    }\n  }\n}`}
+                      {activeMcpTab === 'cursor' &&
+                        `// .cursor/mcp.json\n{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp/sse",\n      "type": "sse"\n    }\n  }\n}`}
+                      {activeMcpTab === 'jsonrpc' &&
+                        `# JSON-RPC 2.0 tool execution\ncurl -X POST "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "jsonrpc": "2.0",\n    "id": 1,\n    "method": "tools/call",\n    "params": {\n      "name": "web_search",\n      "arguments": {"query": "latest news"}\n    }\n  }'`}
+                    </pre>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com';
+                        const snippet =
+                          activeMcpTab === 'claude'
+                            ? `{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${origin}/api/mcp/sse",\n      "transport": "sse"\n    }\n  }\n}`
+                            : activeMcpTab === 'cursor'
+                            ? `{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${origin}/api/mcp/sse",\n      "type": "sse"\n    }\n  }\n}`
+                            : `curl -X POST "${origin}/api/mcp" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"latest news"}}}'`;
+                        copyMcpConfig(snippet);
+                      }}
+                      className="absolute top-2.5 right-2.5 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white transition-colors cursor-pointer"
+                      title="Copy config"
+                    >
+                      {copiedMcpConfig ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-4 border-t border-white/10">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={onStartChat}
+                      className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-semibold bg-[var(--theme-accent,#55d2f6)] text-neutral-950 hover:opacity-90 active:scale-95 transition-all cursor-pointer shadow-md"
+                    >
+                      <span>Connect in /chat Mode</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-neutral-400 mt-2 text-center">
+                    Also available under the &quot;+&quot; extensions menu inside /chat.
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 

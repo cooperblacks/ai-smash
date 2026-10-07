@@ -264,6 +264,30 @@ export const ChatPlusMenu: React.FC<ChatPlusMenuProps> = ({
                                 ? integration.botToken
                                   ? 'Bot token configured'
                                   : 'Requires bot token'
+                                : integration.platform === 'slack'
+                                ? integration.botToken || integration.webhookUrl
+                                  ? 'Slack configured'
+                                  : 'Configure token or webhook'
+                                : integration.platform === 'twitch'
+                                ? integration.twitchChannel
+                                  ? `@${integration.twitchChannel} configured`
+                                  : 'Requires Twitch channel'
+                                : integration.platform === 'youtube'
+                                ? integration.apiKey && integration.youtubeVideoId
+                                  ? `Live ID: ${integration.youtubeVideoId}`
+                                  : 'Requires API key & video ID'
+                                : integration.platform === 'gmail'
+                                ? integration.googleAccessToken
+                                  ? integration.userEmail || 'OAuth token active'
+                                  : 'Requires Google OAuth token'
+                                : integration.platform === 'sheets'
+                                ? integration.googleAccessToken && integration.spreadsheetId
+                                  ? `Sheet: ${integration.spreadsheetId.slice(0, 8)}...`
+                                  : 'Requires token & sheet ID'
+                                : integration.platform === 'mcp'
+                                ? integration.mcpServerUrl
+                                  ? `Server: ${integration.mcpServerUrl}`
+                                  : 'Built-in /api/mcp/sse active'
                                 : integration.webhookUrl
                                 ? 'Webhook active'
                                 : 'Configure settings'}
@@ -517,6 +541,283 @@ export const ChatPlusMenu: React.FC<ChatPlusMenuProps> = ({
                                   placeholder="https://hooks.zapier.com/hooks/catch/..."
                                   className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white"
                                 />
+                              </div>
+                            </>
+                          )}
+
+                          {integration.platform === 'twitch' && (
+                            <>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  Twitch Channel Name <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={integration.twitchChannel || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      twitchChannel: e.target.value,
+                                    })
+                                  }
+                                  placeholder="e.g. your_stream_channel"
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  Channel whose live chat feed the AI model listens to.
+                                </span>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  OAuth Chat Token (Optional)
+                                </label>
+                                <input
+                                  type="password"
+                                  value={integration.botToken || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      botToken: e.target.value,
+                                    })
+                                  }
+                                  placeholder="oauth:abcdef0123456789..."
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  Optional Twitch OAuth token if you want the bot to post replies in chat.
+                                </span>
+                              </div>
+                              <div className="p-2 rounded-lg bg-white dark:bg-[#1a1d2b] border border-black/[0.05] dark:border-white/[0.05] flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <Volume2 className="w-4 h-4 text-emerald-500" />
+                                  <span className="text-[11px] text-neutral-700 dark:text-neutral-300">
+                                    Enable Live TTS Voice Output
+                                  </span>
+                                </div>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(integration.enableVoice)}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      enableVoice: e.target.checked,
+                                    })
+                                  }
+                                  className="rounded accent-[var(--theme-accent)] w-4 h-4 cursor-pointer"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {integration.platform === 'youtube' && (
+                            <>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  YouTube Data API v3 Key <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                  type="password"
+                                  value={integration.apiKey || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      apiKey: e.target.value,
+                                    })
+                                  }
+                                  placeholder="AIzaSy..."
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  Google Cloud API Key with YouTube Data API v3 enabled.
+                                </span>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  Live Broadcast Video ID <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={integration.youtubeVideoId || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      youtubeVideoId: e.target.value,
+                                    })
+                                  }
+                                  placeholder="e.g. jfKfPfyJRdk"
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  Found in your YouTube stream URL after &quot;v=&quot;.
+                                </span>
+                              </div>
+                              <div className="p-2 rounded-lg bg-white dark:bg-[#1a1d2b] border border-black/[0.05] dark:border-white/[0.05] flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <Volume2 className="w-4 h-4 text-emerald-500" />
+                                  <span className="text-[11px] text-neutral-700 dark:text-neutral-300">
+                                    Enable Live TTS Voice Output
+                                  </span>
+                                </div>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(integration.enableVoice)}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      enableVoice: e.target.checked,
+                                    })
+                                  }
+                                  className="rounded accent-[var(--theme-accent)] w-4 h-4 cursor-pointer"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {integration.platform === 'gmail' && (
+                            <>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  Google OAuth Access Token <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                  type="password"
+                                  value={integration.googleAccessToken || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      googleAccessToken: e.target.value,
+                                    })
+                                  }
+                                  placeholder="ya29.a0AfH6SM..."
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  Google OAuth Access Token with gmail.readonly or compose scope.
+                                </span>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  Gmail Address (Optional)
+                                </label>
+                                <input
+                                  type="email"
+                                  value={integration.userEmail || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      userEmail: e.target.value,
+                                    })
+                                  }
+                                  placeholder="you@gmail.com"
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {integration.platform === 'sheets' && (
+                            <>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  Google OAuth Access Token <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                  type="password"
+                                  value={integration.googleAccessToken || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      googleAccessToken: e.target.value,
+                                    })
+                                  }
+                                  placeholder="ya29.a0AfH6SM..."
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  OAuth token with spreadsheets scope.
+                                </span>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  Spreadsheet ID <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={integration.spreadsheetId || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      spreadsheetId: e.target.value,
+                                    })
+                                  }
+                                  placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  The long string between &quot;/d/&quot; and &quot;/edit&quot; in your spreadsheet URL.
+                                </span>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  Sheet Tab &amp; Range (Optional)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={integration.sheetRange || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      sheetRange: e.target.value,
+                                    })
+                                  }
+                                  placeholder="Sheet1!A:E"
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {integration.platform === 'mcp' && (
+                            <>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  MCP Endpoint URL
+                                </label>
+                                <input
+                                  type="url"
+                                  value={integration.mcpServerUrl || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      mcpServerUrl: e.target.value,
+                                    })
+                                  }
+                                  placeholder="/api/mcp/sse or http://localhost:8000/sse"
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  Default is built-in &quot;/api/mcp/sse&quot;. You can also connect external MCP servers.
+                                </span>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                                  Bearer Auth Token (Optional)
+                                </label>
+                                <input
+                                  type="password"
+                                  value={integration.apiKey || ''}
+                                  onChange={(e) =>
+                                    onUpdateIntegration({
+                                      ...integration,
+                                      apiKey: e.target.value,
+                                    })
+                                  }
+                                  placeholder="mcp_sk_..."
+                                  className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white dark:bg-[#11131c] border border-neutral-200 dark:border-neutral-700 text-neutral-900 dark:text-white placeholder:text-neutral-400 focus:outline-none focus:border-[var(--theme-accent)]"
+                                />
+                                <span className="text-[10px] text-neutral-400 mt-0.5 block">
+                                  Optional Authorization token for secured MCP servers.
+                                </span>
                               </div>
                             </>
                           )}

@@ -26,7 +26,7 @@ function formatDateSeparator(timestamp: number): string {
   return `${day} ${month} ${year}`;
 }
 
-export const MessageList: React.FC<MessageListProps> = ({
+const MessageListComponent: React.FC<MessageListProps> = ({
   messages,
   isGenerating,
   streamingText,
@@ -41,12 +41,26 @@ export const MessageList: React.FC<MessageListProps> = ({
   currentMatchMessageId = null,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRafIdRef = useRef<number | null>(null);
 
-  // Auto-scroll on new messages or streaming text (only when not searching)
+  // High-performance auto-scroller:
+  // - During active streaming, use instantaneous auto-scroll via requestAnimationFrame to avoid smooth-scroll animation queue pileup
+  // - On discrete message state transitions, use smooth scroll
   useEffect(() => {
-    if (!searchQuery) {
+    if (searchQuery) return;
+
+    if (isGenerating && streamingText) {
+      if (scrollRafIdRef.current) cancelAnimationFrame(scrollRafIdRef.current);
+      scrollRafIdRef.current = requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+      });
+    } else {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
+
+    return () => {
+      if (scrollRafIdRef.current) cancelAnimationFrame(scrollRafIdRef.current);
+    };
   }, [messages, streamingText, isGenerating, searchQuery]);
 
   let lastDateStr = '';
@@ -180,3 +194,5 @@ export const MessageList: React.FC<MessageListProps> = ({
     </div>
   );
 };
+
+export const MessageList = React.memo(MessageListComponent);

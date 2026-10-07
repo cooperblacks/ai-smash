@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Copy, Check, Terminal } from 'lucide-react';
 import { DOCS_CODE_CONFIG } from '../constants';
 
@@ -9,7 +9,7 @@ interface CodeBlockViewProps {
   maxHeight?: string;
 }
 
-export const CodeBlockView: React.FC<CodeBlockViewProps> = ({
+const CodeBlockViewComponent: React.FC<CodeBlockViewProps> = ({
   code,
   lang = '',
   showCopy = true,
@@ -147,6 +147,8 @@ export const CodeBlockView: React.FC<CodeBlockViewProps> = ({
     });
   };
 
+  const renderedTokens = useMemo(() => highlightTokens(code, lang), [code, lang]);
+
   return (
     <div
       className="relative rounded-xl border border-black/20 dark:border-white/10 overflow-hidden shadow-inner my-2 font-mono text-xs select-text w-full max-w-full min-w-0"
@@ -193,8 +195,10 @@ export const CodeBlockView: React.FC<CodeBlockViewProps> = ({
           wordBreak: 'normal',
         }}
       >
-        <pre className="m-0 p-0 font-mono whitespace-pre inline-block min-w-full">{highlightTokens(code, lang)}</pre>
+        <pre className="m-0 p-0 font-mono whitespace-pre inline-block min-w-full">{renderedTokens}</pre>
       </div>
     </div>
   );
 };
+
+export const CodeBlockView = React.memo(CodeBlockViewComponent);

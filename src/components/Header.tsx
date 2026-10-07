@@ -18,7 +18,7 @@ interface HeaderProps {
   onToggleThemeSidebar: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({
+const HeaderComponent: React.FC<HeaderProps> = ({
   isGenerating,
   isSidebarOpen,
   onToggleSidebar,
@@ -195,3 +195,5 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+
+export const Header = React.memo(HeaderComponent);

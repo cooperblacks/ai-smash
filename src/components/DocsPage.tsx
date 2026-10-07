@@ -278,6 +278,247 @@ curl -X POST "https://hooks.zapier.com/hooks/catch/123456/abcdef/" \\
     },
   },
 
+  // 6. TWITCH INTEGRATION
+  {
+    id: 'twitch',
+    path: '/docs/integration/twitch',
+    title: 'Twitch Live Chat & Voice Bot',
+    category: 'Integrations',
+    tagline: 'Listen to Twitch chat, process viewer prompts with AI, and speak answers in real-time',
+    logoUrl: 'https://muxai.vercel.app/logos/twitch.jpg',
+    content: {
+      overview:
+        'Connect your Twitch stream live chat directly to AI Smash. The integration connects over Twitch IRC WebSocket to listen for chat messages in your channel, feeds questions and prompts to the active AI persona, and synthesizes speech aloud with real-time 3D avatar lip-sync.',
+      prerequisites: [
+        'A Twitch account and broadcast channel name (e.g. twitch.tv/yourchannel)',
+        'Optional: Twitch Chat OAuth Token generated from https://twitchapps.com/tmi/ if you want the bot to also send chat messages back to viewers',
+      ],
+      steps: [
+        {
+          title: 'Step 1: Enter Twitch Channel Name',
+          desc: 'Open AI Smash in /chat mode, click the "+" button, select "Add integration", and choose Twitch. Type your channel username into the "Twitch Channel Name" input field.',
+        },
+        {
+          title: 'Step 2: (Optional) Add Chat OAuth Token for Bot Replies',
+          desc: 'If you want the bot to post text replies in your Twitch chat in addition to speaking aloud, generate an OAuth token at twitchapps.com/tmi and paste it in the "OAuth Chat Token" field.',
+        },
+        {
+          title: 'Step 3: Enable Voice Output',
+          desc: 'Check the "Enable Live TTS Voice Output" toggle to have Hana speak answers out loud with audio and 3D facial expressions for your stream audience.',
+        },
+      ],
+      parameters: [
+        { name: 'twitchChannel', type: 'string', required: true, desc: 'Your Twitch channel username to monitor.' },
+        { name: 'botToken', type: 'string (secret)', required: false, desc: 'Optional Twitch IRC OAuth token (oauth:...) for sending chat messages.' },
+        { name: 'enableVoice', type: 'boolean', required: false, desc: 'Synthesizes speech and triggers avatar animations for live viewers.' },
+      ],
+      codeExample: {
+        lang: 'bash',
+        code: `# Example Twitch IRC WebSocket connection test
+wscat -c wss://irc-ws.chat.twitch.tv:443
+# Send: PASS oauth:yourtoken
+# Send: NICK yourusername
+# Send: JOIN #yourchannel`,
+      },
+      tips: [
+        'Place the AI Smash 3D avatar on your OBS/Streamlabs overlay as a Browser Source with transparent background.',
+        'Viewers can trigger interactive answers by typing in chat or using channel point prompts.',
+      ],
+    },
+  },
+
+  // 7. YOUTUBE LIVE INTEGRATION
+  {
+    id: 'youtube',
+    path: '/docs/integration/youtube',
+    title: 'YouTube Live Stream & Voice',
+    category: 'Integrations',
+    tagline: 'Live chat polling with YouTube Data API v3, voice TTS & 3D avatar lip sync',
+    logoUrl: 'https://muxai.vercel.app/logos/youtube.jpg',
+    content: {
+      overview:
+        'The YouTube Live integration connects your YouTube Live stream chat to AI Smash. Using the YouTube Data API v3, it continuously polls active live chat messages, submits viewer questions to the active LLM, and speaks answers out loud with real-time 3D VRM avatar mouth movements and facial expressions.',
+      prerequisites: [
+        'A Google Cloud Project with the YouTube Data API v3 enabled',
+        'A Google Cloud API Key with access to YouTube Data API v3',
+        'An active or scheduled YouTube Live stream with live chat enabled',
+      ],
+      steps: [
+        {
+          title: 'Step 1: Get YouTube Data API v3 Key',
+          desc: 'Visit Google Cloud Console (console.cloud.google.com) -> APIs & Services -> Enable "YouTube Data API v3" -> Credentials -> Create API Key.',
+        },
+        {
+          title: 'Step 2: Obtain Live Broadcast Video ID',
+          desc: 'Start your YouTube live broadcast or open your upcoming stream. Copy the video ID from the URL (e.g. in https://youtube.com/watch?v=jfKfPfyJRdk, the ID is jfKfPfyJRdk).',
+        },
+        {
+          title: 'Step 3: Configure in AI Smash',
+          desc: 'In AI Smash, click the "+" button, add YouTube from the Integration Library, paste your API Key and Video ID, and test connection.',
+        },
+      ],
+      parameters: [
+        { name: 'apiKey', type: 'string (secret)', required: true, desc: 'Google Cloud API Key with YouTube Data API v3 enabled.' },
+        { name: 'youtubeVideoId', type: 'string', required: true, desc: 'The 11-character video ID of your live stream broadcast.' },
+        { name: 'enableVoice', type: 'boolean', required: false, desc: 'Automatically speak answers out loud via TTS.' },
+      ],
+      codeExample: {
+        lang: 'bash',
+        code: `# Test retrieving YouTube Live broadcast details via curl
+curl -X GET "https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=YOUR_VIDEO_ID&key=YOUR_API_KEY"`,
+      },
+      tips: [
+        'Stream viewers can chat in real time, and Hana will answer questions while keeping full personality context.',
+        'Supports both desktop OBS stream setups and standalone browser window capture.',
+      ],
+    },
+  },
+
+  // 8. GMAIL INTEGRATION
+  {
+    id: 'gmail',
+    path: '/docs/integration/gmail',
+    title: 'Gmail Workspace Connector',
+    category: 'Integrations',
+    tagline: 'Inspect unread email threads and compose draft replies directly via Gmail API',
+    logoUrl: 'https://muxai.vercel.app/logos/gmail.jpg',
+    content: {
+      overview:
+        'Connect Google Gmail to AI Smash. The integration interfaces with the Gmail REST API to query recent unread messages, summarize lengthy email threads, extract actionable items, and compose draft replies directly in your mailbox.',
+      prerequisites: [
+        'A Google Cloud Project with Gmail API enabled',
+        'A Google OAuth 2.0 Access Token with https://www.googleapis.com/auth/gmail.readonly or https://www.googleapis.com/auth/gmail.compose scope',
+      ],
+      steps: [
+        {
+          title: 'Step 1: Obtain Google OAuth Access Token',
+          desc: 'Generate an OAuth 2.0 access token via Google OAuth Playground (developers.google.com/oauthplayground) or your Google Cloud OAuth Client with the Gmail scope.',
+        },
+        {
+          title: 'Step 2: Enter Credentials in AI Smash',
+          desc: 'Click the "+" button in AI Smash, select "Add integration", click Gmail, and paste your Google OAuth Access Token (starts with ya29.).',
+        },
+        {
+          title: 'Step 3: Test Connection',
+          desc: 'Click "Test Connection" to verify access to your Gmail profile and mailbox. The token is stored locally in your browser.',
+        },
+      ],
+      parameters: [
+        { name: 'googleAccessToken', type: 'string (secret)', required: true, desc: 'Google OAuth Access Token with Gmail scopes.' },
+        { name: 'userEmail', type: 'string', required: false, desc: 'Your Gmail address for mailbox reference.' },
+      ],
+      codeExample: {
+        lang: 'bash',
+        code: `# Test Gmail API profile retrieval using curl
+curl -X GET "https://gmail.googleapis.com/gmail/v1/users/me/profile" \\
+  -H "Authorization: Bearer ya29.a0AfH6SM..." \\
+  -H "Content-Type: application/json"`,
+      },
+      tips: [
+        'Ask Hana "Summarize my latest unread emails" or "Draft a polite follow-up email to my colleague" to trigger Gmail workflow actions.',
+      ],
+    },
+  },
+
+  // 9. GOOGLE SHEETS INTEGRATION
+  {
+    id: 'sheets',
+    path: '/docs/integration/sheets',
+    title: 'Google Sheets Connector',
+    category: 'Integrations',
+    tagline: 'Read spreadsheet tables into chat context and log conversation turns into rows',
+    logoUrl: 'https://muxai.vercel.app/logos/sheets.jpg',
+    content: {
+      overview:
+        'The Google Sheets connector allows AI Smash to read tabular spreadsheet data into conversational memory and log conversation prompts, answers, token counts, and timestamps directly into Google Sheets rows for audit or data analysis.',
+      prerequisites: [
+        'A Google Spreadsheet in Google Drive',
+        'A Google OAuth Access Token with https://www.googleapis.com/auth/spreadsheets scope',
+      ],
+      steps: [
+        {
+          title: 'Step 1: Copy Spreadsheet ID',
+          desc: 'Open your Google Sheet in a browser. Copy the ID from the URL between /d/ and /edit (e.g. in https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit, the ID is 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms).',
+        },
+        {
+          title: 'Step 2: Obtain OAuth Access Token',
+          desc: 'Generate a Google OAuth token with the spreadsheets scope via OAuth Playground or your Google Cloud application.',
+        },
+        {
+          title: 'Step 3: Configure in AI Smash',
+          desc: 'In the "+" menu of AI Smash, select Google Sheets, paste your Access Token, Spreadsheet ID, and optional Sheet Range (e.g. Sheet1!A:E).',
+        },
+      ],
+      parameters: [
+        { name: 'googleAccessToken', type: 'string (secret)', required: true, desc: 'Google OAuth Access Token with spreadsheets scope.' },
+        { name: 'spreadsheetId', type: 'string', required: true, desc: 'The unique spreadsheet ID from your Google Sheet URL.' },
+        { name: 'sheetRange', type: 'string', required: false, desc: 'Tab name and cell range to read/append (default: Sheet1!A:E).' },
+      ],
+      codeExample: {
+        lang: 'bash',
+        code: `# Test reading values from Google Sheets API
+curl -X GET "https://sheets.googleapis.com/v4/spreadsheets/YOUR_SPREADSHEET_ID/values/Sheet1!A1:D10" \\
+  -H "Authorization: Bearer ya29.a0AfH6SM..." \\
+  -H "Content-Type: application/json"`,
+      },
+      tips: [
+        'Ideal for logging user feedback, keeping customer support logs, or pulling live inventory data into conversation context.',
+      ],
+    },
+  },
+
+  // 10. MODEL CONTEXT PROTOCOL (MCP)
+  {
+    id: 'mcp',
+    path: '/docs/integration/mcp',
+    title: 'Model Context Protocol (MCP)',
+    category: 'Integrations',
+    tagline: 'Connect external apps, IDEs (Cursor, Windsurf, Claude Desktop) & tool suites via standardized MCP',
+    logoUrl: 'https://ai.mux8.com/logo0.png',
+    content: {
+      overview:
+        'The Model Context Protocol (MCP) is an open standard that enables external applications, developer IDEs, and AI tools to exchange tools, memory resources, and prompt context. AI Smash exposes a complete built-in MCP server endpoint (/api/mcp and /api/mcp/sse) allowing external clients like Cursor and Claude Desktop to connect directly, and allows you to attach external MCP servers to Hana in /chat mode.',
+      prerequisites: [
+        'An MCP-compatible client (e.g. Claude Desktop, Cursor IDE, Windsurf, or custom script)',
+        'Built-in server endpoint runs automatically at /api/mcp/sse and /api/mcp/messages',
+      ],
+      steps: [
+        {
+          title: 'Step 1: Built-in MCP Server Discovery',
+          desc: 'Send a GET request to /api/mcp to inspect supported tools (web_search, wikipedia, weather_info, ask_persona), resources, and server capabilities.',
+        },
+        {
+          title: 'Step 2: Configure Claude Desktop or Cursor',
+          desc: 'Add the AI Smash MCP server configuration to your claude_desktop_config.json or .cursor/mcp.json file using the SSE transport endpoint.',
+        },
+        {
+          title: 'Step 3: Connect External MCP Servers in /chat mode',
+          desc: 'In AI Smash, click the "+" button, add Model Context Protocol (MCP), and enter your external MCP SSE endpoint URL to expand the model\'s active tool palette.',
+        },
+      ],
+      parameters: [
+        { name: 'mcpServerUrl', type: 'string (url)', required: false, desc: 'MCP server endpoint URL (defaults to built-in /api/mcp/sse).' },
+        { name: 'apiKey', type: 'string (secret)', required: false, desc: 'Optional Bearer authentication token for secured external servers.' },
+      ],
+      codeExample: {
+        lang: 'json',
+        code: `// claude_desktop_config.json configuration:
+{
+  "mcpServers": {
+    "ai-smash": {
+      "url": "https://YOUR_DOMAIN/api/mcp/sse",
+      "transport": "sse"
+    }
+  }
+}`,
+      },
+      tips: [
+        'Built-in tools available via MCP: web_search, wikipedia, weather_info, location_info, device_info, and ask_persona.',
+        'External IDEs can query Hana\'s persona state and tools seamlessly during development sessions.',
+      ],
+    },
+  },
+
   // 6. OPENAI API
   {
     id: 'openai',
