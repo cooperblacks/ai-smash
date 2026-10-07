@@ -97,6 +97,8 @@ edge-ai-platform/
 └── vite.config.ts               # Vite bundler configuration
 ```
 
+![](https://muxai.vercel.app/promo/Hana%20AI.jpg)
+
 ---
 
 ## Live API Endpoints & Specification
@@ -106,7 +108,7 @@ The full-stack Express server (`server.ts`) exposes production-ready endpoints s
 ### 1. AI Chat & Emotion Analysis
 | Method | URL | Description & Purpose |
 |---|---|---|
-| `POST` | `/api/chat` | Server-Sent Events (SSE) streaming endpoint powered by the Google GenAI SDK (`gemini-3.8-flash`) for responsive persona dialogue. |
+| `POST` | `/api/chat` | Server-Sent Events (SSE) streaming endpoint for responsive persona dialogue. |
 | `POST` | `/api/chat/provider` | Universal multi-provider LLM streaming proxy supporting external keys for OpenAI, Anthropic Claude, xAI, Groq, DeepSeek, Z.ai, Qwen, and Hugging Face. |
 | `POST` | `/api/emotion` | **Full-Message Emotion Classifier**: Analyzes the entire completed AI response (evaluating overall sentiment, tone, and lexical density across all sentences) to determine the 3D avatar's facial expression using a pure algorithm (zero Gemini/LLM usage) to return `"happy"` (relaxed eyes, mouth slightly open), `"smug"` (relaxed smirk), `"sad"`, `"angry"`, `"surprised"`, or `"neutral"`. |
 
@@ -187,6 +189,8 @@ AI Smash provides an optional, privacy-respecting account system:
 - Client-side execution ensures your conversations remain confidential on your device.
 
 ---
+
+![](https://muxai.vercel.app/hana_og-image.jpg)
 
 ## License & Intellectual Property Notice
 
