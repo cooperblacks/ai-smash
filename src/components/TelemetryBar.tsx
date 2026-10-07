@@ -12,7 +12,7 @@ interface TelemetryBarProps {
   onCancelDownload?: () => void;
 }
 
-export const TelemetryBar: React.FC<TelemetryBarProps> = ({
+const TelemetryBarComponent: React.FC<TelemetryBarProps> = ({
   activeModel,
   telemetry,
   downloadProgress,
@@ -164,3 +164,5 @@ export const TelemetryBar: React.FC<TelemetryBarProps> = ({
     </div>
   );
 };
+
+export const TelemetryBar = React.memo(TelemetryBarComponent);

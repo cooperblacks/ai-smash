@@ -11,6 +11,7 @@ import {
   AccountUser,
   AttachedFile,
   IntegrationConfig,
+  HardwareDevice,
 } from './types';
 import { DEFAULT_MODEL_ID, getModelById } from './lib/models';
 import {
@@ -1602,6 +1603,14 @@ export default function App() {
     }));
 
     const assistantMsgId = `msg_asst_${Date.now()}`;
+    let lastTelemetryDispatch = 0;
+    let latestTelemetryStats: {
+      tokensPerSec: number;
+      ttftMs: number;
+      totalMs: number;
+      tokenCount: number;
+      device: HardwareDevice;
+    } | null = null;
 
     try {
       const assistantText = await streamPersonaResponse({
@@ -1624,14 +1633,20 @@ export default function App() {
           }
         },
         onTelemetry: (stats) => {
-          setTelemetry((prev) => ({
-            ...prev,
-            tokensPerSec: stats.tokensPerSec,
-            timeToFirstTokenMs: stats.ttftMs,
-            totalLatencyMs: stats.totalMs,
-            tokenCount: stats.tokenCount,
-            device: stats.device,
-          }));
+          latestTelemetryStats = stats;
+          const now = performance.now();
+          // Throttle telemetry re-renders to at most once per 150ms to keep 60 FPS smooth UI
+          if (now - lastTelemetryDispatch >= 150) {
+            lastTelemetryDispatch = now;
+            setTelemetry((prev) => ({
+              ...prev,
+              tokensPerSec: stats.tokensPerSec,
+              timeToFirstTokenMs: stats.ttftMs,
+              totalLatencyMs: stats.totalMs,
+              tokenCount: stats.tokenCount,
+              device: stats.device,
+            }));
+          }
         },
         onProgress: (prog) => {
           setDownloadProgress(prog);
@@ -1719,7 +1734,19 @@ export default function App() {
     } finally {
       setIsGenerating(false);
       isGeneratingRef.current = false;
-      setTelemetry((prev) => ({ ...prev, isGenerating: false }));
+      setTelemetry((prev) => ({
+        ...prev,
+        ...(latestTelemetryStats
+          ? {
+              tokensPerSec: latestTelemetryStats.tokensPerSec,
+              timeToFirstTokenMs: latestTelemetryStats.ttftMs,
+              totalLatencyMs: latestTelemetryStats.totalMs,
+              tokenCount: latestTelemetryStats.tokenCount,
+              device: latestTelemetryStats.device,
+            }
+          : {}),
+        isGenerating: false,
+      }));
     }
   };
 

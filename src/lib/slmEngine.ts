@@ -386,7 +386,7 @@ export async function streamPersonaResponse({
       { role: 'user', content: userMessage },
     ];
 
-    const response = await fetch('/api/chat/provider', {
+    let response = await fetch('/api/chat/provider', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -398,11 +398,52 @@ export async function streamPersonaResponse({
         maxTokens,
       }),
       signal: abortController.signal,
-    });
+    }).catch(() => null);
 
-    if (!response.ok) {
-      const errJson = await response.json().catch(() => ({}));
-      throw new Error(errJson.error || `${model.name} request failed (${response.status})`);
+    // Fallback: If server proxy is unavailable or returned 404, fall back to direct browser fetch for CORS-capable providers (Groq, OpenAI, etc.)
+    if (!response || response.status === 404) {
+      const directEndpoints: Record<string, string> = {
+        groq: 'https://api.groq.com/openai/v1/chat/completions',
+        openai: 'https://api.openai.com/v1/chat/completions',
+        deepseek: 'https://api.deepseek.com/chat/completions',
+        xai: 'https://api.x.ai/v1/chat/completions',
+      };
+      const directUrl = directEndpoints[providerId];
+      if (directUrl && apiKey) {
+        const defaultModels: Record<string, string> = {
+          groq: 'llama-3.3-70b-versatile',
+          openai: 'gpt-4o',
+          deepseek: 'deepseek-chat',
+          xai: 'grok-2-latest',
+        };
+        const directModel = configuredSubmodel || defaultModels[providerId] || 'llama-3.3-70b-versatile';
+        const formattedMessages = [
+          { role: 'system', content: systemPrompt },
+          ...messagesPayload,
+        ];
+        response = await fetch(directUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: directModel,
+            messages: formattedMessages,
+            max_tokens: Math.min(Math.max(Number(maxTokens) || 512, 64), 4096),
+            temperature: 0.85,
+            stream: true,
+          }),
+          signal: abortController.signal,
+        });
+      }
+    }
+
+    if (!response || !response.ok) {
+      const errJson = response ? await response.json().catch(() => ({})) : {};
+      const statusStr = response ? ` (${response.status})` : '';
+      const detail = errJson.error?.message || errJson.error || `${model.name} request failed${statusStr}`;
+      throw new Error(detail);
     }
 
     const reader = response.body?.getReader();
@@ -420,19 +461,25 @@ export async function streamPersonaResponse({
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data: ')) {
+          const rawData = trimmed.slice(6).trim();
+          if (rawData === '[DONE]') continue;
           try {
-            const data = JSON.parse(line.slice(6));
+            const data = JSON.parse(rawData);
             if (data.error) {
-              throw new Error(data.error);
+              const errMsg = typeof data.error === 'string' ? data.error : data.error?.message || 'API error';
+              throw new Error(errMsg);
             }
-            if (data.text) {
+            // Support both internal proxy format ({ text: "..." }) and direct OpenAI/Groq SSE format ({ choices: [{ delta: { content: "..." } }] })
+            const incomingText = data.text !== undefined ? data.text : (data.choices?.[0]?.delta?.content || '');
+            if (incomingText) {
               if (firstTokenTime === null) {
                 firstTokenTime = performance.now();
               }
               tokenCount++;
-              accumulatedText += data.text;
-              onToken(data.text, cleanModelResponse(accumulatedText));
+              accumulatedText += incomingText;
+              onToken(incomingText, cleanModelResponse(accumulatedText));
 
               const now = performance.now();
               const elapsedSec = (now - startTime) / 1000;

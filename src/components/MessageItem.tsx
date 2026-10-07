@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Copy, Check, RotateCcw, Volume2, CheckCheck, Pencil } from 'lucide-react';
 import { Message } from '../types';
 import { AI_PROFILE, THEME_COLORS, UI_CONFIG } from '../constants';
@@ -15,7 +15,7 @@ interface MessageItemProps {
   isCurrentSearchMatch?: boolean;
 }
 
-export const MessageItem: React.FC<MessageItemProps> = ({
+const MessageItemComponent: React.FC<MessageItemProps> = ({
   message,
   onRetryUserMessage,
   onEditUserMessage,
@@ -125,6 +125,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     );
   };
 
+  const renderedContent = useMemo(
+    () => renderFormattedContent(message.content),
+    [message.content, searchQuery, isCurrentSearchMatch]
+  );
+
   return (
     <div
       ref={itemRef}
@@ -205,7 +210,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({
             }`}
           >
             {/* Text Content with highlighted search matches & markdown code syntax blocks */}
-            {renderFormattedContent(message.content)}
+            {renderedContent}
 
             {/* User Delivery tick & Timestamp inside bubble */}
             {isUser && (
@@ -285,3 +290,5 @@ export const MessageItem: React.FC<MessageItemProps> = ({
     </div>
   );
 };
+
+export const MessageItem = React.memo(MessageItemComponent);
