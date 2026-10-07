@@ -99,6 +99,75 @@ edge-ai-platform/
 
 ---
 
+## Live API Endpoints & Specification
+
+The full-stack Express server (`server.ts`) exposes production-ready endpoints serving AI inference, 3D asset streaming, autonomous tools, MCP protocol events, and account management:
+
+### 1. AI Chat & Emotion Analysis
+| Method | URL | Description & Purpose |
+|---|---|---|
+| `POST` | `/api/chat` | Server-Sent Events (SSE) streaming endpoint powered by the Google GenAI SDK (`gemini-3.8-flash`) for responsive persona dialogue. |
+| `POST` | `/api/chat/provider` | Universal multi-provider LLM streaming proxy supporting external keys for OpenAI, Anthropic Claude, xAI, Groq, DeepSeek, Z.ai, Qwen, and Hugging Face. |
+| `POST` | `/api/emotion` | **Full-Message Emotion Classifier**: Analyzes the entire completed AI response (evaluating overall sentiment, tone, and lexical density across all sentences) to determine the 3D avatar's facial expression using a pure algorithm (zero Gemini/LLM usage) to return `"happy"` (relaxed eyes, mouth slightly open), `"smug"` (relaxed smirk), `"sad"`, `"angry"`, `"surprised"`, or `"neutral"`. |
+
+### 2. MuxAI Humanizer & Turnitin-Reverse Engine (`/humanizer`)
+- **Route URLs**: `/humanizer`, with automatic redirects from `/ai-detector`, `/ai-detect`, and `/humanize`.
+- **Purpose**: A Turnitin-style split-view AI detection and text humanizer. Defeats Turnitin, GPTZero, and CopyLeaks by elevating sentence burstiness, eradicating machine clichés (e.g., "delve into", "testament to", "crucial role"), and injecting natural syntactic rhythm.
+- **Engines**: Defaults to the instant, zero-LLM Turnitin-Reverse Algorithm, with model selection supporting in-browser SLMs and cloud models (reusing `/chat`'s submodel and API key selectors).
+- **Audio Voice Synthesis**: Features personalized time-of-day voice greetings and dynamic completion voicelines from Hana.
+- **Export Options**: Formatted text output, Microsoft Word (`.doc`), printable PDF report, and plain text (`.txt`).
+- **Endpoints**:
+  - `POST` `/api/extract-document-text`: High-fidelity server and client document extractor for PDF and Word (`.docx`/`.doc`) files, stripping binary bytecode and PDF formatting so users get clean, readable text.
+
+### 3. Live 3D Assets & Animation Streams
+| Method | URL | Description & Purpose |
+|---|---|---|
+| `GET` | `/api/vrm` | High-performance proxy and stream for 3D humanoid `.vrm` character models to bypass cross-origin resource sharing (CORS) blocks. |
+| `GET` | `/api/animation/:type` | Proxies Mixamo character animation FBX assets (`/api/animation/idle`, `/api/animation/fall`, `/api/animation/getup`, `/api/animation/walk`, `/api/animation/wave`, `/api/animation/yawn`, `/api/animation/wait`). |
+
+### 4. Ollama Local & Remote Streaming
+| Method | URL | Description & Purpose |
+|---|---|---|
+| `POST` | `/api/ollama/ping` | Connectivity health check for local or remote Ollama instances; inspects loaded models via `/api/tags` and `/v1/models`. |
+| `POST` | `/api/ollama/chat` | Cloud proxy and streaming endpoint for Ollama instances with custom system prompts and token predictability limits. |
+
+### 5. Autonomous Agent Tools
+| Method | URL | Description & Purpose |
+|---|---|---|
+| `GET` | `/api/tools/web-search` | Live internet search engine querying DuckDuckGo Instant Answers with Wikipedia search fallback (`?q=query&limit=5`). |
+| `GET` | `/api/tools/wikipedia` | Retrieves structured encyclopedia summaries, article URLs, and thumbnail assets from Wikipedia REST API (`?q=topic`). |
+| `GET` | `/api/tools/weather` | Live meteorological conditions and daily forecast querying Open-Meteo geocoding and forecast APIs (`?city=Tokyo` or `?lat=..&lon=..`). |
+| `POST` | `/api/tools/execute` | Universal execution gateway dispatching tool requests for web search, weather, Wikipedia, and client environment inspectors. |
+
+### 6. Model Context Protocol (MCP) & Avatar Actor Engine
+| Method | URL | Description & Purpose |
+|---|---|---|
+| `GET` | `/api/mcp` | Discovery endpoint reporting MCP server manifest, protocol version `2024-11-05`, registered tools, prompts, and resources. |
+| `GET` | `/api/mcp/sse` | MCP Server-Sent Events (SSE) transport endpoint establishing long-lived bidirectional JSON-RPC sessions. |
+| `POST` | `/api/mcp/messages` | MCP JSON-RPC 2.0 message dispatcher handling `initialize`, `tools/list`, `tools/call`, `resources/read`, and `prompts/list`. |
+| `GET` | `/api/avatar/events` | Real-time SSE event bus streaming live avatar speech, emotion changes, and animations to connected client viewports. |
+| `POST` | `/api/avatar/action` | Dispatches live avatar actor directives (`action`, `text`, `emotion`, `animation`, `cues`) to all listening 3D clients. |
+
+### 7. User Account, Auth & Database Sync (NeonDB PostgreSQL)
+| Method | URL | Description & Purpose |
+|---|---|---|
+| `GET` | `/api/health` | System health check reporting service status, active persona, Gemini key status, and NeonDB database connection. |
+| `GET` | `/api/account/status` | Verifies whether the PostgreSQL pool is connected or running in fallback in-memory mode. |
+| `POST` | `/api/auth/signup` | Registers a new account with cryptographically salted `scryptSync` password hashing and device fingerprinting. |
+| `POST` | `/api/auth/signin` | Authenticates account credentials and returns synced conversations and custom color themes. |
+| `POST` | `/api/account/profile` | Updates user profile metadata including username, display name, avatar URL, equipped 3D outfit, and active theme ID. |
+| `POST` | `/api/account/redeem` | Validates and activates VIP promo codes (e.g. `MUXAI-PREMIUM-2026`, `HANA-VIP`) granting access to premium outfit tiers. |
+| `POST` | `/api/account/sync` | Atomically commits user conversation histories and custom theme palettes to the cloud database. |
+| `POST` | `/api/account/data` | Fetches backed-up conversations and user themes for cross-device state hydration. |
+
+### 8. External Messaging & Bot Runners
+| Method | URL | Description & Purpose |
+|---|---|---|
+| `POST` | `/api/integrations/discord/send` | Dispatches formatted text responses to Discord channels via the Discord REST API (`/channels/:id/messages`). |
+| *Runner* | *Browser Gateway Runner* | When a Discord bot token is detected, AI Smash automatically launches the client-side Discord Gateway WebSocket runner in the background upon opening `/chat`, listening for mentions (`@bot`) and direct messages without manual configuration. |
+
+---
+
 ## Cloud Sync & Cross-Device Portability
 
 AI Smash provides an optional, privacy-respecting account system:

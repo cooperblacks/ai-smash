@@ -135,27 +135,23 @@ export function analyzeFullMessageEmotion(text: string): EmotionAnalysisResult {
 }
 
 /**
- * Main detection pipeline: combines fast client-side full-message heuristic
- * with asynchronous server/LLM classification if available.
+ * Main detection pipeline: Passes full message output to secondary LLM
+ * (/api/emotion) for overall sentiment & tone classification, with
+ * fallback to comprehensive client-side algorithm.
  */
 export async function detectEmotionForResponse(fullText: string): Promise<AvatarEmotion> {
-  // Run immediate full-text analysis
-  const localAnalysis = analyzeFullMessageEmotion(fullText);
+  const clean = (fullText || '').trim();
+  if (!clean) return 'neutral';
 
-  // If local detection found clear non-neutral sentiment with high confidence, use it immediately
-  if (localAnalysis.emotion !== 'neutral' && localAnalysis.confidence >= 0.45) {
-    return localAnalysis.emotion;
-  }
-
-  // Asynchronously query server emotion endpoint if available
+  // 1. Pass full message through secondary LLM / server sentiment endpoint
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200);
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
 
     const resp = await fetch('/api/emotion', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: fullText.slice(0, 2000) }),
+      body: JSON.stringify({ text: clean.slice(0, 3000) }),
       signal: controller.signal,
     }).catch(() => null);
 
@@ -168,8 +164,10 @@ export async function detectEmotionForResponse(fullText: string): Promise<Avatar
       }
     }
   } catch {
-    // Graceful fallback to local heuristic
+    // Graceful fallback to client-side algorithm
   }
 
+  // 2. Client-side comprehensive full-message sentiment algorithm fallback
+  const localAnalysis = analyzeFullMessageEmotion(clean);
   return localAnalysis.emotion;
 }

@@ -20,7 +20,7 @@ export interface Conversation {
   modelId?: string;
 }
 
-export type HardwareDevice = 'webgpu' | 'wasm' | 'cpu' | 'cloud' | 'ollama' | 'api-provider';
+export type HardwareDevice = 'webgpu' | 'wasm' | 'cpu' | 'cloud' | 'ollama' | 'api-provider' | 'algorithm';
 
 export type ApiProviderId =
   | 'openai'
@@ -37,7 +37,7 @@ export interface ModelSpec {
   id: string;
   name: string;
   tagline: string;
-  family: 'browser-slm' | 'cloud' | 'ollama' | 'api-provider';
+  family: 'browser-slm' | 'cloud' | 'ollama' | 'api-provider' | 'algorithm';
   hfRepo: string;
   sizeLabel: string;
   approxParams: string;
