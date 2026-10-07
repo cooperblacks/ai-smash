@@ -348,7 +348,7 @@ const WardrobePortraitViewport: React.FC<WardrobePortraitViewportProps> = ({
             {outfit.name}
           </span>
           <span className="block text-[9px] font-mono text-neutral-400 dark:text-neutral-500 truncate">
-            {isSelected ? 'Equipped' : outfit.isPremium ? 'Premium VRM' : 'Default VRM'}
+            {isSelected ? 'Equipped' : outfit.isPremium ? 'Premium Skin' : 'Default Skin'}
           </span>
         </div>
       </div>

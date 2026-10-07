@@ -721,6 +721,14 @@ export const WARDROBE_OUTFITS: WardrobeOutfit[] = [
     fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_wintercardigan_vrm1.vrm`,
     isPremium: true,
   },
+  {
+    id: 'memorable-night',
+    name: 'Memorable Night',
+    fileName: 'hana_v1.0_reddress_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_reddress_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_reddress_vrm1.vrm`,
+    isPremium: true,
+  },
 ];
 
 export const DEFAULT_OUTFIT_ID = 'mint-maid-apron';
