@@ -10,8 +10,41 @@ import { queryWikipedia } from './wikipedia';
 import { getWeatherInfo } from './weather';
 import { getLocationInfo } from './location';
 import { getBrowserDeviceInfo } from './deviceInfo';
+import { executeHumanizerPipeline } from '../lib/humanizerEngine';
+
+/** Active document and chat context available to tools when invoked */
+let activeChatContext: {
+  text?: string;
+  attachedDocumentText?: string;
+  modelId?: string;
+} = {};
+
+export function setActiveChatContext(ctx: {
+  text?: string;
+  attachedDocumentText?: string;
+  modelId?: string;
+}) {
+  activeChatContext = { ...activeChatContext, ...ctx };
+}
+
+export function getActiveChatContext() {
+  return activeChatContext;
+}
 
 export const BUILTIN_TOOLS: ToolDefinition[] = [
+  {
+    name: 'ai_humanizer',
+    description: 'Inspects text or attached documents for AI generation markers (Turnitin/GPTZero style detection) and humanizes it using linguistic entropy, perplexity variance, burstiness injection, and cadence humanization algorithms to reduce AI detection to 0% and produce natural, authentic human writing.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: {
+          type: 'string',
+          description: 'The text or document content to analyze, check for AI detection, or humanize. If omitted, automatically utilizes the attached document or current message text.',
+        },
+      },
+    },
+  },
   {
     name: 'web_search',
     description: 'Searches the web for recent articles, real-time facts, documentation, or news. Use this when the user asks about current events, external links, or topics outside your memory.',
@@ -100,6 +133,49 @@ export async function executeTool(
 
   try {
     switch (normalizedName) {
+      case 'ai_humanizer':
+      case 'humanizer':
+      case 'ai_detector':
+      case 'detect_ai':
+      case 'humanize':
+      case 'turnitin': {
+        const textInput =
+          String(args.text || args.content || args.query || '').trim() ||
+          activeChatContext.attachedDocumentText ||
+          activeChatContext.text ||
+          '';
+
+        if (!textInput) {
+          return {
+            toolName: 'ai_humanizer',
+            success: false,
+            result: null,
+            error: 'No text or attached document provided for AI detection and humanization.',
+            renderedSummary: 'Please provide text or attach a document for the humanizer engine to analyze.',
+          };
+        }
+
+        const modelId = String(args.model || activeChatContext.modelId || 'algorithm');
+        const res = await executeHumanizerPipeline(textInput, modelId);
+        const origAi = res.originalDetection.aiPercentage;
+        const newAi = res.humanizedText.aiPercentage;
+
+        const summary =
+          `### AI Detector & Humanizer Results\n` +
+          `- **Original AI Detection:** ${origAi}% AI (${res.originalDetection.verdict})\n` +
+          `- **Humanized AI Score:** ${newAi}% AI\n` +
+          `- **Burstiness:** ${res.humanizedText.burstinessScore}/100 (+${res.humanizedText.burstinessScore - res.originalDetection.burstinessScore})\n` +
+          `- **Engine:** ${res.methodUsed}\n\n` +
+          `#### Humanized Text:\n${res.rawHumanizedText}`;
+
+        return {
+          toolName: 'ai_humanizer',
+          success: true,
+          result: res,
+          renderedSummary: summary,
+        };
+      }
+
       case 'web_search': {
         const query = String(args.query || args.q || '').trim();
         const maxResults = typeof args.max_results === 'number' ? args.max_results : 5;

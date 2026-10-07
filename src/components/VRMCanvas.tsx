@@ -851,14 +851,15 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         switch (currentActiveEmotion) {
           case 'happy':
             // "happy" (just need to show mouth slightly open with eyes relaxed)
-            targetHappy = 0.85;
-            targetRelaxed = 0.45;
-            targetMouthOpen = 0.16;
+            targetHappy = 0.45;
+            targetRelaxed = 0.85;
+            targetMouthOpen = 0.18;
             break;
           case 'smug':
             // "smug" (relaxed expression)
-            targetRelaxed = 0.85;
-            targetHappy = 0.22;
+            targetRelaxed = 0.9;
+            targetHappy = 0.2;
+            targetMouthOpen = 0.0;
             break;
           case 'sad':
             // "sad"

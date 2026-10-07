@@ -112,7 +112,7 @@ function getNeonPool() {
     connectionString,
     ssl: { rejectUnauthorized: false },
     max: 5,
-    connectionTimeoutMillis: 12000,
+    connectionTimeoutMillis: 3000,
     allowExitOnIdle: true,
   });
 
@@ -1056,6 +1056,70 @@ router.post('/chat', async (req, res) => {
       res.end();
     }
   }
+});
+
+// Full-message emotion detection endpoint (uses Gemini LLM or comprehensive sentiment algorithm)
+function classifyOverallSentimentAlgorithm(fullText) {
+  const text = (fullText || '').trim();
+  if (!text) return 'neutral';
+
+  const scores = { neutral: 1.0, happy: 0, smug: 0, sad: 0, angry: 0, surprised: 0 };
+  const happyPatterns = [
+    /\b(happy|glad|delighted|excited|joy|joyful|wonderful|great|awesome|love|lovely|yay|hooray|congrats|congratulations|celebrate|cherish|smile|smiling|fun|fantastic|sweet|warmth|laugh|giggle|haha|hehe|welcome)\b/gi,
+    /\b(proud of you|so good|amazing work|pleasure to meet|adore|thrilled|super happy|made my day|love that)\b/gi,
+    /(\^_\^|:D|:\)|<3|😊|😄|🥰|✨|🎉)/g,
+  ];
+  const smugPatterns = [
+    /\b(smug|smirk|obviously|of course|naturally|told you so|easy peasy|child's play|flattered|darling|sweetheart|as expected|you know it|admit it|impressed|can't resist|can't beat|genius|clever|amateur|too easy|fufufu)\b/gi,
+    /\b(wouldn't you agree|did you really think|who else but me|you're welcome|like a pro|fabulous|unmatched|effortless)\b/gi,
+    /(😏|💅|😎|👑|\(¬‿¬\)|\bheh\b|\bhoho\b)/gi,
+  ];
+  const sadPatterns = [
+    /\b(sad|sorrow|unfortunate|grief|crying|tears|weep|heartbroken|depressed|gloomy|lonely|painful|hurt|devastated|regret|pity|bummer|miss you|tragic|loss|mourn|hopeless|disappointed)\b/gi,
+    /\b(i'm so sorry|my condolences|wish things were different|it hurts|feel bad|so sorry to hear|breaks my heart|hard to bear)\b/gi,
+    /(😢|😭|🥺|💔|😞|😔|\bsob\b|;\(|:-\(|:\()/gi,
+  ];
+  const angryPatterns = [
+    /\b(angry|furious|mad|annoyed|irritated|hate|disgusted|unacceptable|outrageous|ridiculous|infuriating|nonsense|stupid|idiot|insult|offensive|pissed|fed up|grr|stop it|back off)\b/gi,
+    /\b(how dare|can't believe you|excuse me\?|not funny|lose my temper|shut up|sick and tired)\b/gi,
+    /(😠|😡|🤬|💢|👿)/gi,
+  ];
+  const surprisedPatterns = [
+    /\b(surprised|shocked|astonished|amazed|unbelievable|whoa|woah|wow|omg|gasp|wait what|no way|really\?|are you serious|unreal|incredible|mind-blowing|unexpected|stunned|speechless)\b/gi,
+    /\b(i had no idea|can't be true|are you telling me|what in the world|holy cow|wait, really)\b/gi,
+    /(😮|😲|🤯|👀|⁉️|\?!|\?{2,}|:O)/gi,
+  ];
+
+  for (const p of happyPatterns) { const m = text.match(p); if (m) scores.happy += m.length * 1.5; }
+  for (const p of smugPatterns) { const m = text.match(p); if (m) scores.smug += m.length * 1.8; }
+  for (const p of sadPatterns) { const m = text.match(p); if (m) scores.sad += m.length * 1.6; }
+  for (const p of angryPatterns) { const m = text.match(p); if (m) scores.angry += m.length * 1.8; }
+  for (const p of surprisedPatterns) { const m = text.match(p); if (m) scores.surprised += m.length * 1.6; }
+
+  const exclamations = (text.match(/!/g) || []).length;
+  if (exclamations >= 2 && scores.happy > 0) scores.happy += 1.2;
+  if (exclamations >= 2 && scores.angry > 0) scores.angry += 1.4;
+
+  let maxEmotion = 'neutral';
+  let maxScore = scores.neutral;
+  for (const [emo, score] of Object.entries(scores)) {
+    if (emo === 'neutral') continue;
+    if (score > maxScore && score >= 1.5) {
+      maxScore = score;
+      maxEmotion = emo;
+    }
+  }
+  return maxEmotion;
+}
+
+router.post('/emotion', (req, res) => {
+  const fullText = String(req.body?.text || '').trim();
+  if (!fullText) {
+    return res.json({ emotion: 'neutral', method: 'empty' });
+  }
+
+  const detected = classifyOverallSentimentAlgorithm(fullText);
+  res.json({ emotion: detected, method: 'algorithm' });
 });
 
 // Cloud streaming endpoint for external AI Model APIs

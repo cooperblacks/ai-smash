@@ -196,6 +196,12 @@ export async function loadModelPipeline(
  */
 export async function checkDirectToolInvocation(userMessage: string): Promise<string | null> {
   const trimmed = userMessage.trim();
+  if (/^!(?:humanize|human|detector|detect|turnitin)\b(?:\s+(.+))?/is.test(trimmed)) {
+    const match = trimmed.match(/^!(?:humanize|human|detector|detect|turnitin)\b(?:\s+([\s\S]+))?/i);
+    const text = match?.[1] || '';
+    const res = await executeTool('ai_humanizer', { text });
+    return res.renderedSummary || null;
+  }
   if (/^!(?:weather|w)\s+(.+)/i.test(trimmed)) {
     const match = trimmed.match(/^!(?:weather|w)\s+(.+)/i);
     const city = match?.[1] || '';

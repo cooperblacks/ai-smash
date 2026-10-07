@@ -107,7 +107,7 @@ function getNeonPool(): PoolType | null {
     connectionString,
     ssl: { rejectUnauthorized: false },
     max: 10,
-    connectionTimeoutMillis: 12000,
+    connectionTimeoutMillis: 3000,
     allowExitOnIdle: true,
   });
 

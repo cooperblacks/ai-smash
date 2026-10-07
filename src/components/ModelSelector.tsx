@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDown, HardDrive, Check, Sparkles, ArrowDownCircle, Cloud, Globe, Edit2, Youtube, Download, Key, Eye, EyeOff, ExternalLink } from 'lucide-react';
+import { ChevronDown, HardDrive, Check, Sparkles, ArrowDownCircle, Cloud, Globe, Edit2, Youtube, Download, Key, Eye, EyeOff, ExternalLink, Cpu } from 'lucide-react';
 import { ModelSpec, ModelCacheInfo, ApiProviderId } from '../types';
 import { AVAILABLE_MODELS } from '../lib/models';
 import { OLLAMA_CONFIG, THEME_COLORS, API_PROVIDERS_CONFIG } from '../constants';
@@ -12,6 +12,20 @@ import {
   loadStoredProviderModel,
   saveStoredProviderModel,
 } from '../lib/storage';
+
+export const ALGORITHM_MODEL_SPEC: ModelSpec = {
+  id: 'algorithm',
+  name: 'Algorithm',
+  tagline: 'Turnitin-Reverse Heuristic',
+  family: 'algorithm',
+  hfRepo: '',
+  sizeLabel: 'Zero LLM',
+  approxParams: 'Instant',
+  defaultDtype: 'q4',
+  isSmallModel: true,
+  description: 'Sophisticated burstiness variance, cliché reversal & syntax jitter. 100% offline.',
+  speedRating: 'Instant',
+};
 
 export interface OllamaServerStatus {
   online: boolean;
@@ -32,6 +46,7 @@ interface ModelSelectorProps {
   ollamaStatus?: OllamaStatusMap;
   onUpdateCustomUrl?: (url: string) => void;
   onNavigateToDocs?: (docsPath: string) => void;
+  includeAlgorithmOption?: boolean;
 }
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -42,6 +57,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   ollamaStatus,
   onUpdateCustomUrl,
   onNavigateToDocs,
+  includeAlgorithmOption = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -170,7 +186,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         className={`group flex items-center gap-1.5 px-2.5 py-1 rounded-full ${THEME_COLORS.tokens.dropdownTrigger} border active:scale-95 text-xs transition-all duration-100 disabled:opacity-50 disabled:cursor-not-allowed shadow-xs`}
         title="Switch Model"
       >
-        {activeModel.family === 'api-provider' && activeModel.logoUrl ? (
+        {activeModel.family === 'algorithm' ? (
+          <Cpu className="w-3.5 h-3.5 text-[#0f9bc7]" />
+        ) : activeModel.family === 'api-provider' && activeModel.logoUrl ? (
           <img
             src={activeModel.logoUrl}
             alt={activeModel.name}
@@ -208,6 +226,53 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           </div>
 
           <div className="py-1 flex flex-col gap-1">
+            {/* Algorithm Option (When enabled, e.g. for /humanizer) */}
+            {includeAlgorithmOption && (
+              <div
+                className={`w-full rounded-xl transition-all border ${
+                  activeModel.id === 'algorithm'
+                    ? THEME_COLORS.tokens.dropdownItemActive
+                    : THEME_COLORS.tokens.dropdownItemDefault
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectModel(ALGORITHM_MODEL_SPEC);
+                    setIsOpen(false);
+                  }}
+                  className="w-full text-left p-2.5 flex items-start gap-2.5 cursor-pointer"
+                >
+                  <div className="mt-0.5 shrink-0">
+                    <div className="w-7 h-7 rounded-lg bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/50 flex items-center justify-center text-[#0f9bc7]">
+                      <Cpu className="w-4 h-4" />
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-semibold text-neutral-900 dark:text-white flex items-center gap-1.5">
+                        Algorithm (Turnitin-Reverse)
+                        <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-sky-100 dark:bg-sky-900/60 text-[#0f9bc7]">
+                          DEFAULT
+                        </span>
+                      </span>
+                      <span className="text-[10px] font-mono text-neutral-400">
+                        Zero LLM
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 line-clamp-1 mt-0.5">
+                      {ALGORITHM_MODEL_SPEC.description}
+                    </p>
+                  </div>
+                  {activeModel.id === 'algorithm' && (
+                    <div className="shrink-0 self-center">
+                      <Check className={`w-4 h-4 ${THEME_COLORS.tokens.accentText}`} />
+                    </div>
+                  )}
+                </button>
+              </div>
+            )}
+
             {AVAILABLE_MODELS.filter((m) => m.family !== 'api-provider').map((model) => {
               const isSelected = model.id === activeModel.id;
               const cache = cacheStatuses[model.id];

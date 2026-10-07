@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, Check, ChevronDown, Sparkles, MessageSquare, Shield, Box, Palette, Github, Linkedin, ExternalLink, Heart, Award, BookOpen, Bot, Workflow, Key, Menu, X, Crown, Terminal, Copy } from 'lucide-react';
 import { LandingHeroCanvas } from './LandingHeroCanvas';
+import { LandingNavbar } from './LandingNavbar';
+import { MacTerminalViewer } from './MacTerminalViewer';
 import { AI_PROFILE, SPECIAL_THANKS_LINKS, PRODUCT_HUNT_URL, INTEGRATION_LIBRARY, API_PROVIDERS_CONFIG } from '../constants';
 
 interface LandingPageProps {
   onStartChat: () => void;
   onNavigateToDocs?: (path?: string) => void;
+  onNavigateToHumanizer?: () => void;
 }
 
 interface AccordionItem {
@@ -57,7 +60,11 @@ const ACCORDION_DATA: AccordionItem[] = [
   },
 ];
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigateToDocs }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({
+  onStartChat,
+  onNavigateToDocs,
+  onNavigateToHumanizer,
+}) => {
   const [activeAccordion, setActiveAccordion] = useState<number>(0);
   const [scrollY, setScrollY] = useState(0);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -113,242 +120,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
         <LandingHeroCanvas />
       </div>
 
-      {/* Top Navbar (Sticky) */}
-      <header className="sticky top-0 z-50 w-full backdrop-blur-md bg-white/80 border-b border-black/[0.06] transition-all">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          {/* Brand Logo */}
-          <div className="flex items-center gap-3">
-            <div className="relative w-9 h-9 rounded-2xl overflow-hidden ring-1 ring-black/10 shadow-sm bg-white p-0.5">
-              <img
-                src={AI_PROFILE.avatarUrl}
-                alt={AI_PROFILE.name}
-                className="w-full h-full object-cover rounded-xl"
-              />
-              <span className="absolute bottom-0.5 right-0.5 w-2 h-2 rounded-full bg-emerald-500 ring-1 ring-white" />
-            </div>
-            <div>
-              <span className="font-bold text-lg tracking-tight font-heading block leading-none">
-                MuxAI <span className="text-[var(--theme-accent,#0f9bc7)]">Hana</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Desktop Nav links & CTA */}
-          <div className="hidden md:flex items-center gap-6">
-            <a
-              href="#why-it-matters"
-              onClick={(e) => scrollToSection(e, 'why-it-matters')}
-              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
-            >
-              Why It Matters
-            </a>
-            <a
-              href="#integrations-apis"
-              onClick={(e) => scrollToSection(e, 'integrations-apis')}
-              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
-            >
-              Extensions & APIs
-            </a>
-            <a
-              href="#mcp"
-              onClick={(e) => scrollToSection(e, 'mcp')}
-              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
-            >
-              MCP
-            </a>
-            <a
-              href="#pricing"
-              onClick={(e) => scrollToSection(e, 'pricing')}
-              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
-            >
-              Pricing
-            </a>
-            <button
-              type="button"
-              onClick={() => onNavigateToDocs?.('/docs')}
-              className="text-xs font-semibold text-[#0f9bc7] hover:underline transition-colors flex items-center gap-1 cursor-pointer"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>Docs</span>
-            </button>
-            <button
-              onClick={onStartChat}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-sm active:scale-95 transition-all group cursor-pointer"
-            >
-              <span>Start Chatting</span>
-              <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-            </button>
-          </div>
-
-          {/* Mobile UI: Move "Start Chatting" button to the left and place a burger menu over there for showing all the other usual navbar entries as a collapsible sidebar */}
-          <div className="flex md:hidden items-center gap-2">
-            <button
-              onClick={onStartChat}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-sm active:scale-95 transition-all group cursor-pointer"
-            >
-              <span>Start Chatting</span>
-              <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
-              className="p-2 rounded-xl text-neutral-700 hover:text-neutral-950 hover:bg-neutral-100 border border-black/[0.08] active:scale-95 transition-all cursor-pointer"
-              aria-label="Toggle navigation menu"
-            >
-              {isMobileNavOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Mobile Collapsible Navigation Sidebar Drawer */}
-      {isMobileNavOpen && (
-        <div className="md:hidden fixed inset-0 z-50 flex justify-end animate-in fade-in duration-150">
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity"
-            onClick={() => setIsMobileNavOpen(false)}
-          />
-
-          {/* Drawer Content */}
-          <div className="relative w-72 max-w-[85vw] h-full bg-white shadow-2xl border-l border-black/[0.08] flex flex-col p-5 z-10 animate-in slide-in-from-right duration-200">
-            {/* Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-black/[0.06] mb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl overflow-hidden ring-1 ring-black/10 bg-white p-0.5 shadow-xs">
-                  <img
-                    src={AI_PROFILE.avatarUrl}
-                    alt={AI_PROFILE.name}
-                    className="w-full h-full object-cover rounded-lg"
-                  />
-                </div>
-                <span className="font-bold text-base tracking-tight font-heading">
-                  MuxAI <span className="text-[var(--theme-accent,#0f9bc7)]">Hana</span>
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsMobileNavOpen(false)}
-                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Nav Links */}
-            <nav className="flex-1 space-y-1.5">
-              <a
-                href="#why-it-matters"
-                onClick={(e) => {
-                  scrollToSection(e, 'why-it-matters');
-                  setIsMobileNavOpen(false);
-                }}
-                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
-              >
-                <Shield className="w-4 h-4 text-neutral-400" />
-                <span>Why It Matters</span>
-              </a>
-
-              <a
-                href="#integrations-apis"
-                onClick={(e) => {
-                  scrollToSection(e, 'integrations-apis');
-                  setIsMobileNavOpen(false);
-                }}
-                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
-              >
-                <Sparkles className="w-4 h-4 text-neutral-400" />
-                <span>Extensions & APIs</span>
-              </a>
-
-              <a
-                href="#mcp"
-                onClick={(e) => {
-                  scrollToSection(e, 'mcp');
-                  setIsMobileNavOpen(false);
-                }}
-                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
-              >
-                <Terminal className="w-4 h-4 text-neutral-400" />
-                <span>MCP</span>
-              </a>
-
-              <a
-                href="#pricing"
-                onClick={(e) => {
-                  scrollToSection(e, 'pricing');
-                  setIsMobileNavOpen(false);
-                }}
-                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
-              >
-                <Crown className="w-4 h-4 text-amber-500" />
-                <span>Pricing</span>
-              </a>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setIsMobileNavOpen(false);
-                  onNavigateToDocs?.('/docs');
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-[#0f9bc7] hover:bg-[#0f9bc7]/10 transition-colors text-left cursor-pointer"
-              >
-                <BookOpen className="w-4 h-4" />
-                <span>Documentation</span>
-              </button>
-
-              <a
-                href="#special-thanks"
-                onClick={(e) => {
-                  scrollToSection(e, 'special-thanks');
-                  setIsMobileNavOpen(false);
-                }}
-                className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-neutral-700 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors"
-              >
-                <Heart className="w-4 h-4 text-rose-500" />
-                <span>Acknowledgements</span>
-              </a>
-            </nav>
-
-            {/* Bottom Actions in Drawer */}
-            <div className="pt-4 border-t border-black/[0.06] space-y-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsMobileNavOpen(false);
-                  onStartChat();
-                }}
-                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold bg-[#55d2f6] text-neutral-950 hover:bg-[#34c4f0] shadow-sm active:scale-95 transition-all cursor-pointer"
-              >
-                <span>Start Chatting</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-
-              <div className="flex items-center justify-center gap-4 text-xs text-neutral-400 pt-1">
-                <a
-                  href="https://github.com/muxai"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-neutral-700 flex items-center gap-1"
-                >
-                  <Github className="w-3.5 h-3.5" />
-                  <span>GitHub</span>
-                </a>
-                <span>&bull;</span>
-                <a
-                  href="https://www.linkedin.com/company/huanmux"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:text-neutral-700 flex items-center gap-1"
-                >
-                  <Linkedin className="w-3.5 h-3.5 text-blue-600" />
-                  <span>LinkedIn</span>
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Top Navbar (Sticky) & Mobile Drawer */}
+      <LandingNavbar
+        onStartChat={onStartChat}
+        onNavigateToDocs={onNavigateToDocs}
+        isInsideLandingPage={true}
+      />
 
       {/* Main Content Area */}
       <main className="relative z-10">
@@ -919,93 +696,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStartChat, onNavigat
 
             {/* Right 5 cols: Client Configuration & /chat Integration */}
             <div className="lg:col-span-5 flex flex-col gap-6">
-              {/* Code Snippet Box with Tabs */}
+              {/* Code Snippet Box with macOS Terminal Styling */}
               <div className="rounded-3xl p-6 sm:p-7 bg-[#13151f] text-white border border-white/10 shadow-lg flex-1 flex flex-col justify-between">
                 <div>
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-mono text-neutral-400 uppercase tracking-wider">
-                      Client Integration
+                      Client Integration CLI
                     </span>
-                    <div className="flex items-center gap-1 bg-white/10 p-0.5 rounded-lg">
-                      <button
-                        type="button"
-                        onClick={() => setActiveMcpTab('claude')}
-                        className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors cursor-pointer ${
-                          activeMcpTab === 'claude'
-                            ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold'
-                            : 'text-neutral-300 hover:text-white'
-                        }`}
-                      >
-                        Claude
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveMcpTab('cursor')}
-                        className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors cursor-pointer ${
-                          activeMcpTab === 'cursor'
-                            ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold'
-                            : 'text-neutral-300 hover:text-white'
-                        }`}
-                      >
-                        Cursor
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveMcpTab('jsonrpc')}
-                        className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors cursor-pointer ${
-                          activeMcpTab === 'jsonrpc'
-                            ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold'
-                            : 'text-neutral-300 hover:text-white'
-                        }`}
-                      >
-                        cURL
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveMcpTab('act')}
-                        className={`px-2 py-0.5 text-[11px] rounded font-medium transition-colors cursor-pointer ${
-                          activeMcpTab === 'act'
-                            ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 font-bold'
-                            : 'text-neutral-300 hover:text-white'
-                        }`}
-                      >
-                        Act Script
-                      </button>
-                    </div>
+                    <span className="text-[10px] text-neutral-400 font-mono">
+                      macOS / Linux / Windows
+                    </span>
                   </div>
 
-                  <div className="relative">
-                    <pre className="p-4 rounded-xl bg-black/50 border border-white/10 text-xs font-mono text-neutral-200 overflow-x-auto scrollbar-thin max-h-56 leading-relaxed">
-                      {activeMcpTab === 'claude' &&
-                        `// claude_desktop_config.json\n{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp/sse",\n      "transport": "sse"\n    }\n  }\n}`}
-                      {activeMcpTab === 'cursor' &&
-                        `// .cursor/mcp.json\n{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp/sse",\n      "type": "sse"\n    }\n  }\n}`}
-                      {activeMcpTab === 'jsonrpc' &&
-                        `# JSON-RPC 2.0 tool execution\ncurl -X POST "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "jsonrpc": "2.0",\n    "id": 1,\n    "method": "tools/call",\n    "params": {\n      "name": "web_search",\n      "arguments": {"query": "latest news"}\n    }\n  }'`}
-                      {activeMcpTab === 'act' &&
-                        `# Control 3D avatar & act out the /act default script\ncurl -X POST "${typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com'}/api/mcp" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "jsonrpc": "2.0",\n    "id": 1,\n    "method": "tools/call",\n    "params": {\n      "name": "avatar_act",\n      "arguments": {\n        "cues": [\n          {"name":"Greeting","text":"Hello! Welcome to the secret Act Studio.","animationKey":"wave","emotionKey":"happy","durationSec":3.5},\n          {"name":"Waiting","text":"Add any speech lines or choose any Mixamo animation below.","animationKey":"wait","emotionKey":"lovey","durationSec":4.0},\n          {"name":"Silent Action","text":"","animationKey":"yawn","emotionKey":"sleepy","durationSec":3.5},\n          {"name":"Closing","text":"I will speak your script sequentially with real-time lip sync!","animationKey":"idle","emotionKey":"silly","durationSec":3.5}\n        ]\n      }\n    }\n  }'`}
-                    </pre>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ai.mux8.com';
-                        const snippet =
-                          activeMcpTab === 'claude'
-                            ? `{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${origin}/api/mcp/sse",\n      "transport": "sse"\n    }\n  }\n}`
-                            : activeMcpTab === 'cursor'
-                            ? `{\n  "mcpServers": {\n    "ai-smash": {\n      "url": "${origin}/api/mcp/sse",\n      "type": "sse"\n    }\n  }\n}`
-                            : activeMcpTab === 'act'
-                            ? `curl -X POST "${origin}/api/mcp" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"avatar_act","arguments":{"cues":[{"name":"Greeting","text":"Hello! Welcome to the secret Act Studio.","animationKey":"wave","emotionKey":"happy","durationSec":3.5},{"name":"Waiting","text":"Add any speech lines or choose any Mixamo animation below.","animationKey":"wait","emotionKey":"lovey","durationSec":4.0},{"name":"Silent Action","text":"","animationKey":"yawn","emotionKey":"sleepy","durationSec":3.5},{"name":"Closing","text":"I will speak your script sequentially with real-time lip sync!","animationKey":"idle","emotionKey":"silly","durationSec":3.5}]}}}'`
-                            : `curl -X POST "${origin}/api/mcp" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"web_search","arguments":{"query":"latest news"}}}'`;
-                        copyMcpConfig(snippet);
-                      }}
-                      className="absolute top-2.5 right-2.5 p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white transition-colors cursor-pointer"
-                      title="Copy config"
-                    >
-                      {copiedMcpConfig ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
+                  {/* Gorgeous macOS Terminal with syntax coloring and word wrap */}
+                  <MacTerminalViewer
+                    activeTab={activeMcpTab}
+                    onChangeTab={setActiveMcpTab}
+                  />
                 </div>
 
                 <div className="pt-4 mt-4 border-t border-white/10">

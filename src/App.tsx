@@ -50,6 +50,8 @@ import {
   loadModelPipeline,
   resetActiveGenerator,
 } from './lib/slmEngine';
+import { extractDocumentText } from './lib/documentParser';
+import { setActiveChatContext } from './tools';
 import { soundManager, waitForPersonaVoice } from './lib/audio';
 import { pingOllama } from './lib/ollama';
 import {
@@ -84,6 +86,7 @@ import { LandingPage } from './components/LandingPage';
 import { AddIntegrationModal } from './components/AddIntegrationModal';
 import { DocsPage } from './components/DocsPage';
 import { ActDirectorPage } from './components/ActDirectorPage';
+import { HumanizerPage } from './components/HumanizerPage';
 import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
 import { dispatchChatToWebhooks } from './lib/integrations';
@@ -91,6 +94,7 @@ import { discordBotRunner } from './lib/discordRunner';
 import { streamChatRunner } from './lib/streamChatRunner';
 import { lipSyncManager } from './lib/lipSync';
 import { preloadVRMAssetsBehindTheScenes } from './lib/vrmCache';
+import { AvatarEmotion, detectEmotionForResponse } from './lib/emotionDetector';
 import { AlertCircle, ShieldAlert, Clock, Home, X } from 'lucide-react';
 
 export default function App() {
@@ -103,6 +107,15 @@ export default function App() {
       if (path.startsWith('/app')) {
         window.history.replaceState(null, '', '/chat');
         return '/chat';
+      }
+      if (
+        path.startsWith('/humanizer') ||
+        path.startsWith('/ai-detector') ||
+        path.startsWith('/ai-detect') ||
+        path.startsWith('/humanize')
+      ) {
+        window.history.replaceState(null, '', '/humanizer');
+        return '/humanizer';
       }
       if (path.startsWith('/docs')) {
         return path;
@@ -121,6 +134,16 @@ export default function App() {
       if (path.startsWith('/app')) {
         window.history.replaceState(null, '', '/chat');
         setCurrentRoute('/chat');
+        return;
+      }
+      if (
+        path.startsWith('/humanizer') ||
+        path.startsWith('/ai-detector') ||
+        path.startsWith('/ai-detect') ||
+        path.startsWith('/humanize')
+      ) {
+        window.history.replaceState(null, '', '/humanizer');
+        setCurrentRoute('/humanizer');
         return;
       }
       if (path.startsWith('/docs')) {
@@ -142,6 +165,13 @@ export default function App() {
       let normalized = '/';
       if (path.startsWith('/chat') || path.startsWith('/app')) {
         normalized = '/chat';
+      } else if (
+        path.startsWith('/humanizer') ||
+        path.startsWith('/ai-detector') ||
+        path.startsWith('/ai-detect') ||
+        path.startsWith('/humanize')
+      ) {
+        normalized = '/humanizer';
       } else if (path.startsWith('/docs')) {
         normalized = path;
       } else if (path.startsWith('/act')) {
@@ -177,7 +207,7 @@ export default function App() {
     const fileArray = Array.from(files);
     const newItems: AttachedFile[] = fileArray.map((file) => {
       const isImg = file.type.startsWith('image/');
-      return {
+      const item: AttachedFile = {
         id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         file,
         name: file.name,
@@ -186,6 +216,20 @@ export default function App() {
         isImage: isImg,
         previewUrl: isImg ? URL.createObjectURL(file) : undefined,
       };
+
+      if (!isImg) {
+        extractDocumentText(file)
+          .then((text) => {
+            if (text) {
+              setAttachedFiles((prev) =>
+                prev.map((f) => (f.id === item.id ? { ...f, textContent: text } : f))
+              );
+            }
+          })
+          .catch(() => {});
+      }
+
+      return item;
     });
     setAttachedFiles((prev) => [...prev, ...newItems]);
   };
@@ -220,6 +264,11 @@ export default function App() {
   };
 
   const handleUpdateIntegration = (updated: IntegrationConfig) => {
+    if (updated.platform === 'discord' && updated.botToken) {
+      try {
+        localStorage.setItem('discord_bot_token', updated.botToken.trim());
+      } catch {}
+    }
     const list = addOrUpdateIntegration(updated);
     setActiveIntegrations(list);
   };
@@ -348,6 +397,9 @@ export default function App() {
 
   // Pain sound facial expression mood state for 3D model
   const [isPainSoundActive, setIsPainSoundActive] = useState(false);
+
+  // 3D Avatar Facial Expression Emotion state (happy, smug, sad, angry, surprised, neutral)
+  const [avatarEmotion, setAvatarEmotion] = useState<AvatarEmotion>('neutral');
 
   // ----------------------------------------------------
   // NeonDB Account Session & Wardrobe Outfit State
@@ -1043,14 +1095,46 @@ export default function App() {
   // ----------------------------------------------------
   // Live Integration Runners (Discord, Twitch, YouTube Live)
   // ----------------------------------------------------
+  const lastDiscordStatusRef = useRef<{ status: string; msg: string }>({ status: '', msg: '' });
+
   useEffect(() => {
-    // 1. Discord Bot
-    const discordInt = activeIntegrations.find((i) => i.platform === 'discord' && i.enabled);
-    if (discordInt && discordInt.botToken) {
+    // 1. Discord Bot: trigger in the background automatically as soon as /chat app is launched if token detected
+    const isChatLaunched = currentRoute === '/chat' || currentRoute.startsWith('/chat') || currentRoute.startsWith('/app');
+    const storedDiscordToken = typeof window !== 'undefined' ? (localStorage.getItem('discord_bot_token') || '').trim() : '';
+
+    let discordInt = activeIntegrations.find((i) => i.platform === 'discord');
+    if (!discordInt && storedDiscordToken) {
+      discordInt = {
+        id: 'discord-auto',
+        platform: 'discord',
+        name: 'Discord Bot',
+        botToken: storedDiscordToken,
+        enabled: true,
+        status: 'disconnected',
+      };
+    } else if (discordInt && !discordInt.botToken && storedDiscordToken) {
+      discordInt = { ...discordInt, botToken: storedDiscordToken };
+    }
+
+    const hasToken = Boolean(discordInt?.botToken && discordInt.botToken.trim().length > 0);
+
+    if (isChatLaunched && discordInt && hasToken && discordInt.enabled !== false) {
       discordBotRunner.start(discordInt, (status, msg) => {
-        handleUpdateIntegration({ ...discordInt, status, statusMessage: msg });
+        if (
+          lastDiscordStatusRef.current.status !== status ||
+          lastDiscordStatusRef.current.msg !== msg
+        ) {
+          lastDiscordStatusRef.current = { status, msg };
+          setActiveIntegrations((prev) =>
+            prev.map((item) =>
+              item.platform === 'discord'
+                ? { ...item, status, statusMessage: msg }
+                : item
+            )
+          );
+        }
       });
-    } else {
+    } else if (!hasToken) {
       discordBotRunner.stop();
     }
 
@@ -1073,7 +1157,23 @@ export default function App() {
     } else {
       streamChatRunner.stopYouTube();
     }
-  }, [activeIntegrations]);
+  }, [activeIntegrations, currentRoute]);
+
+  // Keep 3D avatar facial expression in sync with latest assistant message in active conversation
+  useEffect(() => {
+    if (currentConversation?.messages?.length) {
+      const lastAsst = [...currentConversation.messages]
+        .reverse()
+        .find((m) => m.role === 'assistant' && !m.error);
+      if (lastAsst?.content) {
+        detectEmotionForResponse(lastAsst.content)
+          .then((emo) => setAvatarEmotion(emo))
+          .catch(() => setAvatarEmotion('neutral'));
+        return;
+      }
+    }
+    setAvatarEmotion('neutral');
+  }, [activeConvId]);
 
   // Connect live voice output from stream chat runner to TTS & lip sync
   useEffect(() => {
@@ -1534,6 +1634,11 @@ export default function App() {
         return updated;
       });
 
+      // Update 3D avatar facial expression based on overall sentiment of partial output
+      detectEmotionForResponse(partialText)
+        .then((emo) => setAvatarEmotion(emo))
+        .catch(() => setAvatarEmotion('neutral'));
+
       refreshCacheStatuses();
     }
 
@@ -1566,11 +1671,27 @@ export default function App() {
     setInput('');
     setLastUserMessageAt(Date.now());
 
+    const docTexts = attachedFiles
+      .filter((f) => f.textContent)
+      .map((f) => `--- Attached Document: "${f.name}" ---\n${f.textContent}\n--- End Document ---`)
+      .join('\n\n');
+
+    setActiveChatContext({
+      text: rawTrimmed,
+      attachedDocumentText: docTexts || undefined,
+      modelId: activeModel.id,
+    });
+
     let promptToSend = rawTrimmed;
     if (attachedFiles.length > 0) {
       const fileSummary = attachedFiles
-        .map((f) => `📎 [${f.name} (${f.type || 'file'}, ${(f.size / 1024).toFixed(1)} KB)]`)
-        .join(' ');
+        .map((f) => {
+          if (f.textContent) {
+            return `📎 [${f.name} (${f.type || 'document'}, ${(f.size / 1024).toFixed(1)} KB)]\n"""\n${f.textContent}\n"""`;
+          }
+          return `📎 [${f.name} (${f.type || 'file'}, ${(f.size / 1024).toFixed(1)} KB)]`;
+        })
+        .join('\n\n');
       promptToSend = rawTrimmed ? `${fileSummary}\n\n${rawTrimmed}` : fileSummary;
       handleClearAllFiles();
     }
@@ -1677,6 +1798,15 @@ export default function App() {
       };
 
       updateConversationMessages([...updatedWithUser, assistantMessage]);
+
+      // Pass the /chat LLM output through secondary LLM/algorithm to update 3D mode avatar's facial expression
+      detectEmotionForResponse(assistantText)
+        .then((detectedEmotion) => {
+          setAvatarEmotion(detectedEmotion);
+        })
+        .catch(() => {
+          setAvatarEmotion('neutral');
+        });
 
       // Dispatch chat events to active automation webhooks (n8n, Zapier)
       dispatchChatToWebhooks(activeIntegrations, {
@@ -1880,6 +2010,21 @@ export default function App() {
     );
   }
 
+  // Render MuxAI Humanizer & Turnitin-Reverse at '/humanizer' (and redirects)
+  if (currentRoute.startsWith('/humanizer')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <HumanizerPage
+          onNavigateToChat={() => navigateTo('/chat')}
+          onNavigateToDocs={(p) => navigateTo(p || '/docs')}
+          onNavigateHome={() => navigateTo('/')}
+          cacheStatuses={cacheStatuses}
+        />
+      </>
+    );
+  }
+
   // Render Landing Page at default root route '/'
   if (currentRoute === '/') {
     return (
@@ -1888,6 +2033,7 @@ export default function App() {
         <LandingPage
           onStartChat={() => navigateTo('/chat')}
           onNavigateToDocs={(p) => navigateTo(p || '/docs')}
+          onNavigateToHumanizer={() => navigateTo('/humanizer')}
         />
       </>
     );
@@ -2057,6 +2203,7 @@ export default function App() {
               isPainSoundPlaying={isPainSoundActive}
               modelFileName={activeOutfit.fileName}
               lastUserMessageAt={lastUserMessageAt}
+              emotion={avatarEmotion}
             />
           </div>
 
