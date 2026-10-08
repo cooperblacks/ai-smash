@@ -107,7 +107,7 @@ edge-ai-platform/
 
 The full-stack Express server (`server.ts`) exposes production-ready endpoints serving AI inference, 3D asset streaming, autonomous tools, MCP protocol events, and account management:
 
-### 1. AI Chat & Emotion Analysis
+### 1. LM Chat & Emotion Analysis
 | Method | URL | Description & Purpose |
 |---|---|---|
 | `POST` | `/api/chat` | Server-Sent Events (SSE) streaming endpoint for responsive persona dialogue. |

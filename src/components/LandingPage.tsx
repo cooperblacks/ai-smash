@@ -247,7 +247,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
               {/* Subtitle: Sandbox for mini LLMs that run directly in the browser with 3D avatar interactions and voice */}
               <p className="hero-subtitle-outline mt-6 text-lg sm:text-xl md:text-2xl text-neutral-600 font-sans leading-relaxed max-w-2xl">
-                Human-Computer Interaction (HCI) via Artificial Intelligence (AI)
+                Redefining the next generation of technology by Human-Computer Interaction (HCI) via Artificial Intelligence (AI)
               </p>
 
               {/* AI Chat Button with arrow icon */}
@@ -257,7 +257,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   onClick={onStartChat}
                   className="inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-2xl text-sm sm:text-base font-semibold bg-[#55d2f6] hover:bg-[#22bdec] text-neutral-950 shadow-lg shadow-[#55d2f6]/25 hover:shadow-xl hover:shadow-[#55d2f6]/35 active:scale-95 transition-all duration-150 group cursor-pointer"
                 >
-                  <span>AI Chat</span>
+                  <span>LM Chat</span>
                   <ArrowRight className="w-4 h-4 stroke-[2.5] group-hover:translate-x-1 transition-transform" />
                 </button>
 
@@ -1192,7 +1192,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               onClick={onStartChat}
               className="mt-6 inline-flex items-center gap-2.5 px-8 py-3.5 rounded-2xl text-base font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-md active:scale-95 transition-all group cursor-pointer"
             >
-              <span>AI Chat</span>
+              <span>LM Chat</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </button>
           </div>

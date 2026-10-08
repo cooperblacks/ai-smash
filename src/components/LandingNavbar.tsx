@@ -126,7 +126,7 @@ export const LandingNavbar: React.FC<LandingNavbarProps> = ({
               onClick={onStartChat}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-sm active:scale-95 transition-all group cursor-pointer"
             >
-              <span>AI Chat</span>
+              <span>LM Chat</span>
               <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
             </button>
           </div>
@@ -138,7 +138,7 @@ export const LandingNavbar: React.FC<LandingNavbarProps> = ({
               onClick={onStartChat}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-sm active:scale-95 transition-all group cursor-pointer"
             >
-              <span>AI Chat</span>
+              <span>LM Chat</span>
               <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
             </button>
             <button
@@ -264,7 +264,7 @@ export const LandingNavbar: React.FC<LandingNavbarProps> = ({
                 }}
                 className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold bg-[#1e2029] text-white hover:bg-neutral-800 shadow-sm active:scale-95 transition-all cursor-pointer"
               >
-                <span>AI Chat</span>
+                <span>LM Chat</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
