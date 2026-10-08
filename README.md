@@ -1,6 +1,8 @@
-# AI Smash - 3D Interactive Companion Platform
+# Hana
 
-> A private, responsive conversational platform combining in-browser Small Language Models (SLMs), cloud AI endpoints, and an interactive 3D humanoid avatar with full-body physics.
+> A private, responsive conversational platform combining in-browser Small Language Models (SLMs), cloud AI endpoints, and an interactive 3D humanoid avatar with full-body physics. (+ more)
+
+previously known as **AI Smash**.
 
 ![](https://muxai.vercel.app/aismash_banner.png)
 
