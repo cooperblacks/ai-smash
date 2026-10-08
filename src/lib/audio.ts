@@ -74,12 +74,12 @@ import { VOICE_CONFIG } from '../constants';
 
 export const soundManager = new SoundEffects();
 
-function isLikelyMaleVoice(voice: SpeechSynthesisVoice): boolean {
+export function isLikelyMaleVoice(voice: SpeechSynthesisVoice): boolean {
   const name = (voice.name || '').toLowerCase();
   return VOICE_CONFIG.maleKeywords.some((kw) => name.includes(kw));
 }
 
-function isExcludedVoice(voice: SpeechSynthesisVoice): boolean {
+export function isExcludedVoice(voice: SpeechSynthesisVoice): boolean {
   const name = (voice.name || '').toLowerCase();
   const lang = (voice.lang || '').toLowerCase();
   return (
@@ -92,8 +92,7 @@ function isExcludedVoice(voice: SpeechSynthesisVoice): boolean {
   );
 }
 
-
-function findVoiceFromList(
+export function findVoiceFromList(
   voices: SpeechSynthesisVoice[]
 ): SpeechSynthesisVoice | null {
   if (!voices || voices.length === 0) return null;

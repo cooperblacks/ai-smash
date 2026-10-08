@@ -87,6 +87,8 @@ import { AddIntegrationModal } from './components/AddIntegrationModal';
 import { DocsPage } from './components/DocsPage';
 import { ActDirectorPage } from './components/ActDirectorPage';
 import { HumanizerPage } from './components/HumanizerPage';
+import { VoiceTesterPage } from './components/VoiceTesterPage';
+import { MMDStudioPage } from './components/MMDStudioPage';
 import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
 import { dispatchChatToWebhooks } from './lib/integrations';
@@ -123,6 +125,12 @@ export default function App() {
       if (path.startsWith('/act')) {
         return '/act';
       }
+      if (path.startsWith('/mmd')) {
+        return '/mmd';
+      }
+      if (path.startsWith('/voice')) {
+        return '/voice';
+      }
       return path.startsWith('/chat') ? '/chat' : '/';
     }
     return '/';
@@ -154,6 +162,14 @@ export default function App() {
         setCurrentRoute('/act');
         return;
       }
+      if (path.startsWith('/mmd')) {
+        setCurrentRoute('/mmd');
+        return;
+      }
+      if (path.startsWith('/voice')) {
+        setCurrentRoute('/voice');
+        return;
+      }
       setCurrentRoute(path.startsWith('/chat') ? '/chat' : '/');
     };
     window.addEventListener('popstate', handlePopState);
@@ -176,6 +192,10 @@ export default function App() {
         normalized = path;
       } else if (path.startsWith('/act')) {
         normalized = '/act';
+      } else if (path.startsWith('/mmd')) {
+        normalized = '/mmd';
+      } else if (path.startsWith('/voice')) {
+        normalized = '/voice';
       }
       window.history.pushState(null, '', normalized);
       setCurrentRoute(normalized);
@@ -2005,6 +2025,33 @@ export default function App() {
         <ActDirectorPage
           onBackToChat={() => navigateTo('/chat')}
           onNavigateHome={() => navigateTo('/')}
+        />
+      </>
+    );
+  }
+
+  // Render MMD Studio Stage at '/mmd'
+  if (currentRoute.startsWith('/mmd')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <MMDStudioPage
+          onBackToChat={() => navigateTo('/chat')}
+          onNavigateHome={() => navigateTo('/')}
+        />
+      </>
+    );
+  }
+
+  // Render Voice Diagnostics & TTS Engine Tester at '/voice'
+  if (currentRoute.startsWith('/voice')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <VoiceTesterPage
+          onNavigateToChat={() => navigateTo('/chat')}
+          onNavigateHome={() => navigateTo('/')}
+          onNavigateToDocs={(p) => navigateTo(p || '/docs')}
         />
       </>
     );
