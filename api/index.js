@@ -61,11 +61,57 @@ function sanitizeUser(u) {
     last_login_device: u.last_login_device || 'Web Browser',
     device_fingerprints: Array.isArray(u.device_fingerprints) ? u.device_fingerprints : [],
     equipped_outfit_id: u.equipped_outfit_id || 'mint-maid-apron',
+    unlocked_outfits: Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [],
     active_theme_id: u.active_theme_id || 'classic-light',
     created_at: u.created_at
       ? new Date(u.created_at).toISOString()
       : new Date().toISOString(),
   };
+}
+
+const SECRET_WARDROBE_OUTFITS = [
+  { id: 'beauty-of-pink', name: 'Beauty of Pink', fileName: 'hana_v1.0_pinkdress2_vrm1.vrm', redeemCode: 'HANA-PINKDRESS2' },
+  { id: 'streetwear', name: 'Streetwear', fileName: 'hana_v1.0_streetwear_vrm1.vrm', redeemCode: 'HANA-STREETWEAR' },
+  { id: 'staying-casual', name: 'Staying Casual', fileName: 'hana_v1.0_moderncasual_vrm1.vrm', redeemCode: 'HANA-MODERNCASUAL' },
+  { id: 'gothic-beauty', name: 'Gothic Beauty', fileName: 'hana_v1.0_gothicdress_vrm1.vrm', redeemCode: 'HANA-GOTHICDRESS' },
+  { id: 'home-alone', name: 'Home Alone', fileName: 'hana_v1.0_blackonesie_vrm1.vrm', redeemCode: 'HANA-BLACKONESIE' },
+  { id: 'powerpuff', name: 'Powerpuff', fileName: 'hana_v1.0_darkhoodie_vrm1.vrm', redeemCode: 'HANA-DARKHOODIE' },
+  { id: 'neat-and-nimble', name: 'Neat & Nimble', fileName: 'hana_v1.0_formaluniform_vrm1.vrm', redeemCode: 'HANA-FORMALUNIFORM' },
+  { id: 'frilly-dress', name: 'Frilly Dress', fileName: 'hana_v1.0_lacedress_vrm1.vrm', redeemCode: 'HANA-LACEDRESS' },
+  { id: 'cookie-maid', name: 'Cookie Maid', fileName: 'hana_v1.0_purplemaid_vrm1.vrm', redeemCode: 'HANA-PURPLEMAID' },
+  { id: 'coffee-maid', name: 'Coffee Maid', fileName: 'hana_v1.0_blackmaid_vrm1.vrm', redeemCode: 'HANA-BLACKMAID' },
+];
+
+function resolveSecretOutfitsByRedeemCode(rawCode) {
+  const cleanCode = (rawCode || '').trim().toUpperCase();
+  if (!cleanCode) return [];
+  if (
+    cleanCode === 'HANA-SECRET-WARDROBE' ||
+    cleanCode === 'MUXAI-SECRET-SKINS' ||
+    cleanCode === 'HANA-SECRET-SKINS' ||
+    cleanCode === 'SECRET-WARDROBE'
+  ) {
+    return [...SECRET_WARDROBE_OUTFITS];
+  }
+  return SECRET_WARDROBE_OUTFITS.filter((outfit) => {
+    const codeUpper = (outfit.redeemCode || '').trim().toUpperCase();
+    const idUpper = outfit.id.toUpperCase();
+    const nameUpper = outfit.name.toUpperCase();
+    const nameSlug = nameUpper.replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const fileStem = outfit.fileName
+      .replace(/^hana_v1\.0_/i, '')
+      .replace(/_vrm1\.vrm$/i, '')
+      .toUpperCase();
+    return (
+      codeUpper === cleanCode ||
+      idUpper === cleanCode ||
+      nameUpper === cleanCode ||
+      nameSlug === cleanCode ||
+      fileStem === cleanCode ||
+      `HANA-${fileStem}` === cleanCode ||
+      `HANA-${idUpper}` === cleanCode
+    );
+  });
 }
 
 function deriveDefaultProfileFromEmail(email) {
@@ -137,10 +183,13 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_device TEXT NOT NULL DEFAULT 'Web Browser',
   device_fingerprints TEXT[] NOT NULL DEFAULT '{}',
   equipped_outfit_id TEXT NOT NULL DEFAULT 'mint-maid-apron',
+  unlocked_outfits TEXT[] NOT NULL DEFAULT '{}',
   active_theme_id TEXT NOT NULL DEFAULT 'classic-light',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS unlocked_outfits TEXT[] NOT NULL DEFAULT '{}';
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_account_type ON users(account_type);
@@ -190,6 +239,7 @@ CREATE INDEX IF NOT EXISTS idx_custom_themes_user_id ON custom_themes(user_id);
 CREATE TABLE IF NOT EXISTS redeem_codes (
   code TEXT PRIMARY KEY,
   account_type_grant TEXT NOT NULL DEFAULT 'paid',
+  unlocked_outfit_ids TEXT[] NOT NULL DEFAULT '{}',
   duration_days INTEGER NOT NULL DEFAULT 30,
   max_uses INTEGER NOT NULL DEFAULT 1000,
   used_count INTEGER NOT NULL DEFAULT 0,
@@ -197,12 +247,37 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO redeem_codes (code, account_type_grant, duration_days, max_uses)
+ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS unlocked_outfit_ids TEXT[] NOT NULL DEFAULT '{}';
+
+INSERT INTO redeem_codes (code, account_type_grant, unlocked_outfit_ids, duration_days, max_uses)
 VALUES
-  ('MUXAI-PREMIUM-2026', 'paid', 365, 10000),
-  ('HANA-VIP', 'paid', 365, 10000),
-  ('AISMASH-PRO', 'paid', 365, 10000)
-ON CONFLICT (code) DO NOTHING;
+  ('MUXAI-PREMIUM-2026', 'paid', '{}', 365, 10000),
+  ('HANA-VIP', 'paid', '{}', 365, 10000),
+  ('AISMASH-PRO', 'paid', '{}', 365, 10000),
+  ('HANA-PINKDRESS2', 'skin', ARRAY['beauty-of-pink'], 3650, 100000),
+  ('HANA-STREETWEAR', 'skin', ARRAY['streetwear'], 3650, 100000),
+  ('HANA-MODERNCASUAL', 'skin', ARRAY['staying-casual'], 3650, 100000),
+  ('HANA-GOTHICDRESS', 'skin', ARRAY['gothic-beauty'], 3650, 100000),
+  ('HANA-BLACKONESIE', 'skin', ARRAY['home-alone'], 3650, 100000),
+  ('HANA-DARKHOODIE', 'skin', ARRAY['powerpuff'], 3650, 100000),
+  ('HANA-FORMALUNIFORM', 'skin', ARRAY['neat-and-nimble'], 3650, 100000),
+  ('HANA-LACEDRESS', 'skin', ARRAY['frilly-dress'], 3650, 100000),
+  ('HANA-PURPLEMAID', 'skin', ARRAY['cookie-maid'], 3650, 100000),
+  ('HANA-BLACKMAID', 'skin', ARRAY['coffee-maid'], 3650, 100000),
+  ('HANA-SECRET-WARDROBE', 'skin', ARRAY[
+    'beauty-of-pink',
+    'streetwear',
+    'staying-casual',
+    'gothic-beauty',
+    'home-alone',
+    'powerpuff',
+    'neat-and-nimble',
+    'frilly-dress',
+    'cookie-maid',
+    'coffee-maid'
+  ], 3650, 100000)
+ON CONFLICT (code) DO UPDATE SET
+  unlocked_outfit_ids = EXCLUDED.unlocked_outfit_ids;
 `;
 
 async function ensureNeonSchema() {
@@ -326,8 +401,9 @@ async function signUpAccount(params) {
         last_login_device,
         device_fingerprints,
         equipped_outfit_id,
+        unlocked_outfits,
         active_theme_id
-      ) VALUES ($1, $2, $3, $4, $5, 'free', NULL, $6, $7, $8, 'mint-maid-apron', 'classic-light')
+      ) VALUES ($1, $2, $3, $4, $5, 'free', NULL, $6, $7, $8, 'mint-maid-apron', '{}', 'classic-light')
       RETURNING *`,
       [cleanEmail, passwordHash, username, displayName, defaultAvatar, nowIso, deviceLabel, fingerprints]
     );
@@ -353,6 +429,7 @@ async function signUpAccount(params) {
     last_login_device: deviceLabel,
     device_fingerprints: fingerprints,
     equipped_outfit_id: 'mint-maid-apron',
+    unlocked_outfits: [],
     active_theme_id: 'classic-light',
     created_at: nowIso,
   };
@@ -442,6 +519,10 @@ async function updateAccountProfile(params) {
     const nextDisplayName = (params.displayName ?? cur.display_name).trim() || cur.display_name;
     const nextAvatarUrl = (params.avatarUrl ?? cur.avatar_url).trim() || cur.avatar_url;
     const nextOutfit = (params.equippedOutfitId ?? cur.equipped_outfit_id).trim() || cur.equipped_outfit_id;
+    const curUnlocked = Array.isArray(cur.unlocked_outfits) ? cur.unlocked_outfits : [];
+    const nextUnlocked = Array.isArray(params.unlockedOutfits)
+      ? Array.from(new Set([...curUnlocked, ...params.unlockedOutfits]))
+      : curUnlocked;
     const nextTheme = (params.activeThemeId ?? cur.active_theme_id).trim() || cur.active_theme_id;
 
     const updated = await pool.query(
@@ -450,11 +531,12 @@ async function updateAccountProfile(params) {
            display_name = $2,
            avatar_url = $3,
            equipped_outfit_id = $4,
-           active_theme_id = $5,
+           unlocked_outfits = $5,
+           active_theme_id = $6,
            updated_at = NOW()
-       WHERE id = $6
+       WHERE id = $7
        RETURNING *`,
-      [nextUsername, nextDisplayName, nextAvatarUrl, nextOutfit, nextTheme, params.userId]
+      [nextUsername, nextDisplayName, nextAvatarUrl, nextOutfit, nextUnlocked, nextTheme, params.userId]
     );
 
     return sanitizeUser(updated.rows[0]);
@@ -466,6 +548,10 @@ async function updateAccountProfile(params) {
       if (params.displayName !== undefined && params.displayName.trim()) u.display_name = params.displayName.trim();
       if (params.avatarUrl !== undefined && params.avatarUrl.trim()) u.avatar_url = params.avatarUrl.trim();
       if (params.equippedOutfitId !== undefined && params.equippedOutfitId.trim()) u.equipped_outfit_id = params.equippedOutfitId.trim();
+      if (Array.isArray(params.unlockedOutfits)) {
+        const curUnlocked = Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [];
+        u.unlocked_outfits = Array.from(new Set([...curUnlocked, ...params.unlockedOutfits]));
+      }
       if (params.activeThemeId !== undefined && params.activeThemeId.trim()) u.active_theme_id = params.activeThemeId.trim();
       return sanitizeUser(u);
     }
@@ -481,21 +567,41 @@ async function redeemAccountCode(params) {
   }
 
   const nowIso = new Date().toISOString();
+  const matchedSecretOutfits = resolveSecretOutfitsByRedeemCode(cleanCode);
+  const matchedSecretIds = matchedSecretOutfits.map((o) => o.id);
+  const isBuiltInPaidCode = validRedeemCodes.has(cleanCode);
+
   const pool = await ensureNeonSchema();
 
   if (pool) {
     const codeRes = await pool.query('SELECT * FROM redeem_codes WHERE UPPER(code) = $1', [cleanCode]);
-    const isBuiltInCode = validRedeemCodes.has(cleanCode);
+    const hasDbRow = codeRes.rows.length > 0;
 
-    if (codeRes.rows.length === 0 && !isBuiltInCode) {
+    if (!hasDbRow && !isBuiltInPaidCode && matchedSecretIds.length === 0) {
       throw new Error('Invalid or expired redeem code.');
     }
 
-    if (codeRes.rows.length > 0) {
+    let dbGrantPaid = isBuiltInPaidCode;
+    const dbOutfitGrants = [...matchedSecretIds];
+
+    if (hasDbRow) {
       const codeRow = codeRes.rows[0];
       if (Number(codeRow.used_count) >= Number(codeRow.max_uses)) {
         throw new Error('This redeem code has reached its usage limit.');
       }
+
+      if (codeRow.account_type_grant === 'paid') {
+        dbGrantPaid = true;
+      }
+
+      if (Array.isArray(codeRow.unlocked_outfit_ids) && codeRow.unlocked_outfit_ids.length > 0) {
+        if (codeRow.unlocked_outfit_ids.includes('*') || codeRow.unlocked_outfit_ids.includes('ALL')) {
+          dbOutfitGrants.push(...SECRET_WARDROBE_OUTFITS.map((o) => o.id));
+        } else {
+          dbOutfitGrants.push(...codeRow.unlocked_outfit_ids);
+        }
+      }
+
       await pool.query(
         `UPDATE redeem_codes
          SET used_count = used_count + 1,
@@ -505,31 +611,45 @@ async function redeemAccountCode(params) {
       );
     }
 
-    const updatedUser = await pool.query(
-      `UPDATE users
-       SET account_type = 'paid',
-           last_payment = $1,
-           updated_at = NOW()
-       WHERE id = $2
-       RETURNING *`,
-      [nowIso, params.userId]
-    );
-
-    if (updatedUser.rows.length === 0) {
+    const existingUserRes = await pool.query('SELECT * FROM users WHERE id = $1', [params.userId]);
+    if (existingUserRes.rows.length === 0) {
       throw new Error('User account not found.');
     }
+
+    const curUser = existingUserRes.rows[0];
+    const currentUnlocked = Array.isArray(curUser.unlocked_outfits) ? curUser.unlocked_outfits : [];
+    const mergedUnlocked = Array.from(new Set([...currentUnlocked, ...dbOutfitGrants]));
+    const nextAccountType = dbGrantPaid ? 'paid' : curUser.account_type;
+    const nextLastPayment = dbGrantPaid ? nowIso : curUser.last_payment;
+
+    const updatedUser = await pool.query(
+      `UPDATE users
+       SET account_type = $1,
+           last_payment = $2,
+           unlocked_outfits = $3,
+           updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [nextAccountType, nextLastPayment, mergedUnlocked, params.userId]
+    );
 
     return sanitizeUser(updatedUser.rows[0]);
   }
 
-  if (!validRedeemCodes.has(cleanCode)) {
-    throw new Error('Invalid or expired redeem code. Try MUXAI-PREMIUM-2026 or HANA-VIP.');
+  if (!isBuiltInPaidCode && matchedSecretIds.length === 0) {
+    throw new Error('Invalid or expired redeem code.');
   }
 
   for (const u of fallbackUsers.values()) {
     if (u.id === params.userId) {
-      u.account_type = 'paid';
-      u.last_payment = nowIso;
+      if (isBuiltInPaidCode) {
+        u.account_type = 'paid';
+        u.last_payment = nowIso;
+      }
+      if (matchedSecretIds.length > 0) {
+        const curUnlocked = Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [];
+        u.unlocked_outfits = Array.from(new Set([...curUnlocked, ...matchedSecretIds]));
+      }
       return sanitizeUser(u);
     }
   }
@@ -616,6 +736,20 @@ async function syncUserConversationsAndThemes(params) {
         }
       }
 
+      if (Array.isArray(params.unlockedOutfits) && params.unlockedOutfits.length > 0) {
+        const userRes = await client.query('SELECT unlocked_outfits FROM users WHERE id = $1', [params.userId]);
+        if (userRes.rows.length > 0) {
+          const curUnlocked = Array.isArray(userRes.rows[0].unlocked_outfits)
+            ? userRes.rows[0].unlocked_outfits
+            : [];
+          const merged = Array.from(new Set([...curUnlocked, ...params.unlockedOutfits]));
+          await client.query(
+            'UPDATE users SET unlocked_outfits = $1, updated_at = NOW() WHERE id = $2',
+            [merged, params.userId]
+          );
+        }
+      }
+
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -631,6 +765,14 @@ async function syncUserConversationsAndThemes(params) {
   }
   if (Array.isArray(params.customThemes)) {
     fallbackCustomThemes.set(params.userId, params.customThemes);
+  }
+  if (Array.isArray(params.unlockedOutfits) && params.unlockedOutfits.length > 0) {
+    for (const u of fallbackUsers.values()) {
+      if (u.id === params.userId) {
+        const curUnlocked = Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [];
+        u.unlocked_outfits = Array.from(new Set([...curUnlocked, ...params.unlockedOutfits]));
+      }
+    }
   }
 }
 
@@ -766,8 +908,20 @@ router.get(['/animation/:type', '/animation/idle'], async (req, res) => {
       wait: 'mixamo_wait.fbx',
     };
 
-    const resolvedFile = safeFile || fileMap[animType] || 'mixamo_idle.fbx';
+    const resolvedFile =
+      safeFile ||
+      fileMap[animType] ||
+      (animType && /^[a-zA-Z0-9_.-]+$/.test(animType)
+        ? animType.endsWith('.fbx')
+          ? animType
+          : `mixamo_${animType}.fbx`
+        : 'mixamo_idle.fbx');
     const targetUrls = ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/${resolvedFile}`);
+    if (resolvedFile === 'mixamo_.jumpingjacks.fbx' || animType === 'jumpingjacks') {
+      targetUrls.push(
+        ...ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/mixamo_jumpingjacks.fbx`)
+      );
+    }
 
     let fbxResp = null;
     for (const url of targetUrls) {
@@ -1394,7 +1548,7 @@ router.post('/auth/signin', async (req, res) => {
 
 router.post('/account/profile', async (req, res) => {
   try {
-    const { userId, username, displayName, avatarUrl, equippedOutfitId, activeThemeId } = req.body || {};
+    const { userId, username, displayName, avatarUrl, equippedOutfitId, unlockedOutfits, activeThemeId } = req.body || {};
     if (!userId || Number.isNaN(Number(userId))) {
       return res.status(400).json({ error: 'Valid userId is required.' });
     }
@@ -1405,6 +1559,7 @@ router.post('/account/profile', async (req, res) => {
       displayName,
       avatarUrl,
       equippedOutfitId,
+      unlockedOutfits,
       activeThemeId,
     });
 
@@ -1453,7 +1608,7 @@ router.get('/account/sync/:userId', async (req, res) => {
 
 router.post('/account/sync', async (req, res) => {
   try {
-    const { userId, conversations, customThemes } = req.body || {};
+    const { userId, conversations, customThemes, unlockedOutfits } = req.body || {};
     if (!userId || Number.isNaN(Number(userId))) {
       return res.status(400).json({ error: 'Valid userId is required.' });
     }
@@ -1461,6 +1616,7 @@ router.post('/account/sync', async (req, res) => {
       userId: Number(userId),
       conversations,
       customThemes,
+      unlockedOutfits,
     });
     res.json({ ok: true });
   } catch (err) {

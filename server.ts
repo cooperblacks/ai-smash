@@ -129,6 +129,9 @@ app.get(['/api/animation/:type', '/api/animation/idle'], async (req: Request, re
 
     if (safeFile) {
       targetUrls = ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/${safeFile}`);
+      if (safeFile === 'mixamo_.jumpingjacks.fbx') {
+        targetUrls.push(...ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/mixamo_jumpingjacks.fbx`));
+      }
     } else if (animType === 'fall') {
       targetUrls = [
         VRM_CONFIG.fallAnimationUrl,
@@ -153,6 +156,14 @@ app.get(['/api/animation/:type', '/api/animation/idle'], async (req: Request, re
       targetUrls = ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/mixamo_yawn.fbx`);
     } else if (animType === 'wait') {
       targetUrls = ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/mixamo_wait.fbx`);
+    } else if (animType && animType !== 'idle' && /^[a-zA-Z0-9_.-]+$/.test(animType)) {
+      const candidateFile = animType.endsWith('.fbx') ? animType : `mixamo_${animType}.fbx`;
+      targetUrls = ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/${candidateFile}`);
+      if (animType === 'jumpingjacks') {
+        targetUrls.unshift(
+          ...ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/mixamo_.jumpingjacks.fbx`)
+        );
+      }
     } else {
       targetUrls = [
         VRM_CONFIG.animationUrl,
@@ -1545,7 +1556,7 @@ app.post('/api/auth/signin', async (req: Request, res: Response) => {
 
 app.post('/api/account/profile', async (req: Request, res: Response) => {
   try {
-    const { userId, username, displayName, avatarUrl, equippedOutfitId, activeThemeId } = req.body || {};
+    const { userId, username, displayName, avatarUrl, equippedOutfitId, unlockedOutfits, activeThemeId } = req.body || {};
     if (!userId || Number.isNaN(Number(userId))) {
       return res.status(400).json({ error: 'Valid userId is required.' });
     }
@@ -1556,6 +1567,7 @@ app.post('/api/account/profile', async (req: Request, res: Response) => {
       displayName,
       avatarUrl,
       equippedOutfitId,
+      unlockedOutfits,
       activeThemeId,
     });
 
@@ -1604,7 +1616,7 @@ app.get('/api/account/sync/:userId', async (req: Request, res: Response) => {
 
 app.post('/api/account/sync', async (req: Request, res: Response) => {
   try {
-    const { userId, conversations, customThemes } = req.body || {};
+    const { userId, conversations, customThemes, unlockedOutfits } = req.body || {};
     if (!userId || Number.isNaN(Number(userId))) {
       return res.status(400).json({ error: 'Valid userId is required.' });
     }
@@ -1612,6 +1624,7 @@ app.post('/api/account/sync', async (req: Request, res: Response) => {
       userId: Number(userId),
       conversations,
       customThemes,
+      unlockedOutfits,
     });
     res.json({ ok: true });
   } catch (err: unknown) {

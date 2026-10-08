@@ -1,6 +1,7 @@
 import pg, { type Pool as PoolType } from 'pg';
 import crypto from 'crypto';
 import type { Conversation, ThemeDefinition } from '../types';
+import { SECRET_WARDROBE_OUTFITS, resolveSecretOutfitsByRedeemCode } from '../constants';
 
 const { Pool } = pg;
 
@@ -18,6 +19,7 @@ export interface DbUserRecord {
   last_login_device: string;
   device_fingerprints: string[];
   equipped_outfit_id: string;
+  unlocked_outfits: string[];
   active_theme_id: string;
   created_at: string;
 }
@@ -67,6 +69,7 @@ function sanitizeUser(u: InternalUserRecord | DbUserRecord): DbUserRecord {
     last_login_device: u.last_login_device || 'Web Browser',
     device_fingerprints: Array.isArray(u.device_fingerprints) ? u.device_fingerprints : [],
     equipped_outfit_id: u.equipped_outfit_id || 'mint-maid-apron',
+    unlocked_outfits: Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [],
     active_theme_id: u.active_theme_id || 'classic-light',
     created_at: u.created_at
       ? new Date(u.created_at).toISOString()
@@ -144,10 +147,13 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_device TEXT NOT NULL DEFAULT 'Web Browser',
   device_fingerprints TEXT[] NOT NULL DEFAULT '{}',
   equipped_outfit_id TEXT NOT NULL DEFAULT 'mint-maid-apron',
+  unlocked_outfits TEXT[] NOT NULL DEFAULT '{}',
   active_theme_id TEXT NOT NULL DEFAULT 'classic-light',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS unlocked_outfits TEXT[] NOT NULL DEFAULT '{}';
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_account_type ON users(account_type);
@@ -197,6 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_custom_themes_user_id ON custom_themes(user_id);
 CREATE TABLE IF NOT EXISTS redeem_codes (
   code TEXT PRIMARY KEY,
   account_type_grant TEXT NOT NULL DEFAULT 'paid',
+  unlocked_outfit_ids TEXT[] NOT NULL DEFAULT '{}',
   duration_days INTEGER NOT NULL DEFAULT 30,
   max_uses INTEGER NOT NULL DEFAULT 1000,
   used_count INTEGER NOT NULL DEFAULT 0,
@@ -204,12 +211,37 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO redeem_codes (code, account_type_grant, duration_days, max_uses)
+ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS unlocked_outfit_ids TEXT[] NOT NULL DEFAULT '{}';
+
+INSERT INTO redeem_codes (code, account_type_grant, unlocked_outfit_ids, duration_days, max_uses)
 VALUES
-  ('MUXAI-PREMIUM-2026', 'paid', 365, 10000),
-  ('HANA-VIP', 'paid', 365, 10000),
-  ('AISMASH-PRO', 'paid', 365, 10000)
-ON CONFLICT (code) DO NOTHING;
+  ('MUXAI-PREMIUM-2026', 'paid', '{}', 365, 10000),
+  ('HANA-VIP', 'paid', '{}', 365, 10000),
+  ('AISMASH-PRO', 'paid', '{}', 365, 10000),
+  ('HANA-PINKDRESS2', 'skin', ARRAY['beauty-of-pink'], 3650, 100000),
+  ('HANA-STREETWEAR', 'skin', ARRAY['streetwear'], 3650, 100000),
+  ('HANA-MODERNCASUAL', 'skin', ARRAY['staying-casual'], 3650, 100000),
+  ('HANA-GOTHICDRESS', 'skin', ARRAY['gothic-beauty'], 3650, 100000),
+  ('HANA-BLACKONESIE', 'skin', ARRAY['home-alone'], 3650, 100000),
+  ('HANA-DARKHOODIE', 'skin', ARRAY['powerpuff'], 3650, 100000),
+  ('HANA-FORMALUNIFORM', 'skin', ARRAY['neat-and-nimble'], 3650, 100000),
+  ('HANA-LACEDRESS', 'skin', ARRAY['frilly-dress'], 3650, 100000),
+  ('HANA-PURPLEMAID', 'skin', ARRAY['cookie-maid'], 3650, 100000),
+  ('HANA-BLACKMAID', 'skin', ARRAY['coffee-maid'], 3650, 100000),
+  ('HANA-SECRET-WARDROBE', 'skin', ARRAY[
+    'beauty-of-pink',
+    'streetwear',
+    'staying-casual',
+    'gothic-beauty',
+    'home-alone',
+    'powerpuff',
+    'neat-and-nimble',
+    'frilly-dress',
+    'cookie-maid',
+    'coffee-maid'
+  ], 3650, 100000)
+ON CONFLICT (code) DO UPDATE SET
+  unlocked_outfit_ids = EXCLUDED.unlocked_outfit_ids;
 `;
 
 async function ensureNeonSchema(): Promise<PoolType | null> {
@@ -240,7 +272,7 @@ async function ensureNeonSchema(): Promise<PoolType | null> {
 const fallbackUsers = new Map<string, InternalUserRecord>();
 const fallbackConversations = new Map<number, Conversation[]>();
 const fallbackCustomThemes = new Map<number, ThemeDefinition[]>();
-const validRedeemCodes = new Set<string>([
+const validPaidRedeemCodes = new Set<string>([
   'MUXAI-PREMIUM-2026',
   'HANA-VIP',
   'AISMASH-PRO',
@@ -295,8 +327,9 @@ export async function signUpAccount(params: {
         last_login_device,
         device_fingerprints,
         equipped_outfit_id,
+        unlocked_outfits,
         active_theme_id
-      ) VALUES ($1, $2, $3, $4, $5, 'free', NULL, $6, $7, $8, 'mint-maid-apron', 'classic-light')
+      ) VALUES ($1, $2, $3, $4, $5, 'free', NULL, $6, $7, $8, 'mint-maid-apron', '{}', 'classic-light')
       RETURNING *`,
       [cleanEmail, passwordHash, username, displayName, defaultAvatar, nowIso, deviceLabel, fingerprints]
     );
@@ -323,6 +356,7 @@ export async function signUpAccount(params: {
     last_login_device: deviceLabel,
     device_fingerprints: fingerprints,
     equipped_outfit_id: 'mint-maid-apron',
+    unlocked_outfits: [],
     active_theme_id: 'classic-light',
     created_at: nowIso,
   };
@@ -411,6 +445,7 @@ export async function updateAccountProfile(params: {
   displayName?: string;
   avatarUrl?: string;
   equippedOutfitId?: string;
+  unlockedOutfits?: string[];
   activeThemeId?: string;
 }): Promise<DbUserRecord> {
   const pool = await ensureNeonSchema();
@@ -425,6 +460,10 @@ export async function updateAccountProfile(params: {
     const nextDisplayName = (params.displayName ?? cur.display_name).trim() || cur.display_name;
     const nextAvatarUrl = (params.avatarUrl ?? cur.avatar_url).trim() || cur.avatar_url;
     const nextOutfit = (params.equippedOutfitId ?? cur.equipped_outfit_id).trim() || cur.equipped_outfit_id;
+    const curUnlocked = Array.isArray(cur.unlocked_outfits) ? cur.unlocked_outfits : [];
+    const nextUnlocked = Array.isArray(params.unlockedOutfits)
+      ? Array.from(new Set([...curUnlocked, ...params.unlockedOutfits]))
+      : curUnlocked;
     const nextTheme = (params.activeThemeId ?? cur.active_theme_id).trim() || cur.active_theme_id;
 
     const updated = await pool.query(
@@ -433,11 +472,12 @@ export async function updateAccountProfile(params: {
            display_name = $2,
            avatar_url = $3,
            equipped_outfit_id = $4,
-           active_theme_id = $5,
+           unlocked_outfits = $5,
+           active_theme_id = $6,
            updated_at = NOW()
-       WHERE id = $6
+       WHERE id = $7
        RETURNING *`,
-      [nextUsername, nextDisplayName, nextAvatarUrl, nextOutfit, nextTheme, params.userId]
+      [nextUsername, nextDisplayName, nextAvatarUrl, nextOutfit, nextUnlocked, nextTheme, params.userId]
     );
 
     return sanitizeUser(updated.rows[0]);
@@ -456,6 +496,10 @@ export async function updateAccountProfile(params: {
       }
       if (params.equippedOutfitId !== undefined && params.equippedOutfitId.trim()) {
         u.equipped_outfit_id = params.equippedOutfitId.trim();
+      }
+      if (Array.isArray(params.unlockedOutfits)) {
+        const curUnlocked = Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [];
+        u.unlocked_outfits = Array.from(new Set([...curUnlocked, ...params.unlockedOutfits]));
       }
       if (params.activeThemeId !== undefined && params.activeThemeId.trim()) {
         u.active_theme_id = params.activeThemeId.trim();
@@ -477,21 +521,44 @@ export async function redeemAccountCode(params: {
   }
 
   const nowIso = new Date().toISOString();
+  const matchedSecretOutfits = resolveSecretOutfitsByRedeemCode(cleanCode);
+  const matchedSecretIds = matchedSecretOutfits.map((o) => o.id);
+  const isBuiltInPaidCode = validPaidRedeemCodes.has(cleanCode);
+
   const pool = await ensureNeonSchema();
 
   if (pool) {
     const codeRes = await pool.query('SELECT * FROM redeem_codes WHERE UPPER(code) = $1', [cleanCode]);
-    const isBuiltInCode = validRedeemCodes.has(cleanCode);
+    const hasDbRow = codeRes.rows.length > 0;
 
-    if (codeRes.rows.length === 0 && !isBuiltInCode) {
+    if (!hasDbRow && !isBuiltInPaidCode && matchedSecretIds.length === 0) {
       throw new Error('Invalid or expired redeem code.');
     }
 
-    if (codeRes.rows.length > 0) {
+    let dbGrantPaid = isBuiltInPaidCode;
+    let dbOutfitGrants: string[] = [...matchedSecretIds];
+
+    if (hasDbRow) {
       const codeRow = codeRes.rows[0];
       if (Number(codeRow.used_count) >= Number(codeRow.max_uses)) {
         throw new Error('This redeem code has reached its usage limit.');
       }
+
+      if (codeRow.account_type_grant === 'paid') {
+        dbGrantPaid = true;
+      }
+
+      if (Array.isArray(codeRow.unlocked_outfit_ids) && codeRow.unlocked_outfit_ids.length > 0) {
+        if (
+          codeRow.unlocked_outfit_ids.includes('*') ||
+          codeRow.unlocked_outfit_ids.includes('ALL')
+        ) {
+          dbOutfitGrants.push(...SECRET_WARDROBE_OUTFITS.map((o) => o.id));
+        } else {
+          dbOutfitGrants.push(...codeRow.unlocked_outfit_ids);
+        }
+      }
+
       await pool.query(
         `UPDATE redeem_codes
          SET used_count = used_count + 1,
@@ -501,32 +568,46 @@ export async function redeemAccountCode(params: {
       );
     }
 
-    const updatedUser = await pool.query(
-      `UPDATE users
-       SET account_type = 'paid',
-           last_payment = $1,
-           updated_at = NOW()
-       WHERE id = $2
-       RETURNING *`,
-      [nowIso, params.userId]
-    );
-
-    if (updatedUser.rows.length === 0) {
+    const existingUserRes = await pool.query('SELECT * FROM users WHERE id = $1', [params.userId]);
+    if (existingUserRes.rows.length === 0) {
       throw new Error('User account not found.');
     }
+
+    const curUser = existingUserRes.rows[0] as InternalUserRecord;
+    const currentUnlocked = Array.isArray(curUser.unlocked_outfits) ? curUser.unlocked_outfits : [];
+    const mergedUnlocked = Array.from(new Set([...currentUnlocked, ...dbOutfitGrants]));
+    const nextAccountType = dbGrantPaid ? 'paid' : curUser.account_type;
+    const nextLastPayment = dbGrantPaid ? nowIso : curUser.last_payment;
+
+    const updatedUser = await pool.query(
+      `UPDATE users
+       SET account_type = $1,
+           last_payment = $2,
+           unlocked_outfits = $3,
+           updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [nextAccountType, nextLastPayment, mergedUnlocked, params.userId]
+    );
 
     return sanitizeUser(updatedUser.rows[0]);
   }
 
-  // Fallback verification
-  if (!validRedeemCodes.has(cleanCode)) {
-    throw new Error('Invalid or expired redeem code. Try MUXAI-PREMIUM-2026 or HANA-VIP.');
+  // Fallback verification when NeonDB is not configured
+  if (!isBuiltInPaidCode && matchedSecretIds.length === 0) {
+    throw new Error('Invalid or expired redeem code.');
   }
 
   for (const u of fallbackUsers.values()) {
     if (u.id === params.userId) {
-      u.account_type = 'paid';
-      u.last_payment = nowIso;
+      if (isBuiltInPaidCode) {
+        u.account_type = 'paid';
+        u.last_payment = nowIso;
+      }
+      if (matchedSecretIds.length > 0) {
+        const curUnlocked = Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [];
+        u.unlocked_outfits = Array.from(new Set([...curUnlocked, ...matchedSecretIds]));
+      }
       return sanitizeUser(u);
     }
   }
@@ -537,9 +618,11 @@ export async function redeemAccountCode(params: {
 export async function fetchUserSyncedData(userId: number): Promise<{
   conversations: Conversation[];
   customThemes: ThemeDefinition[];
+  unlockedOutfits: string[];
 }> {
   const pool = await ensureNeonSchema();
   if (pool) {
+    const userRes = await pool.query('SELECT unlocked_outfits FROM users WHERE id = $1', [userId]);
     const convRes = await pool.query(
       'SELECT * FROM conversations WHERE user_id = $1 ORDER BY updated_at DESC',
       [userId]
@@ -590,12 +673,25 @@ export async function fetchUserSyncedData(userId: number): Promise<{
       createdAt: Number(t.created_at),
     }));
 
-    return { conversations, customThemes };
+    const unlockedOutfits: string[] = Array.isArray(userRes.rows[0]?.unlocked_outfits)
+      ? userRes.rows[0].unlocked_outfits
+      : [];
+
+    return { conversations, customThemes, unlockedOutfits };
+  }
+
+  let fallbackUnlocked: string[] = [];
+  for (const u of fallbackUsers.values()) {
+    if (u.id === userId) {
+      fallbackUnlocked = Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [];
+      break;
+    }
   }
 
   return {
     conversations: fallbackConversations.get(userId) || [],
     customThemes: fallbackCustomThemes.get(userId) || [],
+    unlockedOutfits: fallbackUnlocked,
   };
 }
 
@@ -603,12 +699,29 @@ export async function syncUserConversationsAndThemes(params: {
   userId: number;
   conversations?: Conversation[];
   customThemes?: ThemeDefinition[];
+  unlockedOutfits?: string[];
 }): Promise<void> {
   const pool = await ensureNeonSchema();
   if (pool) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      if (Array.isArray(params.unlockedOutfits) && params.unlockedOutfits.length > 0) {
+        const userRes = await client.query('SELECT unlocked_outfits FROM users WHERE id = $1', [
+          params.userId,
+        ]);
+        if (userRes.rows.length > 0) {
+          const curUnlocked = Array.isArray(userRes.rows[0].unlocked_outfits)
+            ? userRes.rows[0].unlocked_outfits
+            : [];
+          const merged = Array.from(new Set([...curUnlocked, ...params.unlockedOutfits]));
+          await client.query(
+            'UPDATE users SET unlocked_outfits = $1, updated_at = NOW() WHERE id = $2',
+            [merged, params.userId]
+          );
+        }
+      }
 
       if (Array.isArray(params.conversations)) {
         for (const conv of params.conversations) {
@@ -692,6 +805,15 @@ export async function syncUserConversationsAndThemes(params: {
     return;
   }
 
+  if (Array.isArray(params.unlockedOutfits) && params.unlockedOutfits.length > 0) {
+    for (const u of fallbackUsers.values()) {
+      if (u.id === params.userId) {
+        const curUnlocked = Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [];
+        u.unlocked_outfits = Array.from(new Set([...curUnlocked, ...params.unlockedOutfits]));
+        break;
+      }
+    }
+  }
   if (Array.isArray(params.conversations)) {
     fallbackConversations.set(params.userId, params.conversations);
   }

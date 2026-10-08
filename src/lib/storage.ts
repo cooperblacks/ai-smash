@@ -12,6 +12,7 @@ const CUSTOM_THEMES_KEY = APP_INFO.storageKeys.customThemes;
 const HARASSMENT_COUNT_KEY = APP_INFO.storageKeys.harassmentCount;
 const BLOCKED_UNTIL_KEY = APP_INFO.storageKeys.blockedUntil;
 const EQUIPPED_OUTFIT_KEY = APP_INFO.storageKeys.equippedOutfit;
+const UNLOCKED_OUTFITS_KEY = APP_INFO.storageKeys.unlockedOutfits;
 const ACCOUNT_SESSION_KEY = APP_INFO.storageKeys.accountSession;
 const DEVICE_FINGERPRINT_KEY = APP_INFO.storageKeys.deviceFingerprint;
 const INTEGRATIONS_KEY = 'aismash_active_integrations_v1';
@@ -111,6 +112,28 @@ export function saveEquippedOutfitId(outfitId: string): void {
     localStorage.setItem(EQUIPPED_OUTFIT_KEY, outfitId);
   } catch (err) {
     console.error('Failed to save equipped outfit id:', err);
+  }
+}
+
+export function loadUnlockedOutfits(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(UNLOCKED_OUTFITS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveUnlockedOutfits(outfitIds: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const unique = Array.from(new Set(outfitIds.filter(Boolean)));
+    localStorage.setItem(UNLOCKED_OUTFITS_KEY, JSON.stringify(unique));
+  } catch (err) {
+    console.error('Failed to save unlocked outfits:', err);
   }
 }
 
@@ -493,6 +516,7 @@ export async function clearAllTransformersCaches(): Promise<boolean> {
         HARASSMENT_COUNT_KEY,
         BLOCKED_UNTIL_KEY,
         EQUIPPED_OUTFIT_KEY,
+        UNLOCKED_OUTFITS_KEY,
         ACCOUNT_SESSION_KEY,
         DEVICE_FINGERPRINT_KEY,
         INTEGRATIONS_KEY,
