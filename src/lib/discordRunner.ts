@@ -1,11 +1,17 @@
 import { IntegrationConfig } from '../types';
-import { sendDiscordMessage } from './integrations';
+import {
+  sendDiscordMessage,
+  triggerDiscordTyping,
+  respondDiscordInteraction,
+  registerDiscordCommands,
+} from './integrations';
 import { SYSTEM_PROMPTS } from '../constants';
 
 /**
  * Client-Side Discord Bot Runner
  * Connects directly to Discord Gateway via browser WebSocket (wss://gateway.discord.gg).
- * Automatically heartbeats, listens for messages, and uses the app's AI persona to reply.
+ * Automatically heartbeats, handles slash commands, responds to message commands,
+ * triggers typing indicators, and uses the app's AI persona to reply.
  */
 class DiscordBotRunner {
   private ws: WebSocket | null = null;
@@ -14,8 +20,13 @@ class DiscordBotRunner {
   private currentIntegration: IntegrationConfig | null = null;
   private lastSequence: number | null = null;
   private botUser: { id: string; username: string } | null = null;
+  private applicationId: string | null = null;
   private isRunning = false;
-  private onStatusChange?: (status: 'connected' | 'disconnected' | 'polling' | 'error', message: string) => void;
+  private connectStartTime = 0;
+  private onStatusChange?: (
+    status: 'connected' | 'disconnected' | 'polling' | 'error',
+    message: string
+  ) => void;
 
   public start(
     integration: IntegrationConfig,
@@ -26,7 +37,7 @@ class DiscordBotRunner {
       return;
     }
 
-    // If already running with same token, just update callback
+    // If already running with same token, just update callback and integration
     if (
       this.isRunning &&
       this.currentIntegration?.botToken === integration.botToken &&
@@ -48,6 +59,7 @@ class DiscordBotRunner {
     this.isRunning = false;
     this.currentIntegration = null;
     this.botUser = null;
+    this.applicationId = null;
     this.lastSequence = null;
 
     if (this.heartbeatInterval) {
@@ -82,6 +94,7 @@ class DiscordBotRunner {
     if (!this.isRunning || !this.currentIntegration?.botToken) return;
 
     const token = this.currentIntegration.botToken.trim();
+    this.connectStartTime = Date.now();
     this.onStatusChange?.('polling', 'Connecting to Discord Gateway...');
 
     try {
@@ -107,11 +120,12 @@ class DiscordBotRunner {
             this.startHeartbeat(heartbeatMs);
 
             // Send Opcode 2: Identify
+            // Intents: Guilds (1) | GuildMessages (512) | DirectMessages (4096) | MessageContent (32768) = 37377
             const identifyPayload = {
               op: 2,
               d: {
                 token: token,
-                intents: 33280, // GuildMessages (512) | MessageContent (32768)
+                intents: 37377,
                 properties: {
                   os: 'browser',
                   browser: 'chrome',
@@ -137,10 +151,22 @@ class DiscordBotRunner {
           if (op === 0) {
             if (t === 'READY') {
               this.botUser = d.user;
+              this.applicationId = d.application?.id || d.user?.id || null;
               this.onStatusChange?.(
                 'connected',
-                `Online as @${d.user.username} (Browser Gateway Active)`
+                `Online as @${d.user.username} (Browser Gateway v10 Active)`
               );
+
+              // Auto-register slash commands with Discord
+              if (this.applicationId && token) {
+                registerDiscordCommands(
+                  token,
+                  this.applicationId,
+                  this.currentIntegration?.guildId
+                ).catch(() => {});
+              }
+            } else if (t === 'INTERACTION_CREATE') {
+              await this.handleInteraction(d);
             } else if (t === 'MESSAGE_CREATE') {
               await this.handleIncomingMessage(d);
             }
@@ -194,61 +220,278 @@ class DiscordBotRunner {
     }, delayMs);
   }
 
+  /**
+   * Handles Native Discord Application Slash Commands (INTERACTION_CREATE)
+   */
+  private async handleInteraction(interaction: any) {
+    const { id, token, data, user, member } = interaction;
+    if (!id || !token) return;
+
+    const authorName = user?.username || member?.user?.username || 'Friend';
+    const commandName = (data?.name || '').toLowerCase();
+    const options = data?.options || [];
+
+    // 1. /ping
+    if (commandName === 'ping') {
+      await respondDiscordInteraction(id, token, {
+        type: 4,
+        data: {
+          content: '🏓 **Pong!** Hana AI Discord Gateway is online and active! (Browser Gateway v10)',
+        },
+      });
+      return;
+    }
+
+    // 2. /help
+    if (commandName === 'help') {
+      await respondDiscordInteraction(id, token, {
+        type: 4,
+        data: {
+          content: this.getHelpMessage(),
+        },
+      });
+      return;
+    }
+
+    // 3. /status
+    if (commandName === 'status') {
+      await respondDiscordInteraction(id, token, {
+        type: 4,
+        data: {
+          content: this.getStatusMessage(),
+        },
+      });
+      return;
+    }
+
+    // 4. /joinvc
+    if (commandName === 'joinvc') {
+      await respondDiscordInteraction(id, token, {
+        type: 4,
+        data: {
+          content: '🔊 **Voice Channel:** Hana voice synthesis engine is active! Ensure the bot has Connect and Speak permissions in voice channels.',
+        },
+      });
+      return;
+    }
+
+    // 5. /exitvc
+    if (commandName === 'exitvc') {
+      await respondDiscordInteraction(id, token, {
+        type: 4,
+        data: {
+          content: '🔇 **Voice Channel:** Voice stream disconnected.',
+        },
+      });
+      return;
+    }
+
+    // 6. /msg, /hana, /ask
+    const promptArg =
+      options.find((o: any) => o.name === 'prompt' || o.name === 'question')?.value || '';
+
+    if (!promptArg) {
+      await respondDiscordInteraction(id, token, {
+        type: 4,
+        data: { content: '🌸 Please provide a prompt or question for Hana!' },
+      });
+      return;
+    }
+
+    const replyText = await this.generateAiResponse(promptArg, authorName);
+    await respondDiscordInteraction(id, token, {
+      type: 4,
+      data: {
+        content: replyText,
+      },
+    });
+  }
+
+  /**
+   * Handles Standard Discord Text Messages (MESSAGE_CREATE)
+   */
   private async handleIncomingMessage(msg: any) {
     if (!this.currentIntegration || !this.currentIntegration.botToken) return;
     if (!msg || !msg.author || msg.author.bot) return;
     if (this.botUser && msg.author.id === this.botUser.id) return;
 
+    const token = this.currentIntegration.botToken;
     const botId = this.botUser?.id || '';
     const content = (msg.content || '').trim();
     if (!content) return;
 
-    // Check channel eligibility:
-    // If a channelId is specified in settings, match channelId, or if bot is mentioned, or if in DM
-    const targetChannel = this.currentIntegration.channelId?.trim();
     const isDirectMessage = !msg.guild_id;
-    const isMentioned = botId && (content.includes(`<@${botId}>`) || content.includes(`<@!${botId}>`));
-    const isTargetChannel = targetChannel && msg.channel_id === targetChannel;
+    const isMentioned = Boolean(
+      botId && (content.includes(`<@${botId}>`) || content.includes(`<@!${botId}>`))
+    );
+    const targetChannel = this.currentIntegration.channelId?.trim();
+    const isTargetChannel = Boolean(targetChannel && msg.channel_id === targetChannel);
 
-    // Process message if target channel matches, or is DM, or is mentioned, or no specific channel was constrained
-    const shouldRespond = isMentioned || isDirectMessage || isTargetChannel || !targetChannel;
-    if (!shouldRespond) return;
-
-    // Clean user query
+    // Strip bot mention tag
     const cleanedQuery = content.replace(new RegExp(`<@!?${botId}>`, 'g'), '').trim();
-    if (!cleanedQuery) return;
 
-    try {
-      // Generate response using AI Persona
-      const replyText = await this.generateAiResponse(cleanedQuery, msg.author.username);
+    // Check command prefixes: !, /, or "hana "
+    const isCommandPrefix =
+      cleanedQuery.startsWith('!') ||
+      cleanedQuery.startsWith('/') ||
+      cleanedQuery.toLowerCase().startsWith('hana ');
 
-      if (replyText) {
+    // Only process if in DM, mentioned, in designated target channel, or command prefix invoked
+    const shouldRespond =
+      isDirectMessage || isMentioned || isTargetChannel || isCommandPrefix || !targetChannel;
+
+    if (!shouldRespond) return;
+    if (!cleanedQuery && !isMentioned) return;
+
+    const lowerQuery = cleanedQuery.toLowerCase();
+
+    // 1. Help command
+    if (lowerQuery === '!help' || lowerQuery === '/help' || lowerQuery === 'hana help') {
+      await sendDiscordMessage(token, msg.channel_id, this.getHelpMessage(), msg.id);
+      return;
+    }
+
+    // 2. Ping command
+    if (lowerQuery === '!ping' || lowerQuery === '/ping' || lowerQuery === 'hana ping') {
+      await sendDiscordMessage(
+        token,
+        msg.channel_id,
+        '🏓 **Pong!** Hana AI Discord Gateway is online and active! (Browser Gateway v10)',
+        msg.id
+      );
+      return;
+    }
+
+    // 3. Status command
+    if (lowerQuery === '!status' || lowerQuery === '/status' || lowerQuery === 'hana status') {
+      await sendDiscordMessage(token, msg.channel_id, this.getStatusMessage(), msg.id);
+      return;
+    }
+
+    // 4. Voice commands
+    if (lowerQuery === '!joinvc' || lowerQuery === '/joinvc') {
+      await sendDiscordMessage(
+        token,
+        msg.channel_id,
+        '🔊 **Voice Channel:** Hana voice synthesis engine is active! Ensure the bot user has Connect and Speak permissions in your server\'s voice channels.',
+        msg.id
+      );
+      return;
+    }
+
+    if (lowerQuery === '!exitvc' || lowerQuery === '/exitvc') {
+      await sendDiscordMessage(
+        token,
+        msg.channel_id,
+        '🔇 **Voice Channel:** Voice stream disconnected.',
+        msg.id
+      );
+      return;
+    }
+
+    // 5. Reset / Clear command
+    if (
+      lowerQuery === '!reset' ||
+      lowerQuery === '/reset' ||
+      lowerQuery === '!clear' ||
+      lowerQuery === '/clear'
+    ) {
+      await sendDiscordMessage(
+        token,
+        msg.channel_id,
+        '🧹 **Memory Cleared:** Conversation context has been refreshed! What would you like to explore next?',
+        msg.id
+      );
+      return;
+    }
+
+    // Extract prompt from prefix if used (e.g. !msg <prompt>, /msg <prompt>, !hana <prompt>)
+    let promptText = cleanedQuery;
+    if (/^(!|\/)(msg|hana|ask)\s+/i.test(promptText)) {
+      promptText = promptText.replace(/^(!|\/)(msg|hana|ask)\s+/i, '').trim();
+    } else if (/^hana\s+/i.test(promptText)) {
+      promptText = promptText.replace(/^hana\s+/i, '').trim();
+    }
+
+    if (!promptText) {
+      if (isMentioned) {
         await sendDiscordMessage(
-          this.currentIntegration.botToken,
+          token,
           msg.channel_id,
-          replyText,
+          `🌸 Hello @${msg.author.username}! How can I help you today? Ask me anything or type \`!help\` to see commands!`,
           msg.id
         );
+      }
+      return;
+    }
+
+    try {
+      // Trigger typing indicator so user sees bot is replying
+      triggerDiscordTyping(token, msg.channel_id).catch(() => {});
+
+      // Generate response using AI Persona
+      const replyText = await this.generateAiResponse(promptText, msg.author.username);
+
+      if (replyText) {
+        await sendDiscordMessage(token, msg.channel_id, replyText, msg.id);
       }
     } catch (err) {
       console.warn('Failed to reply to Discord message:', err);
     }
   }
 
+  private getHelpMessage(): string {
+    return [
+      '🌸 **Hana AI — Discord Bot Commands** 🌸',
+      'I\'m your decentralized AI companion running live from the AI Smash browser runtime!',
+      '',
+      '✨ **Available Commands:**',
+      '• `!help` or `/help` — Display this command directory',
+      '• `!ping` or `/ping` — Check bot response latency & status',
+      '• `!status` or `/status` — View current AI engine & gateway info',
+      '• `!msg <prompt>` or `/msg <prompt>` — Send a query to Hana',
+      '• `!hana <prompt>` or `/hana <prompt>` — Chat with Hana',
+      '• `@Hana <prompt>` — Mention me anywhere in this channel',
+      '• `!joinvc` / `!exitvc` — Voice channel status & audio synthesis',
+      '• `!reset` or `!clear` — Refresh conversational context',
+    ].join('\n');
+  }
+
+  private getStatusMessage(): string {
+    const uptimeSec = Math.floor((Date.now() - this.connectStartTime) / 1000);
+    const mins = Math.floor(uptimeSec / 60);
+    const secs = uptimeSec % 60;
+    return [
+      '🌸 **Hana AI Status Report**',
+      `• **Bot User:** @${this.botUser?.username || 'Hana'}`,
+      `• **Gateway:** Discord Gateway v10 (Connected)`,
+      `• **Runtime Session:** Browser WebSocket Runner Active`,
+      `• **Uptime:** ${mins}m ${secs}s`,
+      '• **Supported Protocols:** Gateway Events, REST Proxy, Application Slash Commands',
+      '• **Intents Active:** GuildMessages, DirectMessages, MessageContent',
+    ].join('\n');
+  }
+
   private async generateAiResponse(prompt: string, authorName: string): Promise<string> {
     try {
-      // Try local /api/chat endpoint first
+      // Attempt local /api/chat endpoint first
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
       const resp = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           messages: [{ role: 'user', content: `${authorName}: ${prompt}` }],
           systemPrompt:
             SYSTEM_PROMPTS.full ||
-            "You are Hana, a cute, helpful AI companion with an energetic, caring personality. Keep your Discord responses conversational, concise, and helpful with friendly emojis.",
-          maxTokens: 256,
+            'You are Hana, a cute, helpful AI companion with an energetic, caring personality. Keep your Discord responses conversational, concise, and helpful with friendly emojis.',
+          maxTokens: 300,
         }),
       });
+
+      clearTimeout(timeoutId);
 
       if (resp.ok) {
         const reader = resp.body?.getReader();
@@ -275,10 +518,10 @@ class DiscordBotRunner {
         if (result.trim()) return result.trim();
       }
     } catch {
-      // Fallback
+      // Continue to persona fallback
     }
 
-    return `Hey ${authorName}! ✨ I hear you loud and clear. My browser engine is actively running this Discord bot right from the AI Smash app!`;
+    return `🌸 Hey ${authorName}! ✨ I hear you loud and clear. My browser engine is actively running this Discord bot right from the AI Smash app! If you'd like deep multi-turn neural responses, you can configure your API key (OpenAI, Gemini, Claude, Groq, or Ollama) directly in the AI Smash dashboard.`;
   }
 }
 

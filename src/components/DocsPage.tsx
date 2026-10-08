@@ -18,6 +18,14 @@ import {
   Home,
   Menu,
   X,
+  Play,
+  RefreshCw,
+  Layers,
+  Cpu,
+  Radio,
+  Database,
+  Code,
+  Zap,
 } from 'lucide-react';
 import { AI_PROFILE } from '../constants';
 import { CodeBlockView } from './CodeBlockView';
@@ -33,7 +41,7 @@ interface DocArticle {
   id: string;
   path: string;
   title: string;
-  category: 'Getting Started' | 'AI Model APIs' | 'Integrations';
+  category: 'Getting Started' | 'Hana APIs' | 'AI Model APIs' | 'Integrations';
   tagline: string;
   logoUrl?: string;
   content: {
@@ -79,6 +87,267 @@ export const DOCS_ARTICLES: DocArticle[] = [
       tips: [
         'API keys and integration credentials stay on your device and are never shared publicly.',
         'When using external API providers, responses stream directly with real-time token telemetry and 3D avatar lip-sync.',
+      ],
+    },
+  },
+
+  // 2. HANA 3D (3D AVATAR, VOICE ENGINE, EMOTIONS & GRAPHQL SDK)
+  {
+    id: 'third-party-avatar',
+    path: '/docs/api/third-party-avatar',
+    title: 'Hana 3D',
+    category: 'Hana APIs',
+    tagline: 'Embed Hana 3D VRM model, expressions, Mixamo animations, voice engine, active LLMs, and GraphQL API in third-party client apps',
+    logoUrl: 'https://ai.mux8.com/hana_icon.png',
+    content: {
+      overview:
+        'This guide provides the complete developer blueprint for allowing external third-party client applications (React, Vue, plain Three.js, Electron, Unity WebGL, or OBS livestream overlays) to embed and control Hana. You can load the 3D VRM humanoid character, trigger retargeted Mixamo animations, synchronize real-time facial emotions, drive phonetic viseme lip-sync matching spoken dialogue, query the active LLM, and dispatch remote actor directives via REST, Server-Sent Events (SSE), or GraphQL.',
+      prerequisites: [
+        'A WebGL2 / WebGPU-capable rendering environment supporting Three.js r160+ and @pixiv/three-vrm 1.0+',
+        'npm packages: three, @pixiv/three-vrm, and vrm-mixamo-retarget',
+        'Web Speech API (SpeechSynthesis) and Web Audio API for audio synthesis & viseme tracking',
+        'Direct HTTP access to this server (CORS headers Access-Control-Allow-Origin: * are pre-configured)',
+      ],
+      steps: [
+        {
+          title: '1. Load Hana 3D VRM 1.0 Model via Asset Proxy',
+          desc: 'To prevent cross-origin redirect errors, request the avatar model from /api/vrm. You can specify a wardrobe outfit using the query parameter ?file=hana_v1.0_vrm1.vrm. Initialize Three.js, register VRMLoaderPlugin with GLTFLoader, and add the resulting VRM scene to your WebGL viewport.',
+          lang: 'typescript',
+          code: `import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(28, window.innerWidth / window.innerHeight, 0.1, 50);
+camera.position.set(0, 1.15, 1.65);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.getElementById('canvas-container')?.appendChild(renderer.domElement);
+
+const loader = new GLTFLoader();
+loader.register((parser) => new VRMLoaderPlugin(parser));
+
+let currentVrm: any = null;
+let mixer: THREE.AnimationMixer | null = null;
+
+// Load Hana default Mint Maid outfit (or ?file=hana_v1.0_pinkmaid_vrm1.vrm)
+loader.load('/api/vrm', (gltf) => {
+  const vrm = gltf.userData.vrm;
+  VRMUtils.removeUnnecessaryVertices(gltf.scene);
+  VRMUtils.removeUnnecessaryJoints(gltf.scene);
+  VRMUtils.rotateVRM0(vrm);
+  
+  scene.add(vrm.scene);
+  currentVrm = vrm;
+  mixer = new THREE.AnimationMixer(vrm.scene);
+  console.log('Hana 3D VRM successfully loaded!');
+});`,
+        },
+        {
+          title: '2. Fetch & Retarget Mixamo Animations with Gaze Isolation',
+          desc: 'Fetch animation FBX files from the proxy /api/animation/:type (/api/animation/idle, walk, wave, fall, getup, yawn, wait). Use vrm-mixamo-retarget to apply bones while filtering head/neck tracks on idle so Hana can track the user cursor procedurally.',
+          lang: 'typescript',
+          code: `import { retargetAnimationFromUrl } from 'vrm-mixamo-retarget';
+
+async function playAnimation(animType: 'idle' | 'walk' | 'wave' | 'fall' | 'getup') {
+  if (!currentVrm || !mixer) return;
+  const animUrl = \`/api/animation/\${animType}\`;
+  
+  const clip = await retargetAnimationFromUrl(currentVrm, animUrl);
+  if (clip) {
+    // Optional: Filter head/neck bones on idle for cursor look-at tracking
+    if (animType === 'idle') {
+      clip.tracks = clip.tracks.filter(t => !t.name.includes('head') && !t.name.includes('neck'));
+    }
+    const action = mixer.clipAction(clip);
+    action.setLoop(animType === 'idle' || animType === 'walk' ? THREE.LoopRepeat : THREE.LoopOnce, 1);
+    action.play();
+  }
+}`,
+        },
+        {
+          title: '3. Actuate Facial Expressions & Emotional Blendshapes',
+          desc: 'Hana supports 6 core emotional morph presets: neutral, happy, smug (relaxed), sad, angry, and surprised. Actuate them using currentVrm.expressionManager.setValue(name, weight). You can also send the full AI reply to POST /api/emotion to have the algorithm automatically classify the exact emotion.',
+          lang: 'typescript',
+          code: `// Set facial expression smoothly
+function setFacialEmotion(emotion: 'happy' | 'relaxed' | 'sad' | 'angry' | 'surprised' | 'neutral', weight = 1.0) {
+  if (!currentVrm?.expressionManager) return;
+  const expr = currentVrm.expressionManager;
+  
+  // Clear previous emotion weights
+  ['happy', 'relaxed', 'sad', 'angry', 'surprised'].forEach((name) => {
+    expr.setValue(name, name === emotion ? weight : 0);
+  });
+}
+
+// Automatically classify emotion from full assistant response text
+async function detectEmotionForText(messageText: string) {
+  const resp = await fetch('/api/emotion', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: messageText }),
+  });
+  const data = await resp.json();
+  setFacialEmotion(data.emotion, 0.85);
+}`,
+        },
+        {
+          title: '4. Voice Engine & Real-Time Viseme Lip Synchronization',
+          desc: 'Configure speech synthesis with Hana\'s high-priority female voice queue (rate 1.05, pitch 1.25) and Web Audio harmonic filters. Hook into the utterance.onboundary event to compute phoneme vowel shapes (aa, ih, ou, ee, oh) and lerp expressionManager weights in real time.',
+          lang: 'typescript',
+          code: `function speakWithLipSync(text: string) {
+  if (!window.speechSynthesis) return;
+  const utterance = new SpeechSynthesisUtterance(text);
+  
+  // Select preferred female neural/natural voice
+  const voices = window.speechSynthesis.getVoices();
+  const femaleVoice = voices.find(v => 
+    /aria|jenny|samantha|ava|serena|zira|natural/i.test(v.name) && !/male|david|mark/i.test(v.name)
+  );
+  if (femaleVoice) utterance.voice = femaleVoice;
+  utterance.pitch = 1.25;
+  utterance.rate = 1.05;
+
+  // Track word boundary events for syllable mouth shapes
+  utterance.onboundary = (e) => {
+    const word = text.slice(e.charIndex, e.charIndex + (e.charLength || 6)).toLowerCase();
+    const expr = currentVrm?.expressionManager;
+    if (!expr) return;
+
+    if (/[ao]/.test(word)) {
+      expr.setValue('oh', word.includes('o') ? 0.35 : 0);
+      expr.setValue('aa', word.includes('a') ? 0.40 : 0);
+    } else if (/[iu]/.test(word)) {
+      expr.setValue('ou', word.includes('u') ? 0.30 : 0);
+      expr.setValue('ih', word.includes('i') ? 0.25 : 0);
+    } else if (/[e]/.test(word)) {
+      expr.setValue('ee', 0.30);
+    }
+  };
+
+  utterance.onend = () => {
+    // Reset mouth to closed resting state
+    ['aa', 'ih', 'ou', 'ee', 'oh'].forEach(v => currentVrm?.expressionManager?.setValue(v, 0));
+  };
+
+  window.speechSynthesis.speak(utterance);
+}`,
+        },
+        {
+          title: '5. Query Active LLMs & Stream Persona Responses',
+          desc: 'Third-party apps can query active models via GET /api/mcp or POST /api/graphql. To stream persona responses directly, call POST /api/chat or POST /api/chat/provider with SSE streaming. Responses come back token-by-token with natural conversational rhythm.',
+          lang: 'typescript',
+          code: `// Stream persona response from server
+async function streamHanaChat(userMessage: string, onToken: (chunk: string) => void) {
+  const resp = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: userMessage }],
+      stream: true,
+    }),
+  });
+
+  const reader = resp.body?.getReader();
+  const decoder = new TextDecoder();
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value);
+    const lines = chunk.split('\\n');
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const payload = JSON.parse(line.slice(6));
+        if (payload.text) onToken(payload.text);
+      }
+    }
+  }
+}`,
+        },
+        {
+          title: '6. Synchronize Remote Clients via Live SSE Event Bus',
+          desc: 'If running a separate presentation client (e.g. OBS streaming overlay, Discord companion, or second screen), subscribe to GET /api/avatar/events. Whenever an action is triggered via POST /api/avatar/action or GraphQL mutation setAvatarAction, your 3D client receives the speech text, emotion, and animation cues instantly.',
+          lang: 'typescript',
+          code: `// Connect to live avatar event stream
+const sse = new EventSource('/api/avatar/events');
+
+sse.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.type === 'speak' || data.type === 'act') {
+    console.log('Live action received:', data.text, data.emotion, data.animation);
+    setFacialEmotion(data.emotion, 0.9);
+    playAnimation(data.animation);
+    if (data.text) speakWithLipSync(data.text);
+  }
+};`,
+        },
+      ],
+      parameters: [
+        { name: 'GET /api/vrm?file=...', type: 'Binary GLB/VRM stream', required: false, desc: 'Streams 3D humanoid VRM model file with CORS headers.' },
+        { name: 'GET /api/animation/:type', type: 'Binary FBX stream', required: true, desc: 'Streams Mixamo animation FBX (idle, walk, wave, fall, getup, yawn, wait).' },
+        { name: 'POST /api/emotion', type: 'JSON { text: string }', required: true, desc: 'Evaluates entire reply text and returns detected facial emotion.' },
+        { name: 'POST /api/graphql', type: 'JSON { query: string }', required: true, desc: 'Universal GraphQL endpoint querying models, outfits, voice, emotions, and mutations.' },
+        { name: 'GET /api/avatar/events', type: 'text/event-stream (SSE)', required: false, desc: 'Pub/sub stream broadcasting avatar speech and gestures to all connected viewports.' },
+        { name: 'POST /api/avatar/action', type: 'JSON { action, text, emotion, animation }', required: false, desc: 'Dispatches remote directive to all active 3D viewports.' },
+      ],
+      codeExample: {
+        lang: 'html',
+        code: `<!-- Complete HTML boilerplate embedding Hana 3D avatar in an iframe or standalone page -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Hana 3D Avatar Client</title>
+  <style>body { margin: 0; overflow: hidden; background: #0f1117; }</style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@2.0.6/lib/three-vrm.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="avatar-container" style="width: 100vw; height: 100vh;"></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin } from '@pixiv/three-vrm';
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(28, window.innerWidth / window.innerHeight, 0.1, 50);
+    camera.position.set(0, 1.15, 1.65);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('avatar-container').appendChild(renderer.domElement);
+
+    const light = new THREE.DirectionalLight(0xffffff, 1.2);
+    light.position.set(1.5, 2.5, 2.0);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+
+    const loader = new GLTFLoader();
+    loader.register(p => new VRMLoaderPlugin(p));
+    loader.load('/api/vrm', gltf => {
+      scene.add(gltf.userData.vrm.scene);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>`,
+      },
+      tips: [
+        'Camera FOV: Use FOV 28 at position (0, 1.15, 1.65) and lookAt (0, 1.05, 0) for optimal portrait framing of Hana.',
+        'Mouth Deadzone: In your lip-sync render loop, snap viseme values below 0.02 directly to 0 to prevent subtle mouth jitter.',
+        'Transparent OBS Overlay: Set WebGLRenderer alpha: true and render background transparent for clean stream capture.',
       ],
     },
   },
@@ -790,6 +1059,308 @@ const responseStream = await ai.models.generateContentStream({
   },
 ];
 
+const GRAPHQL_PRESET_QUERIES: Array<{ label: string; desc: string; query: string }> = [
+  {
+    label: 'Query 3D Avatar & Outfits',
+    desc: 'Fetch current VRM model URL, fallback mirrors, and all 16+ wardrobe outfits',
+    query: `query GetAvatarAndWardrobe {
+  avatar {
+    url
+    defaultOutfitId
+    activeFile
+    candidateUrls
+    outfits {
+      id
+      name
+      fileName
+      isPremium
+      isSecret
+      modelUrl
+    }
+  }
+}`,
+  },
+  {
+    label: 'Query Facial Emotions & Morph Targets',
+    desc: 'List supported expressions, VRM blendshape morph targets, and valences',
+    query: `query GetFacialEmotions {
+  emotions {
+    name
+    vrmMorph
+    valence
+    description
+  }
+}`,
+  },
+  {
+    label: 'Query Voice Engine & Viseme Mappings',
+    desc: 'Retrieve speech synthesis configuration, female voice priority queue, and lip-sync visemes',
+    query: `query GetVoiceEngineConfig {
+  voiceEngine {
+    lang
+    rate
+    pitch
+    preferredVoices
+    acousticFilter
+    visemes {
+      viseme
+      vrmMouthMorph
+      phonemes
+    }
+  }
+}`,
+  },
+  {
+    label: 'Query Supported LLM Models',
+    desc: 'Enumerate in-browser ONNX SLMs, Ollama servers, and external API providers',
+    query: `query GetActiveModels {
+  activeLlm {
+    id
+    name
+    family
+    speedRating
+    inferenceType
+    streamingEndpoint
+    description
+    approxParams
+  }
+}`,
+  },
+  {
+    label: 'Trigger Avatar Action (Mutation)',
+    desc: 'Broadcast speech, emotion, and gesture to all connected 3D viewports via SSE',
+    query: `mutation DispatchAvatarAction {
+  setAvatarAction(
+    action: "speak"
+    text: "Hello from third-party client application!"
+    emotion: "happy"
+    animation: "wave"
+  ) {
+    success
+    message
+    activeSubscribers
+    event {
+      type
+      text
+      emotion
+      animation
+      timestamp
+    }
+  }
+}`,
+  },
+  {
+    label: 'Detect Text Emotion (Mutation)',
+    desc: 'Classify conversational sentiment to determine avatar facial expression',
+    query: `mutation ClassifySentiment {
+  detectEmotion(text: "Thank you so much! I am thrilled to work with you!") {
+    text
+    emotion
+    method
+  }
+}`,
+  },
+  {
+    label: 'Synthesize Viseme Phonemes (Mutation)',
+    desc: 'Analyze phoneme breakdown and timing cues for custom audio lip-sync engines',
+    query: `mutation AnalyzePhonemes {
+  synthesizePhonemes(text: "Welcome to Hana 3D avatar platform") {
+    text
+    cues {
+      word
+      viseme
+      vrmMorph
+      intensity
+    }
+  }
+}`,
+  },
+];
+
+export const GraphQLExplorer: React.FC = () => {
+  const [selectedPresetIndex, setSelectedPresetIndex] = useState(0);
+  const [queryInput, setQueryInput] = useState(GRAPHQL_PRESET_QUERIES[0].query);
+  const [responseOutput, setResponseOutput] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [statusCode, setStatusCode] = useState<number | null>(null);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copiedRes, setCopiedRes] = useState(false);
+
+  const handleSelectPreset = (index: number) => {
+    setSelectedPresetIndex(index);
+    setQueryInput(GRAPHQL_PRESET_QUERIES[index].query);
+  };
+
+  const handleExecuteQuery = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    const start = performance.now();
+    try {
+      const res = await fetch('/api/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: queryInput }),
+      });
+      const end = performance.now();
+      setLatencyMs(Math.round(end - start));
+      setStatusCode(res.status);
+      const data = await res.json();
+      setResponseOutput(JSON.stringify(data, null, 2));
+    } catch (err: unknown) {
+      const end = performance.now();
+      setLatencyMs(Math.round(end - start));
+      const msg = err instanceof Error ? err.message : 'Network request failed';
+      setErrorMsg(msg);
+      setStatusCode(500);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCopyResponse = () => {
+    if (responseOutput && typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(responseOutput);
+      setCopiedRes(true);
+      setTimeout(() => setCopiedRes(false), 2000);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-black/[0.08] dark:border-white/[0.08] bg-white dark:bg-[#141622] overflow-hidden shadow-xs my-6">
+      <div className="p-4 border-b border-black/[0.06] dark:border-white/[0.06] bg-neutral-50/70 dark:bg-neutral-900/60 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-[var(--theme-accent-soft)] flex items-center justify-center text-[var(--theme-accent)] shrink-0">
+            <Database className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold font-heading text-neutral-900 dark:text-white flex items-center gap-2">
+              <span>Interactive GraphQL Explorer</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--theme-accent-soft)] text-[var(--theme-accent)] font-semibold">
+                POST /api/graphql
+              </span>
+            </h3>
+            <p className="text-xs text-neutral-500">
+              Execute live queries and mutations directly against the server schema
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleExecuteQuery}
+          disabled={isLoading}
+          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-[var(--theme-accent)] hover:opacity-90 active:scale-95 text-white shadow-xs transition-all cursor-pointer disabled:opacity-60"
+        >
+          {isLoading ? (
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Play className="w-3.5 h-3.5 fill-current" />
+          )}
+          <span>{isLoading ? 'Executing...' : 'Run Query'}</span>
+        </button>
+      </div>
+
+      {/* Preset selector chips */}
+      <div className="p-3 border-b border-black/[0.06] dark:border-white/[0.06] bg-neutral-50/40 dark:bg-neutral-900/30">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold mb-2">
+          Select Query / Mutation Template
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {GRAPHQL_PRESET_QUERIES.map((preset, idx) => {
+            const isSelected = selectedPresetIndex === idx;
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => handleSelectPreset(idx)}
+                className={`px-2.5 py-1 rounded-lg text-xs transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-[var(--theme-accent)] text-white font-semibold shadow-xs'
+                    : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                }`}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Split view: Query Editor on left, Response on right */}
+      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-black/[0.06] dark:divide-white/[0.06]">
+        {/* Left: Query Editor */}
+        <div className="p-4 flex flex-col">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-mono text-neutral-400 uppercase tracking-wider font-semibold">
+              GraphQL Query / Mutation
+            </span>
+            <span className="text-[11px] text-neutral-400 truncate max-w-[200px]">
+              {GRAPHQL_PRESET_QUERIES[selectedPresetIndex]?.desc}
+            </span>
+          </div>
+          <textarea
+            value={queryInput}
+            onChange={(e) => setQueryInput(e.target.value)}
+            rows={12}
+            className="w-full flex-1 p-3 font-mono text-xs rounded-xl bg-neutral-900 text-neutral-100 dark:bg-[#0a0c12] border border-black/10 dark:border-white/10 focus:outline-none focus:border-[var(--theme-accent)] resize-y"
+            placeholder="Type your GraphQL query or mutation here..."
+          />
+        </div>
+
+        {/* Right: Response Output */}
+        <div className="p-4 flex flex-col bg-neutral-50/40 dark:bg-neutral-950/40">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-mono text-neutral-400 uppercase tracking-wider font-semibold">
+                Result Output
+              </span>
+              {statusCode !== null && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                    statusCode === 200
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                      : 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                  }`}
+                >
+                  {statusCode} {statusCode === 200 ? 'OK' : 'Error'}
+                </span>
+              )}
+              {latencyMs !== null && (
+                <span className="text-[10px] font-mono text-neutral-400">
+                  {latencyMs}ms
+                </span>
+              )}
+            </div>
+
+            {responseOutput && (
+              <button
+                type="button"
+                onClick={handleCopyResponse}
+                className="inline-flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
+              >
+                {copiedRes ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedRes ? 'Copied' : 'Copy'}</span>
+              </button>
+            )}
+          </div>
+
+          <div className="w-full flex-1 min-h-[240px] p-3 font-mono text-xs rounded-xl bg-neutral-900 text-emerald-400 dark:bg-[#0a0c12] border border-black/10 dark:border-white/10 overflow-auto scrollbar-thin">
+            {errorMsg ? (
+              <div className="text-red-400">{errorMsg}</div>
+            ) : responseOutput ? (
+              <pre className="whitespace-pre-wrap">{responseOutput}</pre>
+            ) : (
+              <div className="text-neutral-500 italic py-12 text-center">
+                Click &quot;Run Query&quot; above to execute this GraphQL operation against /api/graphql.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const DocsPage: React.FC<DocsPageProps> = ({
   currentPath,
   onNavigate,
@@ -800,13 +1371,35 @@ export const DocsPage: React.FC<DocsPageProps> = ({
   const [copiedCodeIndex, setCopiedCodeIndex] = useState<number | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
-  // Normalize path to match article
+  const categories = [
+    'Getting Started',
+    'Hana APIs',
+    'AI Model APIs',
+    'Integrations',
+  ] as const;
+
+  // Normalize path to match article with alias support
   const activeArticle = useMemo(() => {
     const cleanPath = currentPath.replace(/\/+$/, '');
     const found = DOCS_ARTICLES.find(
       (a) => a.path === cleanPath || a.path === currentPath
     );
-    return found || DOCS_ARTICLES[0];
+    if (found) return found;
+
+    // Route alias mapping for developer convenience
+    if (
+      cleanPath.includes('/avatar') ||
+      cleanPath.includes('/third-party') ||
+      cleanPath.includes('/3d') ||
+      cleanPath.includes('/vrm') ||
+      cleanPath.includes('/hana-3d') ||
+      cleanPath.includes('/graphql')
+    ) {
+      const match = DOCS_ARTICLES.find((a) => a.id === 'third-party-avatar');
+      if (match) return match;
+    }
+
+    return DOCS_ARTICLES[0];
   }, [currentPath]);
 
   // Filter sidebar articles by search query
@@ -821,8 +1414,6 @@ export const DocsPage: React.FC<DocsPageProps> = ({
         a.id.toLowerCase().includes(q)
     );
   }, [searchQuery]);
-
-  const categories = ['Getting Started', 'AI Model APIs', 'Integrations'] as const;
 
   const handleCopyCode = (code: string, index: number) => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -893,19 +1484,10 @@ export const DocsPage: React.FC<DocsPageProps> = ({
           <button
             type="button"
             onClick={onBackToHome}
-            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
           >
             <Home className="w-3.5 h-3.5" />
             <span>Home</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onBackToChat}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-[var(--theme-accent)] hover:opacity-90 text-white shadow-xs active:scale-95 transition-all cursor-pointer"
-          >
-            <MessageSquare className="w-3.5 h-3.5 stroke-[2.2]" />
-            <span>Open Chat</span>
           </button>
         </div>
       </header>
@@ -1025,6 +1607,97 @@ export const DocsPage: React.FC<DocsPageProps> = ({
               {activeArticle.content.overview}
             </p>
           </section>
+
+          {/* 3D Avatar Architectural Capability Cards */}
+          {activeArticle.category === 'Hana APIs' && (
+            <div className="mb-8 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              <div className="p-3 rounded-xl border border-black/[0.06] dark:border-white/[0.06] bg-white dark:bg-[#141622] shadow-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  <Layers className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
+                  <span className="text-[11px] font-mono font-bold text-neutral-900 dark:text-white">
+                    3D VRM 1.0 Avatar
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-500 leading-tight">
+                  Proxy at <code className="text-[var(--theme-accent)]">/api/vrm</code> with 16+ wardrobe skins
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl border border-black/[0.06] dark:border-white/[0.06] bg-white dark:bg-[#141622] shadow-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  <Play className="w-3.5 h-3.5 text-pink-500" />
+                  <span className="text-[11px] font-mono font-bold text-neutral-900 dark:text-white">
+                    Mixamo Animations
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-500 leading-tight">
+                  8+ FBX streams (<code className="text-pink-500">idle, walk, wave, fall</code>)
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl border border-black/[0.06] dark:border-white/[0.06] bg-white dark:bg-[#141622] shadow-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span className="text-[11px] font-mono font-bold text-neutral-900 dark:text-white">
+                    Facial Expressions
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-500 leading-tight">
+                  6 emotion blendshapes &amp; <code className="text-amber-500">/api/emotion</code>
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl border border-black/[0.06] dark:border-white/[0.06] bg-white dark:bg-[#141622] shadow-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  <Volume2 className="w-3.5 h-3.5 text-emerald-500" />
+                  <span className="text-[11px] font-mono font-bold text-neutral-900 dark:text-white">
+                    Voice &amp; Lip-Sync
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-500 leading-tight">
+                  Phoneme-to-viseme maps (<code className="text-emerald-500">aa, ih, ou, ee, oh</code>)
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl border border-black/[0.06] dark:border-white/[0.06] bg-white dark:bg-[#141622] shadow-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  <Radio className="w-3.5 h-3.5 text-violet-500" />
+                  <span className="text-[11px] font-mono font-bold text-neutral-900 dark:text-white">
+                    Live Event Bus
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-500 leading-tight">
+                  SSE sync at <code className="text-violet-500">/api/avatar/events</code>
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl border border-black/[0.06] dark:border-white/[0.06] bg-white dark:bg-[#141622] shadow-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  <Database className="w-3.5 h-3.5 text-cyan-500" />
+                  <span className="text-[11px] font-mono font-bold text-neutral-900 dark:text-white">
+                    Universal GraphQL
+                  </span>
+                </div>
+                <p className="text-[10px] text-neutral-500 leading-tight">
+                  Single query endpoint at <code className="text-cyan-500">/api/graphql</code>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Interactive GraphQL Playground for Hana APIs */}
+          {(activeArticle.category === 'Hana APIs' ||
+            activeArticle.id === 'third-party-avatar') && (
+            <section className="mb-8">
+              <h2 className="text-lg font-bold font-heading text-neutral-900 dark:text-white mb-1">
+                Interactive GraphQL Playground
+              </h2>
+              <p className="text-xs text-neutral-500 mb-3">
+                Test and execute live GraphQL queries or mutations against <code className="font-mono text-[var(--theme-accent)]">/api/graphql</code> to inspect the 3D model, emotions, animations, voice visemes, or dispatch live actions.
+              </p>
+              <GraphQLExplorer />
+            </section>
+          )}
 
           {/* Prerequisites */}
           {activeArticle.content.prerequisites && (
@@ -1188,17 +1861,6 @@ export const DocsPage: React.FC<DocsPageProps> = ({
               </ul>
             </section>
           )}
-
-          {/* Footer Navigation */}
-          <div className="mt-12 pt-6 border-t border-black/[0.08] dark:border-white/[0.08] flex items-center justify-end text-xs text-neutral-500">
-            <button
-              type="button"
-              onClick={onBackToChat}
-              className="text-[var(--theme-accent)] hover:underline font-semibold cursor-pointer"
-            >
-              Test in Live Chat &rarr;
-            </button>
-          </div>
         </main>
       </div>
     </div>

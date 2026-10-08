@@ -14,7 +14,13 @@ import {
   MODEL_SOURCE_DOMAIN,
   MODEL_FALLBACK_DOMAIN,
   ANIMATION_SOURCE_DOMAINS,
+  AI_PROFILE,
+  VOICE_CONFIG,
+  ALL_WARDROBE_OUTFITS,
+  DEFAULT_OUTFIT_ID,
 } from './src/constants';
+import { AVAILABLE_MODELS } from './src/lib/models';
+import { buildSchema, graphql } from 'graphql';
 import {
   signUpAccount,
   signInAccount,
@@ -1283,6 +1289,455 @@ app.post(['/api/mcp', '/api/mcp/messages'], async (req: Request, res: Response) 
   }
 });
 
+// =====================================================================
+// GRAPHQL SCHEMA & RESOLVERS FOR THIRD-PARTY CLIENTS
+// Provides structured queries and mutations for VRM model, outfits,
+// animations, emotions, voice engine visemes, LLM models, and live actor controls.
+// =====================================================================
+
+const graphqlSchema = buildSchema(`
+  type VRMModel {
+    url: String!
+    defaultOutfitId: String!
+    candidateUrls: [String!]!
+    activeFile: String!
+    outfits: [OutfitItem!]!
+  }
+
+  type OutfitItem {
+    id: String!
+    name: String!
+    fileName: String!
+    modelUrl: String!
+    fallbackModelUrl: String!
+    isPremium: Boolean!
+    isDefault: Boolean
+    isSecret: Boolean
+  }
+
+  type AnimationAsset {
+    type: String!
+    url: String!
+    candidateUrls: [String!]!
+    description: String!
+    loop: Boolean!
+  }
+
+  type EmotionDef {
+    name: String!
+    vrmMorph: String!
+    description: String!
+    valence: String!
+  }
+
+  type VisemeMapping {
+    phonemes: [String!]!
+    viseme: String!
+    vrmMouthMorph: String!
+  }
+
+  type VoiceEngineConfig {
+    lang: String!
+    rate: Float!
+    pitch: Float!
+    preferredVoices: [String!]!
+    visemes: [VisemeMapping!]!
+    acousticFilter: String!
+    maleKeywords: [String!]!
+    femaleKeywords: [String!]!
+  }
+
+  type LlmModelInfo {
+    id: String!
+    name: String!
+    tagline: String!
+    family: String!
+    description: String!
+    speedRating: String!
+    approxParams: String
+    sizeLabel: String
+    defaultDtype: String
+    hfRepo: String
+    isSmallModel: Boolean
+    inferenceType: String!
+    streamingEndpoint: String!
+  }
+
+  type PersonaProfile {
+    name: String!
+    alternateName: String
+    handle: String!
+    bio: String!
+    avatarUrl: String!
+    vrmModelUrl: String!
+    websiteUrl: String!
+    systemPromptAbridged: String!
+  }
+
+  type McpManifest {
+    name: String!
+    version: String!
+    protocolVersion: String!
+    tools: [String!]!
+    resources: [String!]!
+    prompts: [String!]!
+  }
+
+  type AvatarActionPayload {
+    type: String!
+    text: String!
+    emotion: String!
+    animation: String!
+    timestamp: Float!
+  }
+
+  type AvatarActionResult {
+    success: Boolean!
+    message: String!
+    activeSubscribers: Int!
+    event: AvatarActionPayload
+  }
+
+  type EmotionAnalysisResult {
+    text: String!
+    emotion: String!
+    method: String!
+  }
+
+  type PhonemeCue {
+    word: String!
+    viseme: String!
+    vrmMorph: String!
+    intensity: Float!
+  }
+
+  type PhonemeAnalysisResult {
+    text: String!
+    cues: [PhonemeCue!]!
+  }
+
+  type Query {
+    avatar(outfitId: String): VRMModel!
+    outfits: [OutfitItem!]!
+    animations(type: String): [AnimationAsset!]!
+    emotions: [EmotionDef!]!
+    voiceEngine: VoiceEngineConfig!
+    activeLlm(modelId: String): [LlmModelInfo!]!
+    persona: PersonaProfile!
+    mcpManifest: McpManifest!
+  }
+
+  type Mutation {
+    setAvatarAction(action: String, text: String, emotion: String, animation: String): AvatarActionResult!
+    detectEmotion(text: String!): EmotionAnalysisResult!
+    synthesizePhonemes(text: String!): PhonemeAnalysisResult!
+  }
+`);
+
+const graphqlRoot = {
+  avatar: ({ outfitId }: { outfitId?: string }) => {
+    const outfit = outfitId ? ALL_WARDROBE_OUTFITS.find((o) => o.id === outfitId) : ALL_WARDROBE_OUTFITS[0];
+    const fileName = outfit?.fileName || 'hana_v1.0_vrm1.vrm';
+    return {
+      url: `/api/vrm?file=${encodeURIComponent(fileName)}`,
+      defaultOutfitId: DEFAULT_OUTFIT_ID,
+      candidateUrls: [
+        `/api/vrm?file=${encodeURIComponent(fileName)}`,
+        `${MODEL_SOURCE_DOMAIN}/${fileName}`,
+        `${MODEL_FALLBACK_DOMAIN}/${fileName}`,
+      ],
+      activeFile: fileName,
+      outfits: ALL_WARDROBE_OUTFITS,
+    };
+  },
+  outfits: () => ALL_WARDROBE_OUTFITS,
+  animations: ({ type }: { type?: string }) => {
+    const list = [
+      {
+        type: 'idle',
+        url: '/api/animation/idle',
+        candidateUrls: VRM_CONFIG.candidateAnimationUrls,
+        description: 'Subtle breathing and natural idling loop with gaze isolation',
+        loop: true,
+      },
+      {
+        type: 'walk',
+        url: '/api/animation/walk',
+        candidateUrls: VRM_CONFIG.candidateWalkAnimationUrls,
+        description: 'Forward walking step loop with hip kinematics',
+        loop: true,
+      },
+      {
+        type: 'wave',
+        url: '/api/animation/wave',
+        candidateUrls: VRM_CONFIG.candidateWaveAnimationUrls,
+        description: 'Friendly right-hand greeting wave gesture',
+        loop: false,
+      },
+      {
+        type: 'fall',
+        url: '/api/animation/fall',
+        candidateUrls: VRM_CONFIG.candidateFallAnimationUrls,
+        description: 'Tumble backwards onto floor impact physics',
+        loop: false,
+      },
+      {
+        type: 'getup',
+        url: '/api/animation/getup',
+        candidateUrls: VRM_CONFIG.candidateGetupAnimationUrls,
+        description: 'Recovery and standing back up animation from floor',
+        loop: false,
+      },
+      {
+        type: 'yawn',
+        url: '/api/animation/yawn',
+        candidateUrls: ['/api/animation/yawn', `${MODEL_SOURCE_DOMAIN}/mixamo_yawn.fbx`],
+        description: 'Drowsy yawn and subtle arm stretch sequence',
+        loop: false,
+      },
+      {
+        type: 'wait',
+        url: '/api/animation/wait',
+        candidateUrls: ['/api/animation/wait', `${MODEL_SOURCE_DOMAIN}/mixamo_wait.fbx`],
+        description: 'Patient waiting posture with weight shifted onto foot',
+        loop: false,
+      },
+      {
+        type: 'jumpingjacks',
+        url: '/api/animation/wait?file=mixamo_.jumpingjacks.fbx',
+        candidateUrls: ['/api/animation/wait?file=mixamo_.jumpingjacks.fbx', `${MODEL_SOURCE_DOMAIN}/mixamo_jumpingjacks.fbx`],
+        description: 'Energetic full-body jumping jacks exercise',
+        loop: true,
+      },
+    ];
+    if (type) {
+      return list.filter((a) => a.type.toLowerCase() === type.toLowerCase());
+    }
+    return list;
+  },
+  emotions: () => [
+    { name: 'neutral', vrmMorph: 'neutral', description: 'Calm resting facial expression with natural micro-saccades', valence: 'neutral' },
+    { name: 'happy', vrmMorph: 'happy', description: 'Warm tender smile, slight eye crinkle, relaxed parted lips', valence: 'positive' },
+    { name: 'smug', vrmMorph: 'relaxed', description: 'Playful sly smirk, confident glance', valence: 'positive' },
+    { name: 'sad', vrmMorph: 'sad', description: 'Softly lowered eyelids, downcast gentle mouth', valence: 'negative' },
+    { name: 'angry', vrmMorph: 'angry', description: 'Slightly furrowed brow and cute pout', valence: 'negative' },
+    { name: 'surprised', vrmMorph: 'surprised', description: 'Wide ocular gaze and parted lips', valence: 'heightened' },
+  ],
+  voiceEngine: () => ({
+    lang: 'en-US',
+    rate: VOICE_CONFIG.rate,
+    pitch: VOICE_CONFIG.pitch,
+    preferredVoices: VOICE_CONFIG.priorityQueue,
+    visemes: [
+      { phonemes: ['a', 'ah', 'aa'], viseme: 'aa', vrmMouthMorph: 'aa' },
+      { phonemes: ['o', 'oh', 'aw'], viseme: 'oh', vrmMouthMorph: 'oh' },
+      { phonemes: ['u', 'oo', 'w', 'ou'], viseme: 'ou', vrmMouthMorph: 'ou' },
+      { phonemes: ['i', 'y', 'ih'], viseme: 'ih', vrmMouthMorph: 'ih' },
+      { phonemes: ['e', 'ee', 'ea'], viseme: 'ee', vrmMouthMorph: 'ee' },
+    ],
+    acousticFilter: 'Web Audio API BiquadFilter low-pass warm harmonic smoothing',
+    maleKeywords: VOICE_CONFIG.maleKeywords,
+    femaleKeywords: VOICE_CONFIG.femaleKeywords,
+  }),
+  activeLlm: ({ modelId }: { modelId?: string }) => {
+    const list = AVAILABLE_MODELS.map((m) => ({
+      id: m.id,
+      name: m.name,
+      tagline: m.tagline || '',
+      family: m.family,
+      description: m.description,
+      speedRating: m.speedRating || 'Fast',
+      approxParams: m.approxParams || '',
+      sizeLabel: m.sizeLabel || '',
+      defaultDtype: m.defaultDtype || '',
+      hfRepo: m.hfRepo || '',
+      isSmallModel: Boolean(m.isSmallModel),
+      inferenceType:
+        m.family === 'browser-slm'
+          ? 'in-browser-onnx'
+          : m.family === 'ollama'
+          ? 'ollama-server'
+          : 'cloud-api',
+      streamingEndpoint:
+        m.family === 'browser-slm'
+          ? 'client-transformers-js'
+          : m.family === 'ollama'
+          ? '/api/ollama/chat'
+          : m.id === 'gemini-api'
+          ? '/api/chat'
+          : '/api/chat/provider',
+    }));
+    if (modelId) {
+      return list.filter((m) => m.id === modelId);
+    }
+    return list;
+  },
+  persona: () => ({
+    name: AI_PROFILE.name,
+    alternateName: AI_PROFILE.alternateName,
+    handle: AI_PROFILE.handle,
+    bio: AI_PROFILE.bio,
+    avatarUrl: AI_PROFILE.avatarUrl,
+    vrmModelUrl: AI_PROFILE.vrmModelUrl,
+    websiteUrl: AI_PROFILE.stats.websiteUrl,
+    systemPromptAbridged: SYSTEM_PROMPTS.abridged,
+  }),
+  mcpManifest: () => ({
+    name: 'ai-smash-mcp',
+    version: '1.0.0',
+    protocolVersion: '2024-11-05',
+    tools: [
+      'avatar_act',
+      'avatar_say',
+      'avatar_emotion',
+      'avatar_animation',
+      'web_search',
+      'wikipedia',
+      'weather_info',
+      'location_info',
+      'device_info',
+      'ask_persona',
+    ],
+    resources: ['resource://persona/profile', 'resource://app/info'],
+    prompts: ['prompt://persona/chat'],
+  }),
+  setAvatarAction: ({
+    action,
+    text,
+    emotion,
+    animation,
+  }: {
+    action?: string;
+    text?: string;
+    emotion?: string;
+    animation?: string;
+  }) => {
+    const eventPayload = {
+      type: action || 'speak',
+      text: text || '',
+      emotion: emotion || 'happy',
+      animation: animation || 'wave',
+      cues: [],
+      timestamp: Date.now(),
+    };
+    broadcastAvatarEvent(eventPayload);
+    return {
+      success: true,
+      message: 'Avatar action broadcasted to all connected 3D viewports via SSE',
+      activeSubscribers: avatarEventClients.size,
+      event: eventPayload,
+    };
+  },
+  detectEmotion: ({ text }: { text: string }) => {
+    const emotion = classifyOverallSentimentAlgorithm(text);
+    return {
+      text,
+      emotion,
+      method: 'sentiment-algorithm',
+    };
+  },
+  synthesizePhonemes: ({ text }: { text: string }) => {
+    const words = (text || '').trim().split(/\s+/);
+    const cues = words.slice(0, 30).map((word) => {
+      const lower = word.toLowerCase();
+      let viseme = 'aa';
+      let morph = 'aa';
+      let intensity = 0.25;
+      if (/[ao]/.test(lower)) {
+        if (lower.includes('o') || lower.includes('aw')) {
+          viseme = 'oh';
+          morph = 'oh';
+          intensity = 0.32;
+        } else {
+          viseme = 'aa';
+          morph = 'aa';
+          intensity = 0.35;
+        }
+      } else if (/[iuwy]/.test(lower)) {
+        if (lower.includes('u') || lower.includes('oo') || lower.includes('w')) {
+          viseme = 'ou';
+          morph = 'ou';
+          intensity = 0.25;
+        } else {
+          viseme = 'ih';
+          morph = 'ih';
+          intensity = 0.22;
+        }
+      } else if (/[e]/.test(lower)) {
+        viseme = 'ee';
+        morph = 'ee';
+        intensity = 0.25;
+      }
+      return { word, viseme, vrmMorph: morph, intensity };
+    });
+    return { text, cues };
+  },
+};
+
+// GraphQL execution endpoint (POST /api/graphql)
+app.post('/api/graphql', async (req: Request, res: Response) => {
+  try {
+    const { query, variables, operationName } = req.body || {};
+    if (!query || typeof query !== 'string') {
+      return res.status(400).json({ errors: [{ message: 'GraphQL "query" string is required in request body.' }] });
+    }
+
+    const result = await graphql({
+      schema: graphqlSchema,
+      source: query,
+      rootValue: graphqlRoot,
+      variableValues: variables,
+      operationName,
+    });
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'GraphQL execution failure';
+    res.status(500).json({ errors: [{ message: msg }] });
+  }
+});
+
+// GraphQL GET endpoint (query via query parameter or schema discovery)
+app.get('/api/graphql', async (req: Request, res: Response) => {
+  try {
+    const rawQuery = typeof req.query.query === 'string' ? req.query.query : '';
+    if (rawQuery) {
+      let variables = undefined;
+      if (typeof req.query.variables === 'string') {
+        try {
+          variables = JSON.parse(req.query.variables);
+        } catch {
+          // ignore
+        }
+      }
+      const result = await graphql({
+        schema: graphqlSchema,
+        source: rawQuery,
+        rootValue: graphqlRoot,
+        variableValues: variables,
+      });
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      return res.json(result);
+    }
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({
+      status: 'ok',
+      endpoint: '/api/graphql',
+      description: 'Hana Universal 3D Avatar, Emotion, Voice & LLM GraphQL Endpoint',
+      sampleQuery: `{ avatar { url defaultOutfitId activeFile outfits { id name } } animations { type url loop } emotions { name vrmMorph } voiceEngine { lang rate pitch preferredVoices } activeLlm { id name family streamingEndpoint } }`,
+      docsUrl: '/docs/api/third-party-avatar',
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'GraphQL GET failure';
+    res.status(500).json({ errors: [{ message: msg }] });
+  }
+});
+
 // Cloud streaming endpoint for external AI Model APIs
 // (OpenAI, Gemini, Anthropic, xAI, Groq, Z.ai, DeepSeek, Qwen, HuggingFace)
 app.post('/api/chat/provider', async (req: Request, res: Response) => {
@@ -1705,6 +2160,145 @@ app.post('/api/discord/send', async (req: Request, res: Response) => {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Error sending message to Discord';
     res.status(500).json({ ok: false, error: msg });
+  }
+});
+
+app.post('/api/discord/typing', async (req: Request, res: Response) => {
+  try {
+    const { botToken, channelId } = req.body || {};
+    const token = (botToken || '').trim();
+    const chId = (channelId || '').trim();
+    if (!token || !chId) {
+      return res.status(400).json({ ok: false, error: 'Missing botToken or channelId' });
+    }
+
+    await fetch(`https://discord.com/api/v10/channels/${chId}/typing`, {
+      method: 'POST',
+      headers: { Authorization: `Bot ${token}` },
+    });
+    return res.json({ ok: true });
+  } catch {
+    return res.status(500).json({ ok: false });
+  }
+});
+
+app.post('/api/discord/interaction', async (req: Request, res: Response) => {
+  try {
+    const { interactionId, interactionToken, response } = req.body || {};
+    if (!interactionId || !interactionToken || !response) {
+      return res.status(400).json({ ok: false, error: 'Missing interactionId, interactionToken, or response' });
+    }
+
+    const discordResp = await fetch(
+      `https://discord.com/api/v10/interactions/${interactionId}/${interactionToken}/callback`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(response),
+      }
+    );
+
+    if (discordResp.ok || discordResp.status === 204) {
+      return res.json({ ok: true });
+    }
+    const err = await discordResp.json().catch(() => ({}));
+    return res.status(discordResp.status).json({ ok: false, error: err });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Interaction proxy error';
+    return res.status(500).json({ ok: false, error: msg });
+  }
+});
+
+app.post('/api/discord/register-commands', async (req: Request, res: Response) => {
+  try {
+    const { botToken, applicationId, guildId } = req.body || {};
+    const token = (botToken || '').trim();
+    const appId = (applicationId || '').trim();
+    if (!token || !appId) {
+      return res.status(400).json({ ok: false, error: 'Missing botToken or applicationId' });
+    }
+
+    const commands = [
+      {
+        name: 'msg',
+        description: 'Send a prompt or query to Hana AI',
+        options: [
+          {
+            name: 'prompt',
+            description: 'Your prompt or question for Hana',
+            type: 3, // STRING
+            required: true,
+          },
+        ],
+      },
+      {
+        name: 'hana',
+        description: 'Chat with Hana AI companion',
+        options: [
+          {
+            name: 'prompt',
+            description: 'Your prompt or question for Hana',
+            type: 3, // STRING
+            required: true,
+          },
+        ],
+      },
+      {
+        name: 'ask',
+        description: 'Ask Hana AI a question',
+        options: [
+          {
+            name: 'question',
+            description: 'Your question',
+            type: 3, // STRING
+            required: true,
+          },
+        ],
+      },
+      {
+        name: 'help',
+        description: 'Display Hana AI bot command guide',
+      },
+      {
+        name: 'ping',
+        description: 'Check if Hana AI Discord bot is online and responding',
+      },
+      {
+        name: 'status',
+        description: 'View current Hana AI bot and engine status',
+      },
+      {
+        name: 'joinvc',
+        description: 'Instruct Hana to join voice channel for speech synthesis',
+      },
+      {
+        name: 'exitvc',
+        description: 'Instruct Hana to disconnect from voice channel',
+      },
+    ];
+
+    const endpoint = guildId
+      ? `https://discord.com/api/v10/applications/${appId}/guilds/${guildId}/commands`
+      : `https://discord.com/api/v10/applications/${appId}/commands`;
+
+    const discordResp = await fetch(endpoint, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bot ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(commands),
+    });
+
+    const data = await discordResp.json().catch(() => ({}));
+    if (discordResp.ok) {
+      return res.json({ ok: true, commands: data });
+    } else {
+      return res.status(discordResp.status).json({ ok: false, error: data });
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Error registering slash commands';
+    return res.status(500).json({ ok: false, error: msg });
   }
 });
 
