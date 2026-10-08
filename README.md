@@ -152,7 +152,18 @@ The full-stack Express server (`server.ts`) exposes production-ready endpoints s
 | `GET` | `/api/avatar/events` | Real-time SSE event bus streaming live avatar speech, emotion changes, and animations to connected client viewports. |
 | `POST` | `/api/avatar/action` | Dispatches live avatar actor directives (`action`, `text`, `emotion`, `animation`, `cues`) to all listening 3D clients. |
 
-### 7. User Account, Auth & Database Sync (NeonDB PostgreSQL)
+### 7. Universal GraphQL API & Third-Party Client Integration
+- **Docs Guide**: Available at `/docs/api/third-party-avatar` (Hana 3D) with live interactive query explorer.
+- **Endpoint**: `POST` & `GET` `/api/graphql`
+- **Purpose**: Enables external client applications (React, Vue, Three.js, Electron, OBS overlays, mobile webviews) to query and control Hana in a single strongly-typed schema:
+  - `avatar`: Current VRM asset URL, fallback mirrors, and 16+ wardrobe outfits catalog.
+  - `animations`: Mixamo retargeting animation clips (`idle`, `walk`, `wave`, `fall`, `getup`, `yawn`, `wait`).
+  - `emotions`: 6 facial expression blendshapes (`neutral`, `happy`, `smug`, `sad`, `angry`, `surprised`).
+  - `voiceEngine`: Speech synthesis rate, pitch, female priority voices, and phoneme-to-viseme lip-sync maps (`aa`, `ih`, `ou`, `ee`, `oh`).
+  - `activeLlm`: Catalog of in-browser ONNX SLMs and external LLM cloud providers.
+  - `mutations`: `setAvatarAction` (dispatches live avatar movements across viewports) and `detectEmotion` (classifies text emotion).
+
+### 8. User Account, Auth & Database Sync (NeonDB PostgreSQL)
 | Method | URL | Description & Purpose |
 |---|---|---|
 | `GET` | `/api/health` | System health check reporting service status, active persona, Gemini key status, and NeonDB database connection. |
@@ -164,11 +175,32 @@ The full-stack Express server (`server.ts`) exposes production-ready endpoints s
 | `POST` | `/api/account/sync` | Atomically commits user conversation histories and custom theme palettes to the cloud database. |
 | `POST` | `/api/account/data` | Fetches backed-up conversations and user themes for cross-device state hydration. |
 
-### 8. External Messaging & Bot Runners
+### 9. External Messaging & Discord Bot Engine
 | Method | URL | Description & Purpose |
 |---|---|---|
-| `POST` | `/api/integrations/discord/send` | Dispatches formatted text responses to Discord channels via the Discord REST API (`/channels/:id/messages`). |
-| *Runner* | *Browser Gateway Runner* | When a Discord bot token is detected, AI Smash automatically launches the client-side Discord Gateway WebSocket runner in the background upon opening `/chat`, listening for mentions (`@bot`) and direct messages without manual configuration. |
+| `POST` | `/api/discord/test` | Validates Discord bot tokens and queries bot profile information (`@me`) via the Discord REST API v10. |
+| `POST` | `/api/discord/send` | Dispatches formatted text responses to Discord channels via server proxy, eliminating client-side browser CORS restrictions. |
+| `POST` | `/api/discord/typing` | Triggers the native Discord typing indicator in the target channel while Hana generates an AI response. |
+| `POST` | `/api/discord/interaction` | Proxies Discord application slash command interaction callbacks (`/interactions/:id/:token/callback`). |
+| `POST` | `/api/discord/register-commands` | Registers global or guild-scoped application slash commands (`/msg`, `/hana`, `/ask`, `/help`, `/ping`, `/status`, `/joinvc`, `/exitvc`) on Discord API v10. |
+
+#### Discord Bot Architecture & Command System
+- **Browser Gateway Runner**: Uses direct WebSocket connections (`wss://gateway.discord.gg/?v=10&encoding=json`) running in background browser sessions. Automatically manages Opcode 10 Hello handshakes, Opcode 1 heartbeats (with jitter), and Opcode 2 Identify.
+- **Gateway Intents (37377)**: Configured with `Guilds` (1), `GuildMessages` (512), `DirectMessages` (4096), and `MessageContent` (32768) to receive both server channel messages and direct messages (DMs).
+- **Supported Command Set**:
+  - `!help` / `/help` — Interactive command directory and usage guide.
+  - `!ping` / `/ping` — Verifies round-trip gateway latency and operational health.
+  - `!status` / `/status` — Displays runtime session details, uptime, and active model telemetry.
+  - `!msg <prompt>` / `/msg <prompt>` — Direct prompt query to Hana.
+  - `!hana <prompt>` / `/hana <prompt>` or `!ask <question>` — Conversational interaction with Hana persona.
+  - `@Hana <prompt>` — Mention detection in any server channel.
+  - `!joinvc` / `/joinvc` — Voice channel synthesis status directive.
+  - `!exitvc` / `/exitvc` — Voice channel disconnect directive.
+  - `!reset` / `/clear` — Clears conversation context for the channel.
+- **Discord Developer Portal Prerequisites**:
+  1. Under **Bot -> Privileged Gateway Intents**, enable **Message Content Intent** (and Server Members Intent).
+  2. Under **OAuth2 -> URL Generator**, select scopes `bot` and `applications.commands`, with permissions `Send Messages`, `Read Message History`, and `Attach Files`.
+  3. Enter your Bot Token in AI Smash under **+ -> Add integration -> Discord**; settings persist securely in browser localStorage.
 
 ---
 

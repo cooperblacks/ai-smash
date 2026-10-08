@@ -20,6 +20,24 @@ export async function testDiscordConnection(botToken: string): Promise<TestResul
     return { ok: false, message: 'Bot token cannot be empty.' };
   }
 
+  // 1. Try server proxy endpoint first (avoids browser CORS blocks)
+  try {
+    const res = await fetch('/api/discord/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ botToken: token }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+    const err = await res.json().catch(() => ({}));
+    if (err.message) return { ok: false, message: err.message };
+  } catch {
+    // Continue to direct fetch fallback
+  }
+
+  // 2. Direct fetch fallback
   try {
     const res = await fetch('https://discord.com/api/v10/users/@me', {
       headers: {
@@ -49,7 +67,7 @@ export async function testDiscordConnection(botToken: string): Promise<TestResul
 }
 
 /**
- * Dispatches a message to a Discord channel
+ * Dispatches a message to a Discord channel via server proxy with fallback
  */
 export async function sendDiscordMessage(
   botToken: string,
@@ -58,6 +76,28 @@ export async function sendDiscordMessage(
   replyMessageId?: string
 ): Promise<boolean> {
   if (!botToken || !channelId || !content) return false;
+
+  // 1. Server proxy (bypasses browser CORS restrictions)
+  try {
+    const res = await fetch('/api/discord/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        botToken,
+        channelId,
+        content,
+        replyToMessageId: replyMessageId,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) return true;
+    }
+  } catch (proxyErr) {
+    console.warn('Discord send proxy failed, attempting direct fetch:', proxyErr);
+  }
+
+  // 2. Direct fetch fallback
   try {
     const payload: Record<string, unknown> = { content };
     if (replyMessageId) {
@@ -70,6 +110,65 @@ export async function sendDiscordMessage(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sends a typing indicator to a Discord channel
+ */
+export async function triggerDiscordTyping(
+  botToken: string,
+  channelId: string
+): Promise<void> {
+  if (!botToken || !channelId) return;
+  try {
+    await fetch('/api/discord/typing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ botToken, channelId }),
+    });
+  } catch {}
+}
+
+/**
+ * Responds to a Discord slash command interaction callback
+ */
+export async function respondDiscordInteraction(
+  interactionId: string,
+  interactionToken: string,
+  response: Record<string, unknown>
+): Promise<boolean> {
+  if (!interactionId || !interactionToken || !response) return false;
+  try {
+    const res = await fetch('/api/discord/interaction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ interactionId, interactionToken, response }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Registers application slash commands on Discord
+ */
+export async function registerDiscordCommands(
+  botToken: string,
+  applicationId: string,
+  guildId?: string
+): Promise<boolean> {
+  if (!botToken || !applicationId) return false;
+  try {
+    const res = await fetch('/api/discord/register-commands', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ botToken, applicationId, guildId }),
     });
     return res.ok;
   } catch {

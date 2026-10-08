@@ -1,5 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Check, ChevronDown, Sparkles, MessageSquare, Shield, Box, Palette, Github, Linkedin, ExternalLink, Heart, Award, BookOpen, Bot, Workflow, Key, Menu, X, Crown, Terminal, Copy } from 'lucide-react';
+import {
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Sparkles,
+  MessageSquare,
+  Shield,
+  Box,
+  Palette,
+  Github,
+  Linkedin,
+  ExternalLink,
+  Heart,
+  Award,
+  BookOpen,
+  Bot,
+  Workflow,
+  Key,
+  Menu,
+  X,
+  Crown,
+  Terminal,
+  Copy,
+  UserCheck,
+  PhoneCall,
+  Monitor,
+  CheckCircle2,
+  Cpu,
+  ArrowDown,
+  ArrowUp,
+} from 'lucide-react';
 import { LandingHeroCanvas } from './LandingHeroCanvas';
 import { LandingNavbar } from './LandingNavbar';
 import { MacTerminalViewer } from './MacTerminalViewer';
@@ -60,12 +90,68 @@ const ACCORDION_DATA: AccordionItem[] = [
   },
 ];
 
+const AUTOMATION_DATA: AccordionItem[] = [
+  {
+    id: 'ai-interviews',
+    title: 'AI Interviews & Recruiting',
+    icon: UserCheck,
+    tagline: 'Autonomous conversational screenings & candidate evaluations',
+    points: [
+      'structured technical and behavioral interview rubrics',
+      'interactive persona interviewer with dynamic follow-up questioning',
+      'automated candidate dossier scoring and summary extraction',
+      'instant integration into ATS pipelines and candidate scheduling',
+    ],
+    image: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=1200&q=80',
+  },
+  {
+    id: 'voice-calling',
+    title: 'Voice Calling & Agentic Booking',
+    icon: PhoneCall,
+    tagline: 'Natural voice telephony with live data entry & calendar booking',
+    points: [
+      'inbound and outbound real-time conversational voice handling',
+      'automatic appointment booking & Google Calendar scheduling',
+      'structured field extraction into CRM and spreadsheet databases',
+      'low-latency audio response with affective vocal inflection',
+    ],
+    image: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&w=1200&q=80',
+  },
+  {
+    id: 'screenspace-support',
+    title: 'Screenspace Troubleshooting',
+    icon: Monitor,
+    tagline: 'Multimodal desktop visual observation & live tech diagnostics',
+    points: [
+      'live screenspace vision inspecting software windows & DOM elements',
+      'instant detection of stack traces, UI warnings, and error dialogs',
+      'step-by-step spoken voice instructions guiding users through fixes',
+      'autonomous cursor highlight suggestions and CLI fix generation',
+    ],
+    image: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1200&q=80',
+  },
+  {
+    id: 'ui-testing',
+    title: 'Visual UI Testing & Commentary',
+    icon: CheckCircle2,
+    tagline: 'Live avatar commentary with automated UI element validation',
+    points: [
+      'autonomous multi-viewport regression and layout unit testing',
+      'real-time vocal and visual commentary pinpointing UX friction',
+      'reactive element state assertions (hover, active, disabled, focus)',
+      'exportable bug reproduction videos and test audit logs',
+    ],
+    image: 'https://images.unsplash.com/photo-1507238691740-187a5b1d37b8?auto=format&fit=crop&w=1200&q=80',
+  },
+];
+
 export const LandingPage: React.FC<LandingPageProps> = ({
   onStartChat,
   onNavigateToDocs,
   onNavigateToHumanizer,
 }) => {
   const [activeAccordion, setActiveAccordion] = useState<number>(0);
+  const [activeAutomationAccordion, setActiveAutomationAccordion] = useState<number | null>(0);
   const [scrollY, setScrollY] = useState(0);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [showAllIntegrations, setShowAllIntegrations] = useState(false);
@@ -93,6 +179,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const handleToggleAccordion = (index: number) => {
     // Only 1 accordion can remain open at a time; if clicking same, keep it open so image is always shown
     setActiveAccordion(index);
+  };
+
+  const handleToggleAutomationAccordion = (index: number) => {
+    setActiveAutomationAccordion((prev) => (prev === index ? null : index));
   };
 
   const scrollToSection = (e: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>, sectionId: string) => {
@@ -565,7 +655,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="text-center max-w-3xl mx-auto mb-14">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono uppercase tracking-widest bg-[var(--theme-accent-soft)] text-[#0f9bc7] font-semibold mb-3">
               <Terminal className="w-3.5 h-3.5" />
-              <span>Standardized Protocol</span>
+              <span>Anthropic Protocol</span>
             </span>
             <div className="flex items-center justify-center gap-3">
               <img
@@ -733,6 +823,226 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
           </div>
         </section>
+
+        {/* Continuous Chain Marquee (Above Applications Section) */}
+        <div className="w-full select-none relative z-20">
+          {/* Band 1: Text Marquee */}
+          <div className="w-full overflow-hidden bg-neutral-900 border-t border-neutral-800 py-3">
+            <div className="flex w-max animate-marquee items-center gap-6 whitespace-nowrap">
+              {Array.from({ length: 16 }).map((_, i) => (
+                <div
+                  key={`mq-top-1-${i}`}
+                  className="inline-flex items-center gap-2.5 text-xs sm:text-sm font-mono tracking-widest uppercase font-semibold text-neutral-300"
+                >
+                  <span className="text-[#55d2f6]">Coming Soon</span>
+                  <span className="text-amber-400 font-bold">&bull;</span>
+                  <span className="text-neutral-100">Work in Progress</span>
+                  <span className="text-amber-400 font-bold">&bull;</span>
+                </div>
+              ))}
+              {Array.from({ length: 16 }).map((_, i) => (
+                <div
+                  key={`mq-top-2-${i}`}
+                  className="inline-flex items-center gap-2.5 text-xs sm:text-sm font-mono tracking-widest uppercase font-semibold text-neutral-300"
+                >
+                  <span className="text-[#55d2f6]">Coming Soon</span>
+                  <span className="text-amber-400 font-bold">&bull;</span>
+                  <span className="text-neutral-100">Work in Progress</span>
+                  <span className="text-amber-400 font-bold">&bull;</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Band 2: Row of arrows pointing DOWN towards the section */}
+          <div className="w-full overflow-hidden bg-neutral-950 border-y border-neutral-800/80 py-2">
+            <div className="flex w-max animate-marquee items-center gap-6 whitespace-nowrap">
+              {Array.from({ length: 24 }).map((_, i) => (
+                <div key={`arr-top-1-${i}`} className="inline-flex items-center gap-4 text-xs font-mono text-neutral-400">
+                  <ArrowDown className="w-3.5 h-3.5 text-[#55d2f6] animate-pulse" strokeWidth={2.5} />
+                  <span className="w-1 h-1 rounded-full bg-amber-400/80" />
+                  <ArrowDown className="w-3.5 h-3.5 text-white/80" strokeWidth={2} />
+                  <span className="w-1 h-1 rounded-full bg-neutral-600" />
+                </div>
+              ))}
+              {Array.from({ length: 24 }).map((_, i) => (
+                <div key={`arr-top-2-${i}`} className="inline-flex items-center gap-4 text-xs font-mono text-neutral-400">
+                  <ArrowDown className="w-3.5 h-3.5 text-[#55d2f6] animate-pulse" strokeWidth={2.5} />
+                  <span className="w-1 h-1 rounded-full bg-amber-400/80" />
+                  <ArrowDown className="w-3.5 h-3.5 text-white/80" strokeWidth={2} />
+                  <span className="w-1 h-1 rounded-full bg-neutral-600" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION: VIRTUAL ASSISTANT AUTOMATON / APPLICATIONS (Moved below MCP) */}
+        <section
+          id="automation"
+          className="relative z-20 bg-[#f8f9fc] py-20 lg:py-24 px-4 sm:px-6 lg:px-8 transition-colors"
+        >
+          {/* Hidden anchor element to also support #automaton */}
+          <div id="automaton" className="absolute -top-16" />
+
+          <div className="max-w-7xl mx-auto">
+            {/* Centered Heading */}
+            <div className="text-center max-w-3xl mx-auto mb-14 lg:mb-16">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono uppercase tracking-widest bg-[var(--theme-accent-soft)] text-[#0f9bc7] font-semibold mb-3">
+                <Cpu className="w-3.5 h-3.5" />
+                <span>Applications</span>
+              </span>
+              <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold font-heading text-neutral-900 tracking-tight">
+                Virtual Assistant Automaton
+              </h2>
+              <p className="text-sm sm:text-base text-neutral-600 mt-3 max-w-2xl mx-auto leading-relaxed">
+                Deploy Hana as an autonomous operational agent for your business, enhancing and complementing your current human workforce outside their shift hours. Here are some example scenarios:
+              </p>
+            </div>
+
+            {/* 4 Categories with same Accordion UI UX as before, arranged in 2-columns (md:grid-cols-2) or 1 top-bottom stacked column (grid-cols-1) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 lg:gap-6 max-w-6xl mx-auto items-start">
+              {AUTOMATION_DATA.map((item, idx) => {
+                const isOpen = activeAutomationAccordion === idx;
+                const Icon = item.icon;
+
+                return (
+                  <div
+                    key={item.id}
+                    className={`rounded-2xl border transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden ${
+                      isOpen
+                        ? 'border-[#55d2f6] bg-white shadow-md ring-1 ring-[#55d2f6]/30'
+                        : 'border-black/[0.08] bg-white hover:border-black/20 hover:bg-neutral-50/50'
+                    }`}
+                  >
+                    {/* Accordion Trigger Header */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAutomationAccordion(idx)}
+                      className="w-full p-5 sm:p-6 text-left flex items-center justify-between gap-4 cursor-pointer focus:outline-none"
+                      aria-expanded={isOpen}
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                            isOpen
+                              ? 'bg-[#55d2f6] text-neutral-950 shadow-xs scale-105'
+                              : 'bg-neutral-100 text-neutral-500 scale-100'
+                          }`}
+                        >
+                          <Icon className="w-5 h-5 stroke-[2]" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-500 font-semibold">
+                              0{idx + 1}
+                            </span>
+                            <h3 className="text-lg sm:text-xl font-bold font-heading text-neutral-900 tracking-tight">
+                              {item.title}
+                            </h3>
+                          </div>
+                          <p className="text-xs text-neutral-500 truncate mt-0.5">
+                            {item.tagline}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div
+                        className={`w-7 h-7 rounded-full flex items-center justify-center border border-black/10 shrink-0 transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                          isOpen ? 'rotate-180 bg-[#55d2f6]/10 text-neutral-900' : 'text-neutral-400'
+                        }`}
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </div>
+                    </button>
+
+                    {/* Accordion Expanded Body with Synchronized Smooth Height & Opacity Transition */}
+                    <div
+                      className={`grid transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                        isOpen
+                          ? 'grid-rows-[1fr] opacity-100'
+                          : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                      }`}
+                    >
+                      <div className="overflow-hidden">
+                        <div className="px-5 pb-6 pt-1 sm:px-6 border-t border-black/[0.05]">
+                          <ul className="space-y-3 pt-2">
+                            {item.points.map((point, pIdx) => (
+                              <li
+                                key={pIdx}
+                                className={`flex items-start gap-3 text-sm text-neutral-700 leading-snug transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                                  isOpen ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
+                                }`}
+                              >
+                                <div className="w-5 h-5 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+                                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                </div>
+                                <span className="capitalize">{point}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {/* Continuous Chain Marquee (Below Applications Section) */}
+        <div className="w-full select-none relative z-20">
+          {/* Band 1: Row of arrows pointing UP towards the section */}
+          <div className="w-full overflow-hidden bg-neutral-950 border-t border-neutral-800/80 py-2">
+            <div className="flex w-max animate-marquee-reverse items-center gap-6 whitespace-nowrap">
+              {Array.from({ length: 24 }).map((_, i) => (
+                <div key={`arr-bot-1-${i}`} className="inline-flex items-center gap-4 text-xs font-mono text-neutral-400">
+                  <ArrowUp className="w-3.5 h-3.5 text-[#55d2f6] animate-pulse" strokeWidth={2.5} />
+                  <span className="w-1 h-1 rounded-full bg-amber-400/80" />
+                  <ArrowUp className="w-3.5 h-3.5 text-white/80" strokeWidth={2} />
+                  <span className="w-1 h-1 rounded-full bg-neutral-600" />
+                </div>
+              ))}
+              {Array.from({ length: 24 }).map((_, i) => (
+                <div key={`arr-bot-2-${i}`} className="inline-flex items-center gap-4 text-xs font-mono text-neutral-400">
+                  <ArrowUp className="w-3.5 h-3.5 text-[#55d2f6] animate-pulse" strokeWidth={2.5} />
+                  <span className="w-1 h-1 rounded-full bg-amber-400/80" />
+                  <ArrowUp className="w-3.5 h-3.5 text-white/80" strokeWidth={2} />
+                  <span className="w-1 h-1 rounded-full bg-neutral-600" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Band 2: Text Marquee */}
+          <div className="w-full overflow-hidden bg-neutral-900 border-y border-neutral-800 py-3">
+            <div className="flex w-max animate-marquee-reverse items-center gap-6 whitespace-nowrap">
+              {Array.from({ length: 16 }).map((_, i) => (
+                <div
+                  key={`mq-bot-1-${i}`}
+                  className="inline-flex items-center gap-2.5 text-xs sm:text-sm font-mono tracking-widest uppercase font-semibold text-neutral-300"
+                >
+                  <span className="text-[#55d2f6]">Coming Soon</span>
+                  <span className="text-amber-400 font-bold">&bull;</span>
+                  <span className="text-neutral-100">Work in Progress</span>
+                  <span className="text-amber-400 font-bold">&bull;</span>
+                </div>
+              ))}
+              {Array.from({ length: 16 }).map((_, i) => (
+                <div
+                  key={`mq-bot-2-${i}`}
+                  className="inline-flex items-center gap-2.5 text-xs sm:text-sm font-mono tracking-widest uppercase font-semibold text-neutral-300"
+                >
+                  <span className="text-[#55d2f6]">Coming Soon</span>
+                  <span className="text-amber-400 font-bold">&bull;</span>
+                  <span className="text-neutral-100">Work in Progress</span>
+                  <span className="text-amber-400 font-bold">&bull;</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
 
         {/* SECTION: PRICING (Above Ready to Chat with Hana?) */}
         <section
@@ -908,27 +1218,34 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 </p>
               </div>
 
-              {/* ProductHunt Launch Badge */}
-              <a
-                href={PRODUCT_HUNT_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-3 px-4 py-2.5 rounded-2xl bg-[#fff6f4] hover:bg-[#ffebe6] border border-[#da552f]/25 shadow-xs hover:shadow-md transition-all group shrink-0 self-start md:self-auto"
-                title="AI Smash on Product Hunt"
-              >
-                <div className="w-9 h-9 rounded-xl bg-[#da552f] text-white flex items-center justify-center font-bold text-base shadow-xs shrink-0">
-                  P
-                </div>
-                <div className="text-left">
-                  <span className="block text-[10px] font-mono uppercase tracking-wider text-[#da552f] font-bold leading-none">
-                    Featured on
-                  </span>
-                  <span className="text-sm font-bold text-neutral-900 flex items-center gap-1 mt-0.5">
-                    <span>Product Hunt</span>
-                    <ExternalLink className="w-3.5 h-3.5 text-[#da552f] group-hover:translate-x-0.5 transition-transform" />
-                  </span>
-                </div>
-              </a>
+              {/* ProductHunt and Peerlist Launch Badges */}
+              <div className="flex flex-wrap items-center gap-3 shrink-0 self-start md:self-auto">
+                <a
+                  href="https://www.producthunt.com/products/ai-smash?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-hana-c650f112-68f2-44d7-b71e-c36714b8419c"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center"
+                >
+                  <img
+                    alt="Hana - Self-hosted decentralized 3D HCI-AI companion | Product Hunt"
+                    width="250"
+                    height="54"
+                    src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1268384&theme=light&t=1791483853467"
+                  />
+                </a>
+                <a
+                  href="https://peerlist.io/dmkto/project/ai-smash"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center"
+                >
+                  <img
+                    src="https://peerlist.io/api/v1/projects/embed/PRJHA9E8KMQGNLPQ6CKQ69GBDJK7GA?showUpvote=true&theme=light"
+                    alt="Hana"
+                    style={{ width: 'auto', height: '72px' }}
+                  />
+                </a>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
