@@ -22,11 +22,19 @@ import {
   User as UserIcon,
   Home,
 } from 'lucide-react';
-import { APP_INFO, THEME_COLORS, UI_CONFIG, DEFAULT_USER_AVATAR_URL } from '../constants';
+import {
+  APP_INFO,
+  THEME_COLORS,
+  UI_CONFIG,
+  DEFAULT_USER_AVATAR_URL,
+  resolveSecretOutfitsByRedeemCode,
+} from '../constants';
 import {
   isUserPremium,
   loadAccountSession,
   saveAccountSession,
+  loadUnlockedOutfits,
+  saveUnlockedOutfits,
   getBrowserDeviceLabel,
   getOrCreateDeviceFingerprint,
 } from '../lib/storage';
@@ -320,19 +328,21 @@ const SidebarComponent: React.FC<SidebarProps> = ({
 
   const handleRedeemSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!redeemInput.trim() || !accountUser) return;
+    const rawCode = redeemInput.trim();
+    if (!rawCode || !accountUser) return;
     setProfileStatusMsg(null);
     setIsRedeeming(true);
     try {
+      const matchedSecretSkins = resolveSecretOutfitsByRedeemCode(rawCode);
       if (typeof onRedeemCode === 'function') {
-        await onRedeemCode(redeemInput.trim());
+        await onRedeemCode(rawCode);
       } else {
         const resp = await fetch('/api/account/redeem', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             userId: accountUser.id,
-            code: redeemInput.trim(),
+            code: rawCode,
           }),
         });
         const data = await resp.json().catch(() => ({}));
@@ -342,13 +352,29 @@ const SidebarComponent: React.FC<SidebarProps> = ({
         if (data.user) {
           saveAccountSession(data.user);
           setFallbackAccountUser(data.user);
+          if (Array.isArray(data.user.unlocked_outfits)) {
+            const currentLocal = loadUnlockedOutfits();
+            saveUnlockedOutfits([...currentLocal, ...data.user.unlocked_outfits]);
+          }
         }
       }
       setRedeemInput('');
-      setProfileStatusMsg({
-        type: 'success',
-        text: 'Code redeemed! Premium access activated.',
-      });
+      if (matchedSecretSkins.length === 1) {
+        setProfileStatusMsg({
+          type: 'success',
+          text: `Code redeemed! Unlocked "${matchedSecretSkins[0].name}" in your Wardrobe.`,
+        });
+      } else if (matchedSecretSkins.length > 1) {
+        setProfileStatusMsg({
+          type: 'success',
+          text: `Code redeemed! Unlocked ${matchedSecretSkins.length} secret skins in your Wardrobe.`,
+        });
+      } else {
+        setProfileStatusMsg({
+          type: 'success',
+          text: 'Code redeemed! Premium access activated.',
+        });
+      }
     } catch (err: unknown) {
       setProfileStatusMsg({
         type: 'error',
@@ -954,6 +980,14 @@ const SidebarComponent: React.FC<SidebarProps> = ({
                 <span className="shrink-0">Device:</span>
                 <span className="truncate">{accountUser.last_login_device}</span>
               </div>
+              {Array.isArray(accountUser.unlocked_outfits) && accountUser.unlocked_outfits.length > 0 && (
+                <div className="flex justify-between gap-2">
+                  <span className="shrink-0">Secret Skins Unlocked:</span>
+                  <span className="font-semibold text-purple-600 dark:text-purple-400">
+                    {accountUser.unlocked_outfits.length}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>

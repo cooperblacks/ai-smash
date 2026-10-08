@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
@@ -9,8 +9,7 @@ import {
   VRM_CONFIG,
   VOICE_CONFIG,
   WARDROBE_OUTFITS,
-  ANIMATION_SOURCE_DOMAINS,
-  AI_PROFILE,
+  ACT_STANDBY_ANIMATIONS,
   ACT_EMOTIONS,
   ACT_INITIAL_CUES,
 } from '../constants';
@@ -24,87 +23,41 @@ import {
   Plus,
   Trash2,
   Upload,
-  RotateCcw,
   ChevronLeft,
-  ChevronRight,
   ChevronDown,
   Film,
   Box,
-  Volume2,
-  VolumeX,
+  Search,
+  X,
+  Check,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
 
 export interface AnimationItem {
   key: string;
   name: string;
+  fileName?: string;
+  category?: 'standby' | 'emote' | 'dance' | 'action' | 'dramatic' | 'pose' | 'custom';
   candidateUrls?: string[];
   clip?: THREE.AnimationClip;
   isCustom?: boolean;
 }
 
-const KNOWN_ANIMATIONS: AnimationItem[] = [
-  {
-    key: 'idle',
-    name: 'Idle',
-    candidateUrls: [
-      '/api/animation/idle',
-      'https://ai.mux8.com/mixamo_idle.fbx',
-      'https://muxai.vercel.app/mixamo_idle.fbx',
-    ],
-  },
-  {
-    key: 'wave',
-    name: 'Wave',
-    candidateUrls: [
-      '/api/animation/wave',
-      'https://ai.mux8.com/mixamo_wave.fbx',
-      'https://muxai.vercel.app/mixamo_wave.fbx',
-    ],
-  },
-  {
-    key: 'walk',
-    name: 'Walk',
-    candidateUrls: [
-      '/api/animation/walk',
-      'https://ai.mux8.com/mixamo_walk.fbx',
-      'https://muxai.vercel.app/mixamo_walk.fbx',
-    ],
-  },
-  {
-    key: 'yawn',
-    name: 'Yawn',
-    candidateUrls: [
-      '/api/animation/yawn',
-      ...ANIMATION_SOURCE_DOMAINS.map((d) => `${d}/mixamo_yawn.fbx`),
-    ],
-  },
-  {
-    key: 'wait',
-    name: 'Wait',
-    candidateUrls: [
-      '/api/animation/wait',
-      ...ANIMATION_SOURCE_DOMAINS.map((d) => `${d}/mixamo_wait.fbx`),
-    ],
-  },
-  {
-    key: 'fall',
-    name: 'Fall',
-    candidateUrls: [
-      '/api/animation/fall',
-      'https://ai.mux8.com/mixamo_fall.fbx',
-      'https://muxai.vercel.app/mixamo_fall.fbx',
-    ],
-  },
-  {
-    key: 'getup',
-    name: 'Get Up',
-    candidateUrls: [
-      '/api/animation/getup',
-      'https://ai.mux8.com/mixamo_getup.fbx',
-      'https://muxai.vercel.app/mixamo_getup.fbx',
-    ],
-  },
-];
+const KNOWN_ANIMATIONS: AnimationItem[] = ACT_STANDBY_ANIMATIONS.map((item) => ({
+  ...item,
+}));
+
+const CATEGORY_LABELS: Record<string, string> = {
+  all: 'All Motions',
+  standby: 'Idle & Standby',
+  emote: 'Emotes & Social',
+  dance: 'Dances',
+  action: 'Action & Fitness',
+  pose: 'Poses',
+  dramatic: 'Dramatic & Fall',
+  custom: 'Custom FBX',
+};
 
 interface ActDirectorPageProps {
   onBackToChat?: () => void;
@@ -124,6 +77,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   const vrmRef = useRef<VRM | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionsMapRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
+  const loadingAnimPromisesRef = useRef<Map<string, Promise<THREE.AnimationAction | null>>>(new Map());
   const currentActionRef = useRef<THREE.AnimationAction | null>(null);
 
   // Character & Asset state
@@ -131,8 +85,20 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   const [customVrmName, setCustomVrmName] = useState<string | null>(null);
   const [customVrmBuffer, setCustomVrmBuffer] = useState<ArrayBuffer | null>(null);
   const [animations, setAnimations] = useState<AnimationItem[]>(KNOWN_ANIMATIONS);
+  const animationsRef = useRef<AnimationItem[]>(KNOWN_ANIMATIONS);
+  useEffect(() => {
+    animationsRef.current = animations;
+  }, [animations]);
+
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeAnimKey, setActiveAnimKey] = useState<string>('idle');
+  const [loadingAnimKey, setLoadingAnimKey] = useState<string | null>(null);
+
+  // Pop-up Animation Selector Modal State
+  const [isAnimModalOpen, setIsAnimModalOpen] = useState<boolean>(false);
+  const [animModalTargetCueId, setAnimModalTargetCueId] = useState<string | null>(null);
+  const [animSearchQuery, setAnimSearchQuery] = useState<string>('');
+  const [animCategoryFilter, setAnimCategoryFilter] = useState<string>('all');
 
   // Emotion / Expression state (Slot 2)
   const [activeEmotionKey, setActiveEmotionKey] = useState<string>('neutral');
@@ -173,31 +139,100 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
 
   // ----------------------------------------------------
-  // Animation Playback Helper
+  // On-Demand Animation Loader & Playback Helper
   // ----------------------------------------------------
+  const ensureAnimationAction = useCallback(
+    async (key: string): Promise<THREE.AnimationAction | null> => {
+      const mixer = mixerRef.current;
+      const vrm = vrmRef.current;
+      if (!mixer || !vrm) return null;
+
+      const existing = actionsMapRef.current.get(key);
+      if (existing) return existing;
+
+      const inFlight = loadingAnimPromisesRef.current.get(key);
+      if (inFlight) return inFlight;
+
+      const animItem = animationsRef.current.find((a) => a.key === key);
+      if (!animItem) {
+        return actionsMapRef.current.get('idle') || null;
+      }
+
+      if (animItem.clip) {
+        const action = mixer.clipAction(animItem.clip);
+        if (animItem.key === 'idle' || animItem.key === 'walk') {
+          action.setLoop(THREE.LoopRepeat, Infinity);
+        } else {
+          action.setLoop(THREE.LoopOnce, 1);
+          action.clampWhenFinished = true;
+        }
+        actionsMapRef.current.set(key, action);
+        return action;
+      }
+
+      const loadPromise = (async (): Promise<THREE.AnimationAction | null> => {
+        if (!animItem.candidateUrls || animItem.candidateUrls.length === 0) {
+          return actionsMapRef.current.get('idle') || null;
+        }
+        for (const url of animItem.candidateUrls) {
+          try {
+            const clip = await retargetAnimationFromUrl(url, vrm);
+            if (clip && mixerRef.current === mixer && vrmRef.current === vrm) {
+              animItem.clip = clip;
+              const action = mixer.clipAction(clip);
+              if (animItem.key === 'idle' || animItem.key === 'walk') {
+                action.setLoop(THREE.LoopRepeat, Infinity);
+              } else {
+                action.setLoop(THREE.LoopOnce, 1);
+                action.clampWhenFinished = true;
+              }
+              actionsMapRef.current.set(key, action);
+              return action;
+            }
+          } catch {
+            // Try next candidate URL
+          }
+        }
+        return actionsMapRef.current.get('idle') || null;
+      })();
+
+      loadingAnimPromisesRef.current.set(key, loadPromise);
+      try {
+        return await loadPromise;
+      } finally {
+        loadingAnimPromisesRef.current.delete(key);
+      }
+    },
+    []
+  );
+
   const playAnimationByKey = useCallback(
-    (key: string, crossFadeDuration = 0.35) => {
+    async (key: string, crossFadeDuration = 0.35) => {
+      setActiveAnimKey(key);
       const mixer = mixerRef.current;
       if (!mixer) return;
 
-      let targetAction = actionsMapRef.current.get(key);
-
-      if (!targetAction && vrmRef.current) {
-        const animItem = animations.find((a) => a.key === key);
-        if (animItem?.clip) {
-          targetAction = mixer.clipAction(animItem.clip);
-          actionsMapRef.current.set(key, targetAction);
-        }
+      let targetAction = actionsMapRef.current.get(key) || null;
+      if (!targetAction) {
+        setLoadingAnimKey(key);
+        targetAction = await ensureAnimationAction(key);
+        setLoadingAnimKey((prev) => (prev === key ? null : prev));
       }
 
       if (!targetAction) {
-        targetAction = actionsMapRef.current.get('idle');
+        targetAction = actionsMapRef.current.get('idle') || null;
       }
 
       if (!targetAction) return;
 
       const prevAction = currentActionRef.current;
-      if (prevAction === targetAction) return;
+      if (prevAction === targetAction) {
+        if (!targetAction.isRunning()) {
+          targetAction.reset();
+          targetAction.play();
+        }
+        return;
+      }
 
       targetAction.reset();
       targetAction.fadeIn(crossFadeDuration);
@@ -208,9 +243,8 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       }
 
       currentActionRef.current = targetAction;
-      setActiveAnimKey(key);
     },
-    [animations]
+    [ensureAnimationAction]
   );
 
   // ----------------------------------------------------
@@ -309,7 +343,8 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
 
       // 1. Play animation (or idle)
       const animKey = cue.animationKey || 'idle';
-      playAnimationByKey(animKey);
+      await playAnimationByKey(animKey);
+      if (cancelPlaybackRef.current) break;
 
       // 2. Apply facial emotion (Slot 2)
       const emoKey = cue.emotionKey || 'neutral';
@@ -546,6 +581,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     }
 
     actionsMapRef.current.clear();
+    loadingAnimPromisesRef.current.clear();
     currentActionRef.current = null;
 
     const gltfLoader = new GLTFLoader();
@@ -576,36 +612,24 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       const mixer = new THREE.AnimationMixer(vrm.scene);
       mixerRef.current = mixer;
 
-      // Load known animations
-      for (const anim of KNOWN_ANIMATIONS) {
-        if (!anim.candidateUrls) continue;
-        for (const url of anim.candidateUrls) {
-          try {
-            const clip = await retargetAnimationFromUrl(url, vrm);
-            if (clip && !isDisposed) {
-              anim.clip = clip;
-              const action = mixer.clipAction(clip);
-              if (anim.key === 'idle' || anim.key === 'walk') {
-                action.setLoop(THREE.LoopRepeat, Infinity);
-              } else {
-                action.setLoop(THREE.LoopOnce, 1);
-                action.clampWhenFinished = true;
-              }
-              actionsMapRef.current.set(anim.key, action);
-              break;
-            }
-          } catch {}
-        }
-      }
-
-      const idleAction = actionsMapRef.current.get('idle');
-      if (idleAction) {
+      // Load default Idle animation immediately so the stage is ready right away
+      const idleAction = await ensureAnimationAction('idle');
+      if (idleAction && !isDisposed) {
         idleAction.play();
         currentActionRef.current = idleAction;
         setActiveAnimKey('idle');
       }
 
-      setIsLoading(false);
+      if (!isDisposed) {
+        setIsLoading(false);
+      }
+
+      // Pre-warm core initial cue animations in the background
+      const priorityKeys = ['wave', 'wait', 'yawn', 'walk', 'armstretch', 'feelingshy', 'idle_nailcheck'];
+      for (const key of priorityKeys) {
+        if (isDisposed) break;
+        ensureAnimationAction(key).catch(() => {});
+      }
     };
 
     if (customVrmBuffer) {
@@ -625,7 +649,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     return () => {
       isDisposed = true;
     };
-  }, [selectedOutfitId, customVrmBuffer]);
+  }, [selectedOutfitId, customVrmBuffer, ensureAnimationAction]);
 
   // Upload Custom FBX
   const handleFbxUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -644,7 +668,16 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
         action.clampWhenFinished = true;
         actionsMapRef.current.set(key, action);
 
-        setAnimations((prev) => [...prev, { key, name, isCustom: true, clip }]);
+        const newItem: AnimationItem = {
+          key,
+          name,
+          fileName: file.name,
+          category: 'custom',
+          isCustom: true,
+          clip,
+        };
+        setAnimations((prev) => [...prev, newItem]);
+        animationsRef.current = [...animationsRef.current, newItem];
         playAnimationByKey(key);
       }
     } catch (err) {
@@ -687,6 +720,42 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   const handleUpdateStep = (id: string, updates: Partial<TimelineCue>) => {
     setCues((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
   };
+
+  const openAnimationModalForCue = (cueId: string | null) => {
+    setAnimModalTargetCueId(cueId);
+    setAnimSearchQuery('');
+    setIsAnimModalOpen(true);
+  };
+
+  const filteredModalAnimations = useMemo(() => {
+    const q = animSearchQuery.trim().toLowerCase();
+    return animations.filter((anim) => {
+      if (animCategoryFilter !== 'all') {
+        const cat = anim.isCustom ? 'custom' : anim.category || 'standby';
+        if (cat !== animCategoryFilter) return false;
+      }
+      if (!q) return true;
+      return (
+        anim.name.toLowerCase().includes(q) ||
+        anim.key.toLowerCase().includes(q) ||
+        (anim.fileName || '').toLowerCase().includes(q)
+      );
+    });
+  }, [animations, animSearchQuery, animCategoryFilter]);
+
+  const targetCueIndex = useMemo(() => {
+    if (!animModalTargetCueId) return null;
+    const idx = cues.findIndex((c) => c.id === animModalTargetCueId);
+    return idx >= 0 ? idx : null;
+  }, [animModalTargetCueId, cues]);
+
+  const currentSelectedModalAnimKey = useMemo(() => {
+    if (animModalTargetCueId) {
+      const cue = cues.find((c) => c.id === animModalTargetCueId);
+      return cue?.animationKey || 'idle';
+    }
+    return activeAnimKey;
+  }, [animModalTargetCueId, cues, activeAnimKey]);
 
   return (
     <div className="relative h-screen w-screen overflow-hidden select-none bg-[#f0f2f5] dark:bg-[#0f1117] text-neutral-800 dark:text-neutral-100 font-sans">
@@ -755,19 +824,37 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
           <div className="mt-3 space-y-3 text-xs">
             {/* Status Box with Green Dot (Direct reference to muxai-3d-preview.html) */}
             <div className="flex items-center gap-2 p-2 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 text-[11px] text-neutral-600 dark:text-neutral-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              {loadingAnimKey ? (
+                <Loader2 className="w-3 h-3 text-[var(--theme-accent,#55d2f6)] animate-spin shrink-0" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+              )}
               <div className="truncate flex items-center gap-1.5 min-w-0">
-                <span className="truncate">Motion: <strong>{animations.find((a) => a.key === activeAnimKey)?.name || activeAnimKey}</strong></span>
+                <span className="truncate">
+                  Motion: <strong>{animations.find((a) => a.key === activeAnimKey)?.name || activeAnimKey}</strong>
+                </span>
                 <span className="opacity-40">&bull;</span>
-                <span className="truncate">Emotion: <strong>{ACT_EMOTIONS.find((e) => e.key === activeEmotionKey)?.name || activeEmotionKey}</strong></span>
+                <span className="truncate">
+                  Emotion: <strong>{ACT_EMOTIONS.find((e) => e.key === activeEmotionKey)?.name || activeEmotionKey}</strong>
+                </span>
               </div>
             </div>
 
-            {/* Quick Mixamo Motion Buttons */}
-            <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold block mb-1.5">
-                Quick Motions
-              </span>
+            {/* Quick Mixamo Motion Buttons + Pop-up Modal Trigger */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold">
+                  Quick Motions
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openAnimationModalForCue(null)}
+                  className="text-[10px] font-mono font-semibold text-[var(--theme-accent,#55d2f6)] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Film className="w-3 h-3" />
+                  <span>All ({animations.length})</span>
+                </button>
+              </div>
               <div className="grid grid-cols-3 gap-1.5">
                 {animations.slice(0, 6).map((anim) => (
                   <button
@@ -783,6 +870,19 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                   </button>
                 ))}
               </div>
+              <button
+                type="button"
+                onClick={() => openAnimationModalForCue(null)}
+                className="w-full py-1.5 px-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/[0.06] dark:hover:bg-white/[0.08] text-[11px] font-semibold text-neutral-700 dark:text-neutral-200 flex items-center justify-between gap-2 transition-all cursor-pointer"
+              >
+                <span className="flex items-center gap-1.5 truncate">
+                  <Film className="w-3.5 h-3.5 text-[var(--theme-accent,#55d2f6)] shrink-0" />
+                  <span className="truncate">Browse Standby Animations</span>
+                </span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-[var(--theme-accent-soft,rgba(85,210,246,0.15))] text-[var(--theme-accent,#55d2f6)] font-bold shrink-0">
+                  {animations.length}
+                </span>
+              </button>
             </div>
 
             {/* Quick VRM Emotion Buttons */}
@@ -885,129 +985,327 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       {/* Minimal Bottom Timeline Bar */}
       {isScriptEditorOpen && (
         <div className="absolute bottom-4 left-4 right-4 z-20 flex items-center justify-center">
-        <div
-          className="w-full max-w-4xl p-2.5 sm:p-3 rounded-2xl backdrop-blur-xl border border-black/10 dark:border-white/10 shadow-2xl flex items-center gap-2.5 overflow-hidden bg-white/90 dark:bg-[#13151f]/90"
-        >
-          {/* Play / Stop Button */}
-          {!isPlaying ? (
-            <button
-              onClick={handlePlayTimeline}
-              className="w-11 h-11 rounded-xl flex items-center justify-center text-white shrink-0 shadow-md active:scale-95 transition-all cursor-pointer"
-              style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
-              title="Play script sequentially"
+          <div className="w-full max-w-4xl p-2.5 sm:p-3 rounded-2xl backdrop-blur-xl border border-black/10 dark:border-white/10 shadow-2xl flex items-center gap-2.5 overflow-hidden bg-white/90 dark:bg-[#13151f]/90">
+            {/* Play / Stop Button */}
+            {!isPlaying ? (
+              <button
+                onClick={handlePlayTimeline}
+                className="w-11 h-11 rounded-xl flex items-center justify-center text-white shrink-0 shadow-md active:scale-95 transition-all cursor-pointer"
+                style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
+                title="Play script sequentially"
+              >
+                <Play className="w-4 h-4 fill-current ml-0.5" />
+              </button>
+            ) : (
+              <button
+                onClick={handleStopPlayback}
+                className="w-11 h-11 rounded-xl flex items-center justify-center bg-red-500 hover:bg-red-600 text-white shrink-0 shadow-md active:scale-95 transition-all cursor-pointer"
+                title="Stop playback"
+              >
+                <Square className="w-4 h-4 fill-current" />
+              </button>
+            )}
+
+            {/* Horizontally Scrollable Steps List */}
+            <div
+              ref={timelineScrollRef}
+              className="flex-1 flex items-center gap-2 overflow-x-auto py-1 scroll-smooth"
             >
-              <Play className="w-4 h-4 fill-current ml-0.5" />
-            </button>
-          ) : (
-            <button
-              onClick={handleStopPlayback}
-              className="w-11 h-11 rounded-xl flex items-center justify-center bg-red-500 hover:bg-red-600 text-white shrink-0 shadow-md active:scale-95 transition-all cursor-pointer"
-              title="Stop playback"
-            >
-              <Square className="w-4 h-4 fill-current" />
-            </button>
-          )}
+              {cues.map((cue, idx) => {
+                const isStepActive = isPlaying && activePlayingIndex === idx;
+                const selectedAnim = animations.find((a) => a.key === cue.animationKey) || animations[0];
+                return (
+                  <div
+                    key={cue.id}
+                    className={`w-64 sm:w-72 shrink-0 p-2.5 rounded-xl border flex flex-col gap-2 transition-all ${
+                      isStepActive
+                        ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.1))] ring-2 ring-[var(--theme-accent,#55d2f6)]'
+                        : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-mono font-bold text-neutral-500 dark:text-neutral-400">
+                        #{idx + 1}
+                      </span>
 
-          {/* Horizontally Scrollable Steps List */}
-          <div
-            ref={timelineScrollRef}
-            className="flex-1 flex items-center gap-2 overflow-x-auto py-1 scroll-smooth"
-          >
-            {cues.map((cue, idx) => {
-              const isStepActive = isPlaying && activePlayingIndex === idx;
-              return (
-                <div
-                  key={cue.id}
-                  className={`w-64 sm:w-72 shrink-0 p-2.5 rounded-xl border flex flex-col gap-2 transition-all ${
-                    isStepActive
-                      ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.1))] ring-2 ring-[var(--theme-accent,#55d2f6)]'
-                      : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-mono font-bold text-neutral-500 dark:text-neutral-400">
-                      #{idx + 1}
-                    </span>
-
-                    <button
-                      onClick={() => handleDeleteStep(cue.id)}
-                      className="p-1 rounded text-neutral-400 hover:text-red-500 transition-colors cursor-pointer"
-                      title="Remove step"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  {/* 2 Slots: Slot 1 Motion, Slot 2 Emotion */}
-                  <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-                    {/* Slot 1: Motion */}
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 min-w-0">
-                      <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">1:</span>
-                      <select
-                        value={cue.animationKey}
-                        onChange={(e) => {
-                          handleUpdateStep(cue.id, { animationKey: e.target.value });
-                          playAnimationByKey(e.target.value);
-                        }}
-                        className="w-full bg-transparent text-[11px] font-semibold text-[var(--theme-accent,#55d2f6)] focus:outline-none cursor-pointer truncate"
-                        title="Slot 1: Character Motion"
+                      <button
+                        onClick={() => handleDeleteStep(cue.id)}
+                        className="p-1 rounded text-neutral-400 hover:text-red-500 transition-colors cursor-pointer"
+                        title="Remove step"
                       >
-                        <option value="idle">Idle</option>
-                        {animations
-                          .filter((a) => a.key !== 'idle')
-                          .map((a) => (
-                            <option key={a.key} value={a.key}>
-                              {a.name}
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* 2 Slots: Slot 1 Motion (Pop-up Modal Trigger), Slot 2 Emotion */}
+                    <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                      {/* Slot 1: Motion Pop-up Modal Trigger Button */}
+                      <button
+                        type="button"
+                        onClick={() => openAnimationModalForCue(cue.id)}
+                        className="flex items-center justify-between gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] hover:bg-black/[0.08] dark:hover:bg-white/[0.08] border border-black/5 dark:border-white/5 hover:border-[var(--theme-accent,#55d2f6)] min-w-0 cursor-pointer transition-all text-left"
+                        title="Slot 1: Click to choose Character Motion"
+                      >
+                        <div className="flex items-center gap-1 min-w-0">
+                          <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">1:</span>
+                          <span className="text-[11px] font-semibold text-[var(--theme-accent,#55d2f6)] truncate">
+                            {selectedAnim?.name || cue.animationKey}
+                          </span>
+                        </div>
+                        <ChevronDown className="w-3 h-3 text-neutral-400 shrink-0" />
+                      </button>
+
+                      {/* Slot 2: Emotion */}
+                      <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 min-w-0">
+                        <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">2:</span>
+                        <select
+                          value={cue.emotionKey || 'neutral'}
+                          onChange={(e) => {
+                            handleUpdateStep(cue.id, { emotionKey: e.target.value });
+                            applyEmotionByKey(e.target.value);
+                          }}
+                          className="w-full bg-transparent text-[11px] font-semibold text-rose-500 dark:text-rose-400 focus:outline-none cursor-pointer truncate"
+                          title="Slot 2: Facial Emotion / Expression"
+                        >
+                          {ACT_EMOTIONS.map((emo) => (
+                            <option key={emo.key} value={emo.key}>
+                              {emo.emoji} {emo.name}
                             </option>
                           ))}
-                      </select>
+                        </select>
+                      </div>
                     </div>
 
-                    {/* Slot 2: Emotion */}
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.04] border border-black/5 dark:border-white/5 min-w-0">
-                      <span className="text-[10px] font-mono font-bold text-neutral-400 shrink-0">2:</span>
-                      <select
-                        value={cue.emotionKey || 'neutral'}
-                        onChange={(e) => {
-                          handleUpdateStep(cue.id, { emotionKey: e.target.value });
-                          applyEmotionByKey(e.target.value);
-                        }}
-                        className="w-full bg-transparent text-[11px] font-semibold text-rose-500 dark:text-rose-400 focus:outline-none cursor-pointer truncate"
-                        title="Slot 2: Facial Emotion / Expression"
-                      >
-                        {ACT_EMOTIONS.map((emo) => (
-                          <option key={emo.key} value={emo.key}>
-                            {emo.emoji} {emo.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {/* Optional Script Input */}
+                    <input
+                      type="text"
+                      value={cue.text}
+                      onChange={(e) => handleUpdateStep(cue.id, { text: e.target.value })}
+                      placeholder="(Optional) Speech text..."
+                      className="w-full px-2 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 text-xs focus:outline-none text-neutral-800 dark:text-neutral-100"
+                    />
                   </div>
+                );
+              })}
 
-                  {/* Optional Script Input */}
-                  <input
-                    type="text"
-                    value={cue.text}
-                    onChange={(e) => handleUpdateStep(cue.id, { text: e.target.value })}
-                    placeholder="(Optional) Speech text..."
-                    className="w-full px-2 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 text-xs focus:outline-none text-neutral-800 dark:text-neutral-100"
-                  />
-                </div>
-              );
-            })}
-
-            {/* Quick Add Step Button */}
-            <button
-              onClick={handleAddStep}
-              className="h-14 px-3 rounded-xl border-2 border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] text-neutral-400 hover:text-[var(--theme-accent,#55d2f6)] flex items-center justify-center gap-1 text-xs font-semibold shrink-0 cursor-pointer transition-all"
-              title="Add step"
-            >
-              <Plus className="w-4 h-4 stroke-[2.5]" />
-              <span>Step</span>
-            </button>
+              {/* Quick Add Step Button */}
+              <button
+                onClick={handleAddStep}
+                className="h-14 px-3 rounded-xl border-2 border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] text-neutral-400 hover:text-[var(--theme-accent,#55d2f6)] flex items-center justify-center gap-1 text-xs font-semibold shrink-0 cursor-pointer transition-all"
+                title="Add step"
+              >
+                <Plus className="w-4 h-4 stroke-[2.5]" />
+                <span>Step</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Pop-up Animation Selector Modal (Replaces Dropdown Menu) */}
+      {isAnimModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setIsAnimModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[85vh] rounded-3xl border border-black/10 dark:border-white/10 bg-white dark:bg-[#13151f] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-black/5 dark:border-white/10 flex items-center justify-between gap-3 bg-neutral-50/70 dark:bg-white/[0.02]">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div
+                  className="w-9 h-9 rounded-2xl flex items-center justify-center shrink-0"
+                  style={{
+                    backgroundColor: 'var(--theme-accent-soft, rgba(85,210,246,0.15))',
+                    color: 'var(--theme-accent, #55d2f6)',
+                  }}
+                >
+                  <Film className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm sm:text-base font-bold font-heading text-neutral-900 dark:text-white truncate">
+                      {targetCueIndex !== null
+                        ? `Select Motion for Step #${targetCueIndex + 1}`
+                        : 'Standby Animation Collection'}
+                    </h2>
+                    <span
+                      className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full font-bold shrink-0"
+                      style={{
+                        backgroundColor: 'var(--theme-accent-soft, rgba(85,210,246,0.15))',
+                        color: 'var(--theme-accent, #55d2f6)',
+                      }}
+                    >
+                      {animations.length} Motions
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+                    {targetCueIndex !== null
+                      ? 'Choose a Mixamo FBX animation to assign to this timeline cue and preview on stage.'
+                      : 'Click any Mixamo FBX animation below to preview it live on the 3D stage.'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsAnimModalOpen(false)}
+                className="p-2 rounded-xl text-neutral-400 hover:text-neutral-700 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                title="Close modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Search & Category Filter Bar */}
+            <div className="p-3.5 sm:px-5 border-b border-black/5 dark:border-white/10 space-y-2.5 bg-white dark:bg-[#13151f]">
+              <div className="relative flex items-center">
+                <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 pointer-events-none" />
+                <input
+                  type="text"
+                  value={animSearchQuery}
+                  onChange={(e) => setAnimSearchQuery(e.target.value)}
+                  placeholder="Search animations by name or filename (e.g. dance, sit, jump, mixamo_...)..."
+                  className="w-full pl-9 pr-8 py-2 rounded-xl text-xs bg-black/[0.04] dark:bg-white/[0.05] border border-black/10 dark:border-white/10 focus:outline-none focus:border-[var(--theme-accent,#55d2f6)] text-neutral-900 dark:text-white"
+                  autoFocus
+                />
+                {animSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setAnimSearchQuery('')}
+                    className="absolute right-2.5 p-1 rounded-full text-neutral-400 hover:text-neutral-700 dark:hover:text-white cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Category Filter Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+                {(['all', 'standby', 'emote', 'dance', 'action', 'pose', 'dramatic', ...(animations.some((a) => a.isCustom) ? ['custom'] : [])] as const).map(
+                  (cat) => {
+                    const isActiveCat = animCategoryFilter === cat;
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setAnimCategoryFilter(cat)}
+                        className={`px-2.5 py-1 rounded-xl text-[11px] font-medium whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                          isActiveCat
+                            ? 'text-white font-semibold shadow-xs'
+                            : 'bg-black/[0.04] dark:bg-white/[0.05] text-neutral-600 dark:text-neutral-300 hover:bg-black/[0.08] dark:hover:bg-white/[0.09]'
+                        }`}
+                        style={
+                          isActiveCat
+                            ? { backgroundColor: 'var(--theme-accent, #55d2f6)' }
+                            : undefined
+                        }
+                      >
+                        {CATEGORY_LABELS[cat] || cat}
+                      </button>
+                    );
+                  }
+                )}
+              </div>
+            </div>
+
+            {/* Scrollable Animations Grid */}
+            <div className="flex-1 overflow-y-auto p-3.5 sm:p-5">
+              {filteredModalAnimations.length === 0 ? (
+                <div className="py-12 text-center space-y-2">
+                  <Sparkles className="w-6 h-6 text-neutral-400 mx-auto" />
+                  <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                    No animations match &ldquo;{animSearchQuery}&rdquo;
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {filteredModalAnimations.map((anim) => {
+                    const isSelected = currentSelectedModalAnimKey === anim.key;
+                    const isThisLoading = loadingAnimKey === anim.key;
+                    const catLabel = anim.isCustom
+                      ? 'Custom'
+                      : CATEGORY_LABELS[anim.category || 'standby'] || 'Standby';
+
+                    return (
+                      <button
+                        key={anim.key}
+                        type="button"
+                        onClick={() => {
+                          if (animModalTargetCueId) {
+                            handleUpdateStep(animModalTargetCueId, { animationKey: anim.key });
+                            playAnimationByKey(anim.key);
+                            setIsAnimModalOpen(false);
+                          } else {
+                            playAnimationByKey(anim.key);
+                          }
+                        }}
+                        className={`group p-3 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 cursor-pointer ${
+                          isSelected
+                            ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.12))] ring-2 ring-[var(--theme-accent,#55d2f6)] shadow-xs'
+                            : 'border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02] hover:border-neutral-400 dark:hover:border-neutral-600 hover:bg-black/[0.04] dark:hover:bg-white/[0.05]'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-1.5 w-full">
+                          <div className="min-w-0">
+                            <span className="block text-xs font-bold text-neutral-900 dark:text-white truncate">
+                              {anim.name}
+                            </span>
+                            <span className="block text-[10px] font-mono text-neutral-400 dark:text-neutral-500 truncate mt-0.5">
+                              {anim.fileName || `${anim.key}.fbx`}
+                            </span>
+                          </div>
+
+                          <div className="shrink-0">
+                            {isThisLoading ? (
+                              <Loader2 className="w-4 h-4 text-[var(--theme-accent,#55d2f6)] animate-spin" />
+                            ) : isSelected ? (
+                              <div
+                                className="w-5 h-5 rounded-full flex items-center justify-center text-white"
+                                style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
+                              >
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-1 pt-1 border-t border-black/5 dark:border-white/5 w-full">
+                          <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/[0.05] dark:bg-white/[0.06] text-neutral-500 dark:text-neutral-400">
+                            {catLabel}
+                          </span>
+                          <span className="text-[10px] font-semibold text-[var(--theme-accent,#55d2f6)] opacity-0 group-hover:opacity-100 transition-opacity">
+                            {animModalTargetCueId ? 'Select' : 'Play'}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3.5 sm:px-5 border-t border-black/5 dark:border-white/10 bg-neutral-50/70 dark:bg-white/[0.02] flex items-center justify-between gap-3">
+              <label className="py-1.5 px-3 rounded-xl border border-dashed border-black/15 dark:border-white/15 hover:border-[var(--theme-accent,#55d2f6)] flex items-center gap-1.5 text-xs font-semibold text-neutral-600 dark:text-neutral-300 cursor-pointer transition-all">
+                <Upload className="w-3.5 h-3.5 text-[var(--theme-accent,#55d2f6)]" />
+                <span>Upload Custom FBX</span>
+                <input type="file" accept=".fbx" onChange={handleFbxUpload} className="hidden" />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setIsAnimModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white shadow-xs active:scale-95 transition-all cursor-pointer"
+                style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -540,6 +540,7 @@ export const APP_INFO = {
     harassmentCount: 'aismash_harassment_count',
     blockedUntil: 'aismash_blocked_until',
     equippedOutfit: 'aismash_equipped_outfit_id',
+    unlockedOutfits: 'aismash_unlocked_outfits',
     accountSession: 'aismash_account_session',
     deviceFingerprint: 'aismash_device_fingerprint',
   },
@@ -731,11 +732,161 @@ export const WARDROBE_OUTFITS: WardrobeOutfit[] = [
   },
 ];
 
+// Master redeem code to unlock all secret wardrobe skins at once
+export const SECRET_WARDROBE_REDEEM_CODE = 'HANA-SECRET-WARDROBE';
+
+export const SECRET_WARDROBE_OUTFITS: WardrobeOutfit[] = [
+  {
+    id: 'beauty-of-pink',
+    name: 'Beauty of Pink',
+    fileName: 'hana_v1.0_pinkdress2_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_pinkdress2_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_pinkdress2_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-PINKDRESS2',
+  },
+  {
+    id: 'streetwear',
+    name: 'Streetwear',
+    fileName: 'hana_v1.0_streetwear_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_streetwear_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_streetwear_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-STREETWEAR',
+  },
+  {
+    id: 'staying-casual',
+    name: 'Staying Casual',
+    fileName: 'hana_v1.0_moderncasual_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_moderncasual_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_moderncasual_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-MODERNCASUAL',
+  },
+  {
+    id: 'gothic-beauty',
+    name: 'Gothic Beauty',
+    fileName: 'hana_v1.0_gothicdress_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_gothicdress_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_gothicdress_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-GOTHICDRESS',
+  },
+  {
+    id: 'home-alone',
+    name: 'Home Alone',
+    fileName: 'hana_v1.0_blackonesie_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_blackonesie_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_blackonesie_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-BLACKONESIE',
+  },
+  {
+    id: 'powerpuff',
+    name: 'Powerpuff',
+    fileName: 'hana_v1.0_darkhoodie_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_darkhoodie_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_darkhoodie_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-DARKHOODIE',
+  },
+  {
+    id: 'neat-and-nimble',
+    name: 'Neat & Nimble',
+    fileName: 'hana_v1.0_formaluniform_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_formaluniform_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_formaluniform_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-FORMALUNIFORM',
+  },
+  {
+    id: 'frilly-dress',
+    name: 'Frilly Dress',
+    fileName: 'hana_v1.0_lacedress_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_lacedress_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_lacedress_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-LACEDRESS',
+  },
+  {
+    id: 'cookie-maid',
+    name: 'Cookie Maid',
+    fileName: 'hana_v1.0_purplemaid_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_purplemaid_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_purplemaid_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-PURPLEMAID',
+  },
+  {
+    id: 'coffee-maid',
+    name: 'Coffee Maid',
+    fileName: 'hana_v1.0_blackmaid_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_blackmaid_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_blackmaid_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-BLACKMAID',
+  },
+];
+
+export const ALL_WARDROBE_OUTFITS: WardrobeOutfit[] = [
+  ...WARDROBE_OUTFITS,
+  ...SECRET_WARDROBE_OUTFITS,
+];
+
 export const DEFAULT_OUTFIT_ID = 'mint-maid-apron';
 
 export function getOutfitById(id?: string | null): WardrobeOutfit {
   if (!id) return WARDROBE_OUTFITS[0];
-  return WARDROBE_OUTFITS.find((o) => o.id === id) || WARDROBE_OUTFITS[0];
+  return (
+    WARDROBE_OUTFITS.find((o) => o.id === id) ||
+    SECRET_WARDROBE_OUTFITS.find((o) => o.id === id) ||
+    WARDROBE_OUTFITS[0]
+  );
+}
+
+export function resolveSecretOutfitsByRedeemCode(rawCode?: string | null): WardrobeOutfit[] {
+  const cleanCode = (rawCode || '').trim().toUpperCase();
+  if (!cleanCode) return [];
+
+  if (
+    cleanCode === SECRET_WARDROBE_REDEEM_CODE.toUpperCase() ||
+    cleanCode === 'MUXAI-SECRET-SKINS' ||
+    cleanCode === 'HANA-SECRET-SKINS' ||
+    cleanCode === 'SECRET-WARDROBE'
+  ) {
+    return [...SECRET_WARDROBE_OUTFITS];
+  }
+
+  return SECRET_WARDROBE_OUTFITS.filter((outfit) => {
+    const codeUpper = (outfit.redeemCode || '').trim().toUpperCase();
+    const idUpper = outfit.id.toUpperCase();
+    const nameUpper = outfit.name.toUpperCase();
+    const nameSlug = nameUpper.replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const fileStem = outfit.fileName
+      .replace(/^hana_v1\.0_/i, '')
+      .replace(/_vrm1\.vrm$/i, '')
+      .toUpperCase();
+
+    return (
+      codeUpper === cleanCode ||
+      idUpper === cleanCode ||
+      nameUpper === cleanCode ||
+      nameSlug === cleanCode ||
+      fileStem === cleanCode ||
+      `HANA-${fileStem}` === cleanCode ||
+      `HANA-${idUpper}` === cleanCode
+    );
+  });
 }
 
 // =====================================================================
@@ -750,13 +901,23 @@ export const ANIMATION_SOURCE_DOMAINS = [
 export const WAITING_ANIMATION_FILES: string[] = [
   'mixamo_yawn.fbx',
   'mixamo_wait.fbx',
+  'mixamo_armstretch.fbx',
+  'mixamo_feelingshy.fbx',
+  'mixamo_idle_nailcheck.fbx',
 ];
 
 export function getWaitingAnimationCandidateUrls(fileName: string): string[] {
-  return [
+  const urls = [
     `/api/animation/wait?file=${encodeURIComponent(fileName)}`,
     ...ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/${fileName}`),
   ];
+  if (fileName === 'mixamo_.jumpingjacks.fbx') {
+    urls.push(
+      `/api/animation/wait?file=${encodeURIComponent('mixamo_jumpingjacks.fbx')}`,
+      ...ANIMATION_SOURCE_DOMAINS.map((domain) => `${domain}/mixamo_jumpingjacks.fbx`)
+    );
+  }
+  return urls;
 }
 
 export const VRM_CONFIG = {
@@ -1593,6 +1754,366 @@ export const ACT_EMOTIONS: ActEmotionItem[] = [
     description: 'Drowsy half-closed eyes',
     expressionPreset: 'sleepy',
     blendValues: { relaxed: 0.28, blink: 0.56, oh: 0.12 },
+  },
+];
+
+export interface ActStandbyAnimationItem {
+  key: string;
+  name: string;
+  fileName: string;
+  category: 'standby' | 'emote' | 'dance' | 'action' | 'dramatic' | 'pose';
+  candidateUrls: string[];
+}
+
+export const ACT_STANDBY_ANIMATIONS: ActStandbyAnimationItem[] = [
+  {
+    key: 'idle',
+    name: 'Idle',
+    fileName: 'mixamo_idle.fbx',
+    category: 'standby',
+    candidateUrls: [
+      '/api/animation/idle',
+      'https://ai.mux8.com/mixamo_idle.fbx',
+      'https://muxai.vercel.app/mixamo_idle.fbx',
+    ],
+  },
+  {
+    key: 'wave',
+    name: 'Wave',
+    fileName: 'mixamo_wave.fbx',
+    category: 'emote',
+    candidateUrls: [
+      '/api/animation/wave',
+      'https://ai.mux8.com/mixamo_wave.fbx',
+      'https://muxai.vercel.app/mixamo_wave.fbx',
+    ],
+  },
+  {
+    key: 'walk',
+    name: 'Walk',
+    fileName: 'mixamo_walk.fbx',
+    category: 'action',
+    candidateUrls: [
+      '/api/animation/walk',
+      'https://ai.mux8.com/mixamo_walk.fbx',
+      'https://muxai.vercel.app/mixamo_walk.fbx',
+    ],
+  },
+  {
+    key: 'yawn',
+    name: 'Yawn',
+    fileName: 'mixamo_yawn.fbx',
+    category: 'standby',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_yawn.fbx'),
+  },
+  {
+    key: 'wait',
+    name: 'Wait',
+    fileName: 'mixamo_wait.fbx',
+    category: 'standby',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_wait.fbx'),
+  },
+  {
+    key: 'armstretch',
+    name: 'Arm Stretch',
+    fileName: 'mixamo_armstretch.fbx',
+    category: 'standby',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_armstretch.fbx'),
+  },
+  {
+    key: 'feelingshy',
+    name: 'Feeling Shy',
+    fileName: 'mixamo_feelingshy.fbx',
+    category: 'standby',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_feelingshy.fbx'),
+  },
+  {
+    key: 'idle_nailcheck',
+    name: 'Idle Nail Check',
+    fileName: 'mixamo_idle_nailcheck.fbx',
+    category: 'standby',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_idle_nailcheck.fbx'),
+  },
+  {
+    key: 'fall',
+    name: 'Fall',
+    fileName: 'mixamo_fall.fbx',
+    category: 'dramatic',
+    candidateUrls: [
+      '/api/animation/fall',
+      'https://ai.mux8.com/mixamo_fall.fbx',
+      'https://muxai.vercel.app/mixamo_fall.fbx',
+    ],
+  },
+  {
+    key: 'getup',
+    name: 'Get Up',
+    fileName: 'mixamo_getup.fbx',
+    category: 'dramatic',
+    candidateUrls: [
+      '/api/animation/getup',
+      'https://ai.mux8.com/mixamo_getup.fbx',
+      'https://muxai.vercel.app/mixamo_getup.fbx',
+    ],
+  },
+  {
+    key: 'argue_angry',
+    name: 'Argue Angry',
+    fileName: 'mixamo_argue_angry.fbx',
+    category: 'emote',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_argue_angry.fbx'),
+  },
+  {
+    key: 'argue_shrug',
+    name: 'Argue Shrug',
+    fileName: 'mixamo_argue_shrug.fbx',
+    category: 'emote',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_argue_shrug.fbx'),
+  },
+  {
+    key: 'brutally_assassined',
+    name: 'Brutally Assassined',
+    fileName: 'mixamo_brutally_assassined.fbx',
+    category: 'dramatic',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_brutally_assassined.fbx'),
+  },
+  {
+    key: 'buttonpush',
+    name: 'Button Push',
+    fileName: 'mixamo_buttonpush.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_buttonpush.fbx'),
+  },
+  {
+    key: 'carrying',
+    name: 'Carrying',
+    fileName: 'mixamo_carrying.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_carrying.fbx'),
+  },
+  {
+    key: 'coolpoint',
+    name: 'Cool Point',
+    fileName: 'mixamo_coolpoint.fbx',
+    category: 'emote',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_coolpoint.fbx'),
+  },
+  {
+    key: 'dancingtwerk',
+    name: 'Dancing Twerk',
+    fileName: 'mixamo_dancingtwerk.fbx',
+    category: 'dance',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_dancingtwerk.fbx'),
+  },
+  {
+    key: 'defeated',
+    name: 'Defeated',
+    fileName: 'mixamo_defeated.fbx',
+    category: 'dramatic',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_defeated.fbx'),
+  },
+  {
+    key: 'drinkfountain',
+    name: 'Drink Fountain',
+    fileName: 'mixamo_drinkfountain.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_drinkfountain.fbx'),
+  },
+  {
+    key: 'dying',
+    name: 'Dying',
+    fileName: 'mixamo_dying.fbx',
+    category: 'dramatic',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_dying.fbx'),
+  },
+  {
+    key: 'dying_flyback',
+    name: 'Dying Flyback',
+    fileName: 'mixamo_dying_flyback.fbx',
+    category: 'dramatic',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_dying_flyback.fbx'),
+  },
+  {
+    key: 'dying_slideforward',
+    name: 'Dying Slide Forward',
+    fileName: 'mixamo_dying_slideforward.fbx',
+    category: 'dramatic',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_dying_slideforward.fbx'),
+  },
+  {
+    key: 'dying_strangled',
+    name: 'Dying Strangled',
+    fileName: 'mixamo_dying_strangled.fbx',
+    category: 'dramatic',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_dying_strangled.fbx'),
+  },
+  {
+    key: 'flair_360legsmove',
+    name: 'Flair 360 Legs Move',
+    fileName: 'mixamo_flair_360legsmove.fbx',
+    category: 'dance',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_flair_360legsmove.fbx'),
+  },
+  {
+    key: 'groin_hurt',
+    name: 'Groin Hurt',
+    fileName: 'mixamo_groin_hurt.fbx',
+    category: 'dramatic',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_groin_hurt.fbx'),
+  },
+  {
+    key: 'highkick',
+    name: 'High Kick',
+    fileName: 'mixamo_highkick.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_highkick.fbx'),
+  },
+  {
+    key: 'idle_injured',
+    name: 'Idle Injured',
+    fileName: 'mixamo_idle_injured.fbx',
+    category: 'standby',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_idle_injured.fbx'),
+  },
+  {
+    key: 'jump',
+    name: 'Jump',
+    fileName: 'mixamo_jump.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_jump.fbx'),
+  },
+  {
+    key: 'jump_pushup',
+    name: 'Jump Pushup',
+    fileName: 'mixamo_jump_pushup.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_jump_pushup.fbx'),
+  },
+  {
+    key: 'jumpingjacks',
+    name: 'Jumping Jacks',
+    fileName: 'mixamo_.jumpingjacks.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_.jumpingjacks.fbx'),
+  },
+  {
+    key: 'kettlebellswing',
+    name: 'Kettlebell Swing',
+    fileName: 'mixamo_kettlebellswing.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_kettlebellswing.fbx'),
+  },
+  {
+    key: 'losertease',
+    name: 'Loser Tease',
+    fileName: 'mixamo_losertease.fbx',
+    category: 'emote',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_losertease.fbx'),
+  },
+  {
+    key: 'macarena_dance',
+    name: 'Macarena Dance',
+    fileName: 'mixamo_macarena_dance.fbx',
+    category: 'dance',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_macarena_dance.fbx'),
+  },
+  {
+    key: 'nonono',
+    name: 'No No No',
+    fileName: 'mixamo_nonono.fbx',
+    category: 'emote',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_nonono.fbx'),
+  },
+  {
+    key: 'pose_femalestand',
+    name: 'Female Stand Pose',
+    fileName: 'mixamo_pose_femalestand.fbx',
+    category: 'pose',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_pose_femalestand.fbx'),
+  },
+  {
+    key: 'pose_layingonback',
+    name: 'Laying On Back Pose',
+    fileName: 'mixamo_pose_layingonback.fbx',
+    category: 'pose',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_pose_layingonback.fbx'),
+  },
+  {
+    key: 'pushup',
+    name: 'Pushup',
+    fileName: 'mixamo_pushup.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_pushup.fbx'),
+  },
+  {
+    key: 'rejected',
+    name: 'Rejected',
+    fileName: 'mixamo_rejected.fbx',
+    category: 'emote',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_rejected.fbx'),
+  },
+  {
+    key: 'rumba_dance',
+    name: 'Rumba Dance',
+    fileName: 'mixamo_rumba_dance.fbx',
+    category: 'dance',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_rumba_dance.fbx'),
+  },
+  {
+    key: 'sitting',
+    name: 'Sitting',
+    fileName: 'mixamo_sitting.fbx',
+    category: 'pose',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_sitting.fbx'),
+  },
+  {
+    key: 'sittinghappy',
+    name: 'Sitting Happy',
+    fileName: 'mixamo_sittinghappy.fbx',
+    category: 'pose',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_sittinghappy.fbx'),
+  },
+  {
+    key: 'situps',
+    name: 'Situps',
+    fileName: 'mixamo_situps.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_situps.fbx'),
+  },
+  {
+    key: 'snake_dance',
+    name: 'Snake Dance',
+    fileName: 'mixamo_snake_dance.fbx',
+    category: 'dance',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_snake_dance.fbx'),
+  },
+  {
+    key: 'soulspin_dance',
+    name: 'Soulspin Dance',
+    fileName: 'mixamo_soulspin_dance.fbx',
+    category: 'dance',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_soulspin_dance.fbx'),
+  },
+  {
+    key: 'talking',
+    name: 'Talking',
+    fileName: 'mixamo_talking.fbx',
+    category: 'emote',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_talking.fbx'),
+  },
+  {
+    key: 'thankful',
+    name: 'Thankful',
+    fileName: 'mixamo_thankful.fbx',
+    category: 'emote',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_thankful.fbx'),
+  },
+  {
+    key: 'touchscreen',
+    name: 'Touchscreen',
+    fileName: 'mixamo_touchscreen.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_touchscreen.fbx'),
   },
 ];
 

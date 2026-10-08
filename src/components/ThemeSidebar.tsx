@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
 import { X, Plus, Check, Palette, Trash2, Shirt, Lock, Sun, Moon, Sparkles, Crown } from 'lucide-react';
 import { ThemeDefinition, WardrobeOutfit } from '../types';
-import { THEME_COLORS, WARDROBE_OUTFITS, VRM_CONFIG } from '../constants';
+import { THEME_COLORS, WARDROBE_OUTFITS, SECRET_WARDROBE_OUTFITS, VRM_CONFIG } from '../constants';
 import { fetchVRMWithCache } from '../lib/vrmCache';
 
 interface ThemeSidebarProps {
@@ -20,6 +20,7 @@ interface ThemeSidebarProps {
   onSelectOutfit: (outfitId: string) => void;
   isPremiumUser: boolean;
   onRequirePremium?: () => void;
+  unlockedOutfitIds?: string[];
 }
 
 // Shared offscreen WebGLRenderer so 9 live 3D portrait viewports never exceed browser WebGL context limits
@@ -339,6 +340,14 @@ const WardrobePortraitViewport: React.FC<WardrobePortraitViewportProps> = ({
             <span>PRO</span>
           </div>
         )}
+
+        {/* Unlocked Secret Badge for Redeemed Secret Skins */}
+        {outfit.isSecret && !isLocked && (
+          <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-purple-600/90 text-white text-[8px] font-mono font-bold uppercase flex items-center gap-0.5 shadow-xs z-20">
+            <Sparkles className="w-2.5 h-2.5" />
+            <span>SECRET</span>
+          </div>
+        )}
       </div>
 
       {/* Outfit Title & Status Footer */}
@@ -348,7 +357,13 @@ const WardrobePortraitViewport: React.FC<WardrobePortraitViewportProps> = ({
             {outfit.name}
           </span>
           <span className="block text-[9px] font-mono text-neutral-400 dark:text-neutral-500 truncate">
-            {isSelected ? 'Equipped' : outfit.isPremium ? 'Premium Skin' : 'Default Skin'}
+            {isSelected
+              ? 'Equipped'
+              : outfit.isSecret
+              ? 'Secret Skin'
+              : outfit.isPremium
+              ? 'Premium Skin'
+              : 'Default Skin'}
           </span>
         </div>
       </div>
@@ -369,8 +384,15 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
   onSelectOutfit,
   isPremiumUser,
   onRequirePremium,
+  unlockedOutfitIds = [],
 }) => {
   const sidebarRef = useRef<HTMLElement>(null);
+
+  const unlockedSet = new Set(unlockedOutfitIds);
+  const unlockedSecretOutfits = SECRET_WARDROBE_OUTFITS.filter(
+    (outfit) => unlockedSet.has(outfit.id) || unlockedSet.has(outfit.fileName)
+  );
+  const displayedOutfits = [...WARDROBE_OUTFITS, ...unlockedSecretOutfits];
 
   // Auto-close if clicked outside
   useEffect(() => {
@@ -708,12 +730,12 @@ export const ThemeSidebar: React.FC<ThemeSidebarProps> = ({
                   color: 'var(--theme-accent)',
                 }}
               >
-                {WARDROBE_OUTFITS.length} Outfits
+                {displayedOutfits.length} Outfits
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
-              {WARDROBE_OUTFITS.map((outfit, idx) => {
+              {displayedOutfits.map((outfit, idx) => {
                 const isSelected = equippedOutfitId === outfit.id;
                 const isLocked = outfit.isPremium && !isPremiumUser;
 

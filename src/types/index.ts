@@ -216,6 +216,7 @@ export interface AccountUser {
   last_login_device: string;
   device_fingerprints: string[];
   equipped_outfit_id: string;
+  unlocked_outfits?: string[];
   active_theme_id: string;
   created_at: string;
 }
@@ -228,6 +229,8 @@ export interface WardrobeOutfit {
   fallbackModelUrl: string;
   isPremium: boolean;
   isDefault?: boolean;
+  isSecret?: boolean;
+  redeemCode?: string;
 }
 
 export interface TimelineCue {
