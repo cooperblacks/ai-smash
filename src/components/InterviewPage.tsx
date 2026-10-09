@@ -39,9 +39,11 @@ import {
 import confetti from 'canvas-confetti';
 import { VRMCanvas } from './VRMCanvas';
 import { soundManager, waitForPersonaVoice, getPersonaVoice } from '../lib/audio';
-import { AI_PROFILE, SPEECH_RECOGNITION_CONFIG } from '../constants';
+import { AI_PROFILE, SPEECH_RECOGNITION_CONFIG, OLLAMA_CONFIG } from '../constants';
 import { AvatarEmotion } from '../lib/emotionDetector';
 import { lipSyncManager } from '../lib/lipSync';
+import { pingOllama, streamOllama } from '../lib/ollama';
+import { loadCustomOllamaUrl } from '../lib/storage';
 
 interface InterviewPageProps {
   onNavigateHome: () => void;
@@ -108,10 +110,241 @@ const DEFAULT_SCENARIO_CONFIG: InterviewScenarioConfig = {
     "Thank you for sharing that context. Let's move on to the next step.",
     "Got it, that gives me good context. Let's continue forward.",
     "Understood. That covers this part well, let's proceed to the next step.",
+    "Appreciated! I have logged those details. Let's transition to the next phase.",
+    "Wonderful, thank you for walking me through that. Let's move right along.",
   ],
   minCharsForOpenQuestionAdvance: 10,
   showHana3DModel: true,
 };
+
+// Varied transition voicelines to ensure unique, natural recruiter speech across phases
+const TRANSITION_VOICELINES = {
+  silenceAdvance: [
+    "I am assuming you have nothing else to say for now so let's move on to the next step.",
+    "Thank you for sharing that context. Let's move on to the next step.",
+    "Got it, that gives me good context. Let's continue forward.",
+    "Understood. That covers this part well, let's proceed to the next step.",
+    "Appreciated! I have noted your response in the dossier. Moving right along.",
+    "Wonderful, thank you for walking me through that. Let's move forward to the next part.",
+  ],
+  doneAcknowledgment: [
+    "Got it, thank you for confirming you are finished with that answer! Let's move right along.",
+    "Understood! I have logged your complete response. Let's proceed to the next step.",
+    "Perfect, thank you for wrapping up that point. Let's transition to the next part.",
+    "Thank you for letting me know you are done! Moving forward to our next phase.",
+    "All noted! Since that covers your answer, let's continue to the next stage.",
+  ],
+  question1Intro: [
+    "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?",
+    "To kick things off, I'd love to learn more about you. Could you walk me through your background and what excites you most about this opportunity?",
+    "Let's start with an introduction. Tell me about your journey so far, your core strengths, and what motivates you in this field.",
+  ],
+  question2Intro: [
+    "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?",
+    "Great context. Next, could you share a complex engineering challenge you faced recently and the steps you took to solve it?",
+    "I appreciate that overview. For our second question, tell me about a tough technical obstacle or system problem you debugged and how you brought it to resolution.",
+  ],
+  taskResumeIntro: [
+    "Before we proceed to written tasks, let's review your credentials. Please upload your updated resume or CV document so we have the latest version on file for our recruiting team.",
+    "Now let's pull up the credentials panel. Please upload your current resume or CV on the right so our recruiting system can attach it to your session dossier.",
+    "Let's transition to our first interactive task. In the panel I just opened, please upload your latest resume or CV document.",
+  ],
+  taskResumeDone: [
+    "Thank you! I've received your updated document. Now let's move forward to the written reflection task.",
+    "Awesome, your resume is securely attached to your profile. Let's switch the panel over to the written reflection exercise.",
+    "Got your document on file! Let's transition to the next task on your screen: a short written reflection.",
+  ],
+  taskWrittenIntro: [
+    "Next, we have a short written reflection task. In the spotlight panel on your right, please write down three things you like about yourself and why. Take your time, and submit when you have at least 100 characters.",
+    "Here is our written reflection prompt. In the task panel, please share three qualities you value in yourself and why, using at least 100 characters.",
+    "I've updated the task panel for your written reflection. Please write down three strengths or traits you appreciate about yourself and hit submit once you reach 100 characters.",
+  ],
+  taskWrittenDone: [
+    "Excellent self-reflection. I've recorded your response. Let's move on to the situational pressure rating.",
+    "Thank you for that thoughtful reflection! I've saved it to your dossier. Now let's switch to our situational pressure check.",
+    "Great insights—I have logged your written response. Let's bring up the situational pressure assessment next.",
+  ],
+  taskPressureIntro: [
+    "Great. Now we have a quick situational question. In the spotlight panel, select the rating that most accurately reflects how you perform under intense project pressure.",
+    "Next up is a quick situational check. Looking at the options in the task panel, choose the statement that best matches how you handle high-pressure deadlines.",
+    "I've switched the panel to our situational behavior check. Please pick the option that most honestly describes how you operate under project pressure.",
+  ],
+  taskPressureDone: [
+    "Noted! Next up, we will do a fast visual verification sequence.",
+    "Got your selection recorded! Now let's switch the panel to our final interactive step: visual identity verification.",
+    "Thank you, I've logged that rating. Let's pull up the camera verification panel for three quick angle snapshots.",
+  ],
+  taskSnapshotIntro: [
+    "For fun and identity verification, please write down your phone number on a small piece of paper. First, hold it up and look directly forward, then say 'click' or 'ready' when you're set.",
+    "Here is our visual liveness check. Please hold up a small piece of paper with your phone number or test digits, face forward, and say 'click' or 'ready' to snap the first photo.",
+    "Let's complete our multi-angle verification. Hold up your paper note, look straight ahead at the camera, and say 'click' whenever you are ready.",
+  ],
+  taskSnapshotStep2: [
+    "Awesome shot. Now, keep holding up the paper, turn your head slightly to the left, and say 'click' or 'ready'.",
+    "Great first frame! Next, keep the note visible, angle your head slightly to the left, and say 'click' when ready.",
+    "Forward pose captured! Now turn slightly to your left while holding the paper and say 'click' or 'do it'.",
+  ],
+  taskSnapshotStep3: [
+    "Got it! Lastly, turn your head slightly to the right while holding the paper, and say 'click' or 'do it'.",
+    "Nice! For the third and final angle, turn your head slightly to the right and say 'click' or 'ready'.",
+    "Left angle verified! One last shot—turn slightly to your right with the note and say 'click'.",
+  ],
+  taskSnapshotDone: [
+    "Perfect! All three identity frames are captured and verified. Now let's open the floor for any questions you might have.",
+    "All three verification angles are locked in! Let's close the task panel and move into our open Q and A session.",
+    "Fantastic, visual verification is complete. Let's transition to the final Q and A portion of our interview.",
+  ],
+  qaIntroFallback: [
+    "Thank you for completing all spotlight tasks. Now, do you have any questions for me or our recruiting team about the role or MuxAI?",
+    "You have completed every assessment task! Before we wrap up, what questions do you have for me about MuxAI, our engineering team, or the role?",
+    "Great job on all the tasks today. I'd love to open the floor now—do you have any questions about working at MuxAI or what comes next?",
+  ],
+  qaCheckMore: [
+    "Is that all, or do you have any other questions for me?",
+    "Do you have any other questions about the role or MuxAI, or does that cover everything?",
+    "Would you like to ask anything else before we wrap up our session?",
+  ],
+  qaConclude: [
+    "I am assuming that covers everything for now, so let's move on to conclude our interview session.",
+    "Alright, it looks like we've covered all your questions! Let's wrap up our interview session.",
+    "Wonderful, thank you for those thoughtful questions! Let's bring our session to a close.",
+  ],
+  wrapupFinal: [
+    "Thank you so much for your time today. It was a pleasure speaking with you. Our recruiting team will review your session dossier and reach out with next steps soon. Have a wonderful day!",
+    "Thank you again for joining me today and completing the interview! I've compiled your full evaluation dossier for our hiring team, and you'll hear back from us very soon. Take care!",
+    "It was truly a pleasure interviewing you today. Your responses and tasks have been saved for our engineering leadership review. Wishing you a fantastic rest of your day!",
+  ],
+};
+
+// MuxAI Company & Engineering RAG Knowledge Base for Q&A Session
+interface RagDocumentChunk {
+  id: string;
+  title: string;
+  keywords: string[];
+  content: string;
+}
+
+const MUXAI_COMPANY_KNOWLEDGE_BASE: RagDocumentChunk[] = [
+  {
+    id: 'company_mission',
+    title: 'MuxAI Company Overview & Mission',
+    keywords: ['muxai', 'company', 'mission', 'vision', 'what does', 'about', 'product', 'platform', 'hana', 'who are you', 'build'],
+    content:
+      'MuxAI is an AI research and product engineering company building decentralized, self-hosted, and browser-native multimodal AI platforms. Our flagship companion and interviewer persona, Hana, integrates real-time 3D VRM WebGL rendering, low-latency voice synthesis, WebGPU/WASM small language models, and distributed Ollama inference nodes.',
+  },
+  {
+    id: 'tech_stack_architecture',
+    title: 'Engineering Tech Stack & System Architecture',
+    keywords: ['stack', 'tech', 'technology', 'architecture', 'code', 'language', 'framework', 'react', 'three', 'webgl', 'vrm', 'database', 'backend', 'frontend', 'infrastructure', 'ai', 'llm', 'models', 'ollama'],
+    content:
+      'Our core stack uses TypeScript, React 19, Three.js / WebGL (@pixiv/three-vrm) for 60fps real-time 3D character animation and phoneme lip-syncing, Node.js/Express and serverless edge endpoints, Neon PostgreSQL for persistence, and a hybrid inference layer combining browser WebGPU (@huggingface/transformers) with self-hosted MuxAI Ollama GPU clusters.',
+  },
+  {
+    id: 'engineering_culture',
+    title: 'Engineering Culture, Autonomy & Day-to-Day Workflow',
+    keywords: ['culture', 'day', 'daily', 'workflow', 'work', 'life', 'balance', 'hours', 'sprint', 'agile', 'autonomy', 'team', 'size', 'collaborate', 'management', 'meetings', 'environment', 'routine', 'typical'],
+    content:
+      'MuxAI operates with a high-ownership, low-bureaucracy engineering culture. Engineers work in small autonomous pods of 3 to 5 builders with direct ownership from architecture to production deployment. We keep synchronous meetings minimal, rely on clear RFCs and async demos, and ship to production daily.',
+  },
+  {
+    id: 'remote_location_policy',
+    title: 'Remote-First Policy, Hours & Global Collaboration',
+    keywords: ['remote', 'hybrid', 'office', 'location', 'relocate', 'country', 'timezone', 'time zone', 'async', 'flexible', 'where', 'work from home', 'wfh'],
+    content:
+      'MuxAI is 100% remote-first across global timezones. Engineers have flexible schedules with 3 to 4 hours of core async/sync overlap for design reviews and pairing. We provide a $2,500 home office & GPU hardware setup stipend plus co-working space reimbursement.',
+  },
+  {
+    id: 'compensation_benefits',
+    title: 'Compensation, Salary, Equity & Benefits Package',
+    keywords: ['salary', 'compensation', 'pay', 'money', 'equity', 'stock', 'options', 'benefits', 'health', 'insurance', 'pto', 'vacation', 'bonus', 'stipend', 'offer', 'package'],
+    content:
+      'MuxAI offers top-of-market base salary bands benchmarked to San Francisco/NYC tiers regardless of location, meaningful early-stage equity with flexible exercise windows, comprehensive medical/dental/vision coverage, unlimited paid time off with a mandatory 4-week minimum vacation policy, and annual learning/compute stipends.',
+  },
+  {
+    id: 'interview_next_steps',
+    title: 'Hiring Process, Timeline & Next Steps After Screening',
+    keywords: ['next', 'step', 'steps', 'process', 'timeline', 'hear back', 'when', 'rounds', 'decision', 'recruiter', 'follow up', 'feedback', 'how long', 'stages', 'offer', 'after this'],
+    content:
+      'After this automated screening with Hana, our engineering hiring team reviews your session dossier within 24 to 48 hours. Shortlisted candidates advance to a 45-minute technical architecture deep-dive with a Staff Engineer, followed by a brief founder alignment chat and an offer decision within one week.',
+  },
+  {
+    id: 'growth_mentorship_roadmap',
+    title: 'Career Growth, Mentorship & 2026 Product Roadmap',
+    keywords: ['growth', 'career', 'promotion', 'mentor', 'learning', 'roadmap', 'future', 'challenges', 'projects', 'impact', 'first 90 days', 'onboarding', 'success'],
+    content:
+      'In your first 30 to 90 days, you will ship core features across our real-time multimodal pipeline, 3D avatar studio, and autonomous agent runtime. Every engineer pairs with a Principal/Staff mentor, has dedicated R&D exploration Fridays, and can grow along either the Staff IC track or Engineering Leadership track.',
+  },
+];
+
+function buildMuxAiQaRagPrompt(candidateQuestion: string, targetRole: string, candidateName: string): string {
+  const lowerQ = candidateQuestion.toLowerCase();
+  const scoredChunks = MUXAI_COMPANY_KNOWLEDGE_BASE.map((doc) => {
+    let score = 0;
+    for (const kw of doc.keywords) {
+      if (lowerQ.includes(kw)) score += 2;
+    }
+    return { doc, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const topDocs = scoredChunks.slice(0, 4).map((item) => `[${item.doc.title}]: ${item.doc.content}`).join('\n');
+
+  return [
+    `You are Hana, the AI Technical Recruiter and Interviewer at MuxAI, conducting the live Q&A phase of an interview for the "${targetRole}" position${candidateName ? ` with candidate ${candidateName}` : ''}.`,
+    `Use the following retrieved MuxAI Company Knowledge Base (RAG Context) to answer the candidate's question accurately, smartly, and conversationally:`,
+    `--- MUXAI RAG KNOWLEDGE BASE ---`,
+    topDocs,
+    `--- END KNOWLEDGE BASE ---`,
+    `Instructions:`,
+    `- Speak directly to the candidate in first-person as Hana from MuxAI.`,
+    `- Keep your spoken response concise, warm, authoritative, and natural for live voice synthesis (2 to 4 sentences max, plain text only, no markdown bullets or asterisks).`,
+  ].join('\n');
+}
+
+function generateSmartQaFallbackAnswer(questionText: string, targetRole: string): string {
+  const lower = questionText.toLowerCase();
+
+  if (/(salary|compensation|pay|equity|benefits|offer|package|stipend|pto|vacation|insurance)/i.test(lower)) {
+    return "Compensation packages at MuxAI are top-of-market and include competitive base pay, meaningful early-stage equity grants, a dedicated home office and GPU hardware stipend, and comprehensive health and wellness benefits. Exact figures are tailored to your level during the offer phase.";
+  }
+  if (/(remote|location|hybrid|office|timezone|time zone|hours|schedule|flexible|work from home|wfh|async)/i.test(lower)) {
+    return "We operate with a 100% remote-first, globally distributed engineering team. We prioritize asynchronous communication, clear technical RFCs, and outcome-based productivity rather than rigid office hours.";
+  }
+  if (/(stack|tech|technology|architecture|tools|framework|language|code|model|llm|vrm|three|webgl|database|infrastructure)/i.test(lower)) {
+    return `For the ${targetRole} position, our tech stack centers around TypeScript, React 19, Three.js WebGL and 3D VRM engines, Node.js, Neon PostgreSQL, and hybrid AI inference combining browser WebGPU with our self-hosted MuxAI Ollama GPU clusters.`;
+  }
+  if (/(day|daily|routine|typical day|culture|team|workflow|sprint|management|autonomy|meetings|work life)/i.test(lower)) {
+    return "A typical day starts with an asynchronous standup, followed by deep focus time in small autonomous pods of three to five engineers. We keep synchronous meetings minimal and empower builders to own architecture and ship to production daily.";
+  }
+  if (/(next step|timeline|process|hear back|when|rounds|feedback|decision|stages|after this)/i.test(lower)) {
+    return "Following this session, our recruitment and engineering panel will review your completed dossier, tasks, and responses within 24 to 48 hours. Shortlisted candidates advance to a technical architecture deep-dive with a Staff Engineer.";
+  }
+  if (/(growth|career|mentor|onboarding|first 90|roadmap|future|project|challenge|impact)/i.test(lower)) {
+    return "In your first 90 days, you will pair with a Staff mentor and ship core improvements to our real-time multimodal companion runtime and autonomous recruiting suite, with dedicated R&D time to pioneer new AI capabilities.";
+  }
+
+  return "That's a great question. At MuxAI, our engineering culture emphasizes high agency, rapid iteration, and direct ownership of autonomous multimodal agent systems. We value pragmatic architecture, transparent communication, and continuous learning.";
+}
+
+// Smart layer of decision-making: detects when candidate explicitly says they are done or finished
+function detectCandidateFinishedIntent(text: string, phase: MeetingPhase): boolean {
+  const clean = text.trim().toLowerCase();
+  if (!clean) return false;
+
+  const explicitDoneRegex =
+    /\b(i'?m done|i am done|that'?s all|that is all|that'?s it|that is it|that'?s everything|that is everything|nothing else|no more to say|i have finished|i'?ve finished|that concludes my answer|that covers it|that'?s my answer|that is my answer|all done|done speaking|i'?m finished|i am finished|finished answering|move on|next question please|ready for the next question|that wraps it up)\b/i;
+
+  if (phase === 'candidate_qa') {
+    const qaDoneRegex =
+      /\b(no|nope|nah|none|nothing|not right now|i'?m good|i am good|all good|no questions|no more questions|that'?s all|that is all|no that'?s all|that'?s it|i don'?t have any|i do not have any|we are good|we'?re good|no thank you|no thanks|nothing from me|nothing further|i'?m all set|i am all set|done with questions|no other questions)\b/i;
+    const hasQuestionWord = /\b(what|how|when|where|why|who|which|can you|could you|tell me|is there|are there|do you|does the)\b/i.test(clean);
+    if ((qaDoneRegex.test(clean) || explicitDoneRegex.test(clean)) && (!clean.includes('?') && (!hasQuestionWord || clean.length < 48))) {
+      return true;
+    }
+    return false;
+  }
+
+  return explicitDoneRegex.test(clean);
+}
 
 // Lenient fuzzy matching so candidate can naturally say ready/agree phrases
 function calculateAgreementMatch(spoken: string): number {
@@ -271,8 +504,85 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const qaSilenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const resetSilenceTimerRef = useRef<() => void>(() => {});
   const [qaStageState, setQaStageState] = useState<
-    'listening' | 'answering' | 'waiting_5s' | 'asking_that_is_all' | 'waiting_final_5s'
+    'idle' | 'hinting' | 'listening' | 'answering' | 'waiting_5s' | 'asking_that_is_all' | 'waiting_final_5s' | 'concluded'
   >('listening');
+
+  // MuxAI Ollama Server Online Status for RAG Q&A
+  const [isMuxAiServerOnline, setIsMuxAiServerOnline] = useState<boolean>(false);
+  const muxAiServerOnlineRef = useRef<boolean>(false);
+
+  // Custom Mixamo Animation Trigger & 3D Look Target Offset towards Task Panel
+  const [customAnimationTrigger, setCustomAnimationTrigger] = useState<{
+    clipFileName: string;
+    triggerId: number;
+    loopOnce?: boolean;
+  } | null>(null);
+  const [hanaLookTarget, setHanaLookTarget] = useState<{ yaw: number; pitch: number } | null>(null);
+  const lookResetTimeoutRef = useRef<any>(null);
+
+  // Voiceline variance memory so Hana never repeats the exact same transition line back-to-back
+  const lastUsedVoicelineMapRef = useRef<Record<string, number>>({});
+
+  const pickUniqueVoiceline = useCallback((category: keyof typeof TRANSITION_VOICELINES): string => {
+    const list = TRANSITION_VOICELINES[category];
+    if (!list || list.length === 0) return '';
+    if (list.length === 1) return list[0];
+    const lastIdx = lastUsedVoicelineMapRef.current[category] ?? -1;
+    let nextIdx = Math.floor(Math.random() * list.length);
+    if (nextIdx === lastIdx) {
+      nextIdx = (lastIdx + 1) % list.length;
+    }
+    lastUsedVoicelineMapRef.current[category] = nextIdx;
+    return list[nextIdx];
+  }, []);
+
+  const triggerHanaAnimation = useCallback((clipFileName: string, loopOnce: boolean = true) => {
+    setCustomAnimationTrigger({
+      clipFileName,
+      triggerId: Date.now() + Math.floor(Math.random() * 1000),
+      loopOnce,
+    });
+  }, []);
+
+  const triggerTaskPanelInteraction = useCallback(
+    (durationMs: number = 3400, playButtonPush: boolean = true) => {
+      if (playButtonPush) {
+        triggerHanaAnimation('mixamo_buttonpush.fbx', true);
+      }
+      // Orient 3D model's head/neck/torso towards the spotlight task panel
+      setHanaLookTarget({ yaw: 0.44, pitch: -0.06 });
+      if (lookResetTimeoutRef.current) {
+        clearTimeout(lookResetTimeoutRef.current);
+      }
+      lookResetTimeoutRef.current = setTimeout(() => {
+        setHanaLookTarget(null);
+      }, durationMs);
+    },
+    [triggerHanaAnimation]
+  );
+
+  // Candidate live subtitle marquee scroll container refs
+  const candidateSubtitleScrollRef = useRef<HTMLDivElement | null>(null);
+  const spotlightSubtitleScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Probe MuxAI Ollama server status on mount & when entering Q&A
+  const refreshMuxAiServerStatus = useCallback(async (): Promise<boolean> => {
+    try {
+      const baseUrl = loadCustomOllamaUrl() || OLLAMA_CONFIG.muxAiEndpoint;
+      const result = await pingOllama(baseUrl);
+      muxAiServerOnlineRef.current = result.online;
+      setIsMuxAiServerOnline(result.online);
+      return result.online;
+    } catch {
+      muxAiServerOnlineRef.current = false;
+      setIsMuxAiServerOnline(false);
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshMuxAiServerStatus();
+  }, [refreshMuxAiServerStatus]);
 
   // Edge case: User interruption detection & resume prefix
   const hanaIsSpeakingRef = useRef<boolean>(false);
@@ -304,6 +614,16 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const recognitionRef = useRef<any>(null);
   const candidateTranscriptRef = useRef<string>('');
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Auto-scroll candidate live word subtitles like a marquee to always show most recent words
+  useEffect(() => {
+    if (candidateSubtitleScrollRef.current) {
+      candidateSubtitleScrollRef.current.scrollLeft = candidateSubtitleScrollRef.current.scrollWidth;
+    }
+    if (spotlightSubtitleScrollRef.current) {
+      spotlightSubtitleScrollRef.current.scrollLeft = spotlightSubtitleScrollRef.current.scrollWidth;
+    }
+  }, [candidateLiveTranscript]);
 
   // Spotlight Tasks Data
   // Task 1: Resume Document Upload (handled via uploadedResume)
@@ -1114,6 +1434,22 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   );
 
   // Candidate Q&A voice-first handlers
+  const concludeQaSession = useCallback(() => {
+    if (qaSilenceTimerRef.current) {
+      clearTimeout(qaSilenceTimerRef.current);
+      qaSilenceTimerRef.current = null;
+    }
+    setQaStageState('concluded');
+    const wrapupPrompt = pickUniqueVoiceline('qaConclude');
+    speakHanaLine(
+      wrapupPrompt,
+      () => {
+        advanceToPhase('wrapup');
+      },
+      'neutral'
+    );
+  }, [speakHanaLine, pickUniqueVoiceline]);
+
   const startQa5sSilenceTimer = useCallback(() => {
     if (qaSilenceTimerRef.current) {
       clearTimeout(qaSilenceTimerRef.current);
@@ -1125,10 +1461,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       if (meetingPhaseRef.current !== 'candidate_qa' || hanaIsSpeakingRef.current) return;
 
       // 5 seconds elapsed without candidate speaking!
-      // Hana asks if that is all (as requested):
+      // Hana asks if that is all with varied voiceline:
       setQaStageState('asking_that_is_all');
       setNodCount((c) => c + 1);
-      const followUp = "Is that all, or do you have any other questions for me?";
+      const followUp = pickUniqueVoiceline('qaCheckMore');
 
       speakHanaLine(
         followUp,
@@ -1144,25 +1480,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     }, waitDurationMs);
-  }, [scenarioConfig.qaSilenceSeconds, speakHanaLine]);
-
-  const concludeQaSession = useCallback(() => {
-    if (qaSilenceTimerRef.current) {
-      clearTimeout(qaSilenceTimerRef.current);
-      qaSilenceTimerRef.current = null;
-    }
-    const wrapupPrompt = "I am assuming that covers everything for now, so let's move on to conclude our interview session.";
-    speakHanaLine(
-      wrapupPrompt,
-      () => {
-        advanceToPhase('wrapup');
-      },
-      'neutral'
-    );
-  }, [speakHanaLine]);
+  }, [scenarioConfig.qaSilenceSeconds, speakHanaLine, pickUniqueVoiceline, concludeQaSession]);
 
   const answerCandidateQaQuestion = useCallback(
-    (qText: string) => {
+    async (qText: string) => {
       const trimmed = qText.trim();
       if (!trimmed || hanaIsSpeakingRef.current) return;
 
@@ -1178,26 +1499,44 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       setNodCount((c) => c + 1);
       setQaStageState('answering');
 
-      // Generate intelligent contextual response
-      const lower = trimmed.toLowerCase();
-      let answer =
-        "That's a great question. At MuxAI, our engineering culture emphasizes high agency, rapid iteration, and direct ownership of autonomous agent systems. We value pragmatic architecture, transparent communication, and continuous learning.";
+      let answer = '';
+      // Connect to MuxAI Ollama server's LLM with RAG system prompt if found to be online
+      const isOnline = muxAiServerOnlineRef.current || (await refreshMuxAiServerStatus());
+      if (isOnline) {
+        try {
+          setHanaReactionText('Consulting MuxAI company knowledge base...');
+          const ragSystemPrompt = buildMuxAiQaRagPrompt(trimmed, targetRole, candidateName.trim());
+          const baseUrl = loadCustomOllamaUrl() || OLLAMA_CONFIG.muxAiEndpoint;
+          const llmResponse = await streamOllama({
+            url: baseUrl,
+            model: OLLAMA_CONFIG.defaultFallbackModel,
+            history: qaHistory.slice(-4).map((item, idx) => ({
+              id: `qa_${idx}`,
+              role: (item.sender === 'candidate' ? 'user' : 'assistant') as 'user' | 'assistant',
+              content: item.text,
+              timestamp: Date.now(),
+            })),
+            userMessage: `${ragSystemPrompt}\n\nCandidate Question: "${trimmed}"\n\nHana's Spoken Recruiter Response:`,
+            maxTokens: 220,
+            onToken: () => {},
+          });
+          const cleaned = llmResponse
+            .replace(/[*#`_~]+/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (cleaned.length > 15) {
+            answer = cleaned;
+          }
+        } catch (err) {
+          console.warn('MuxAI Ollama Q&A RAG fallback triggered:', err);
+        } finally {
+          setHanaReactionText('');
+        }
+      }
 
-      if (lower.includes('salary') || lower.includes('compensation') || lower.includes('equity') || lower.includes('pay')) {
-        answer =
-          "Compensation packages are top-of-market and include competitive base pay, meaningful equity grants, and comprehensive health and wellness benefits. Exact numbers are tailored to experience during the offer phase.";
-      } else if (lower.includes('remote') || lower.includes('location') || lower.includes('wfh') || lower.includes('office')) {
-        answer =
-          "We operate with a remote-first, globally distributed team. We prioritize asynchronous communication and outcome-based productivity rather than fixed office hours.";
-      } else if (lower.includes('stack') || lower.includes('technology') || lower.includes('tools') || lower.includes('framework')) {
-        answer =
-          "Our tech stack centers around modern TypeScript, React, WebGL and 3D VRM engines, paired with low-latency LLM inference pipelines, Python microservices, and distributed streaming architectures.";
-      } else if (lower.includes('day') || lower.includes('daily') || lower.includes('routine') || lower.includes('typical day')) {
-        answer =
-          "A typical day starts with an asynchronous standup, followed by deep focus time on architecture and features. We hold minimal meetings and prioritize collaborative pair-programming and code reviews.";
-      } else if (lower.includes('next step') || lower.includes('process') || lower.includes('after this') || lower.includes('when hear back')) {
-        answer =
-          "Following this session, our recruitment panel will review your completed dossier, code artifacts, and responses. You can expect personalized feedback from our team within 48 to 72 hours.";
+      // Fallback to smart local Q&A engine if MuxAI Ollama server is offline or unreachable
+      if (!answer) {
+        answer = generateSmartQaFallbackAnswer(trimmed, targetRole);
       }
 
       setQaHistory((prev) => [...prev, { sender: 'hana', text: answer }]);
@@ -1212,11 +1551,18 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     },
-    [speakHanaLine, startQa5sSilenceTimer]
+    [
+      speakHanaLine,
+      startQa5sSilenceTimer,
+      refreshMuxAiServerStatus,
+      targetRole,
+      candidateName,
+      qaHistory,
+    ]
   );
 
   // Reset / Trigger Silence Auto-Send for Open Questions
-  // Uses configurable silence seconds and configurable varied voicelines
+  // Uses configurable silence seconds, varied voicelines, and smart done-intent detection
   const resetSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
@@ -1227,22 +1573,28 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       return;
     }
 
-    // Configurable duration (default 3.0s as requested)
-    const waitDurationMs = scenarioConfig.openQuestionSilenceSeconds * 1000;
+    const currentText = candidateTranscriptRef.current.trim();
+    const isExplicitlyDone = detectCandidateFinishedIntent(currentText, curPhase);
+
+    // Configurable duration (default 3.0s, or faster 1.0s if candidate explicitly stated they are done)
+    const waitDurationMs = isExplicitlyDone ? 1000 : scenarioConfig.openQuestionSilenceSeconds * 1000;
 
     silenceTimerRef.current = setTimeout(() => {
       const text = candidateTranscriptRef.current.trim();
       const phaseNow = meetingPhaseRef.current;
+      const doneNow = detectCandidateFinishedIntent(text, phaseNow);
 
       if (!hanaIsSpeakingRef.current && (phaseNow === 'question_1' || phaseNow === 'question_2')) {
         soundManager.playSend();
         setIsCandidateSpeaking(false);
         setNodCount((c) => c + 1);
 
-        // Hana speaks varied voicelines before proceeding upon silence!
-        const voiceline =
-          scenarioConfig.activeSilenceVoiceline ||
-          "I am assuming you have nothing else to say for now so let's move on to the next step.";
+        // Hana speaks varied voicelines (or explicit done acknowledgment) before proceeding
+        const voiceline = doneNow
+          ? pickUniqueVoiceline('doneAcknowledgment')
+          : pickUniqueVoiceline('silenceAdvance') ||
+            scenarioConfig.activeSilenceVoiceline ||
+            "I am assuming you have nothing else to say for now so let's move on to the next step.";
 
         if (phaseNow === 'question_1') {
           speakHanaLine(
@@ -1278,7 +1630,13 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       }
       silenceTimerRef.current = null;
     }, waitDurationMs);
-  }, [handleSaveResponse, scenarioConfig.activeSilenceVoiceline, scenarioConfig.openQuestionSilenceSeconds, speakHanaLine]);
+  }, [
+    handleSaveResponse,
+    scenarioConfig.activeSilenceVoiceline,
+    scenarioConfig.openQuestionSilenceSeconds,
+    speakHanaLine,
+    pickUniqueVoiceline,
+  ]);
 
   useEffect(() => {
     resetSilenceTimerRef.current = resetSilenceTimer;
@@ -1345,7 +1703,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           // Welcome phase affirmation
           if (curPhase === 'welcome') {
             setCandidateLiveTranscript(currentUtterance);
-            const isAffirmative = /\b(yes|yeah|yep|i can|hear you|loud and clear|see you|hello|hi)\b/i.test(lower);
+            const isAffirmative = /\b(yes|yeah|yep|i can|hear you|loud and clear|see you|hello|hi|ready|sure)\b/i.test(lower);
             if (isAffirmative && !hanaIsSpeakingRef.current) {
               setNodCount((c) => c + 1);
               setTimeout(() => {
@@ -1361,12 +1719,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             setCandidateLiveTranscript(candidateTranscriptRef.current);
             setIsCandidateSpeaking(true);
 
-            // Early completion phrase check (e.g. "That's all for this question")
-            const isDoneEarly =
-              /\b(that'?s all|that is all|i'?m done|i am done|that covers it|that'?s my answer|finished answering|nothing more to say)\b/i.test(
-                lower
-              );
-            if (isDoneEarly && candidateTranscriptRef.current.length >= 10 && !hanaIsSpeakingRef.current) {
+            // Smart decision-making layer: detect when candidate explicitly says they are done
+            const isDoneEarly = detectCandidateFinishedIntent(lower, curPhase);
+            if (isDoneEarly && candidateTranscriptRef.current.length >= 8 && !hanaIsSpeakingRef.current) {
               if (silenceTimerRef.current) {
                 clearTimeout(silenceTimerRef.current);
                 silenceTimerRef.current = null;
@@ -1374,7 +1729,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               soundManager.playSend();
               setIsCandidateSpeaking(false);
               setNodCount((c) => c + 1);
-              const voiceline = scenarioConfig.activeSilenceVoiceline || "I am assuming you have nothing else to say for now so let's move on to the next step.";
+              const voiceline = pickUniqueVoiceline('doneAcknowledgment');
               const text = candidateTranscriptRef.current.trim();
               if (curPhase === 'question_1') {
                 speakHanaLine(voiceline, () => {
@@ -1394,7 +1749,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
             // Contextual subtle reactions from Hana while candidate is answering
             if (candidateTranscriptRef.current.length > 25 && !hanaIsSpeakingRef.current) {
-              const reactions = ['Hmm...', 'I see', 'Got it', 'Understood'];
+              const reactions = ['Hmm...', 'I see', 'Got it', 'Understood', 'Noted'];
               const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
               setHanaReactionText(randomReaction);
               setHanaEmotion('neutral');
@@ -1404,14 +1759,17 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             resetSilenceTimer();
           }
 
-          // 2. CANDIDATE Q&A SESSION (Voice-First, No Manual Inputs)
+          // 2. CANDIDATE Q&A SESSION (Voice-First, Connected to MuxAI Ollama RAG + Smart Fallback)
           else if (curPhase === 'candidate_qa') {
-            const isFinishedPhrase =
-              /\b(that'?s all|that is all|no that'?s all|no questions|i'?m good|nope|all good|no thank you|nothing else|no more|we'?re good)\b/i.test(
-                lower
-              );
+            const isFinishedPhrase = detectCandidateFinishedIntent(lower, 'candidate_qa');
 
-            if (isFinishedPhrase && (qaStageState === 'waiting_5s' || qaStageState === 'waiting_final_5s' || qaStageState === 'listening')) {
+            if (
+              isFinishedPhrase &&
+              (qaStageState === 'waiting_5s' ||
+                qaStageState === 'waiting_final_5s' ||
+                qaStageState === 'listening' ||
+                qaStageState === 'hinting')
+            ) {
               concludeQaSession();
               return;
             }
@@ -1428,7 +1786,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             // Wait 2.0s silence after candidate finishes asking question before Hana responds
             qaSilenceTimerRef.current = setTimeout(() => {
               const qText = candidateTranscriptRef.current.trim();
-              if (qText.length >= 6 && !hanaIsSpeakingRef.current) {
+              if (!qText || hanaIsSpeakingRef.current) return;
+              if (detectCandidateFinishedIntent(qText, 'candidate_qa')) {
+                concludeQaSession();
+              } else if (qText.length >= 5) {
                 answerCandidateQaQuestion(qText);
               }
             }, 2000);
@@ -1744,14 +2105,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }, 2400);
   };
 
-  // Unified phase advance with vocal instructions before every task
+  // Unified phase advance with vocal instructions, Mixamo animations, and 3D gaze towards task panels
   const advanceToPhase = (nextPhase: MeetingPhase) => {
     setMeetingPhase(nextPhase);
     setCandidateLiveTranscript('');
     candidateTranscriptRef.current = '';
 
     if (nextPhase === 'question_1') {
-      const q1 = "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?";
+      setHanaLookTarget(null);
+      const q1 = pickUniqueVoiceline('question1Intro');
       speakHanaLine(
         q1,
         () => {
@@ -1760,7 +2122,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     } else if (nextPhase === 'question_2') {
-      const q2 = "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?";
+      setHanaLookTarget(null);
+      const q2 = pickUniqueVoiceline('question2Intro');
       speakHanaLine(
         q2,
         () => {
@@ -1769,20 +2132,24 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     } else if (nextPhase === 'task_resume') {
-      const prompt = "Before we proceed to written tasks, let's review your credentials. Please upload your updated resume or CV document so we have the latest version on file for our recruiting team.";
+      triggerTaskPanelInteraction(3800, true);
+      const prompt = pickUniqueVoiceline('taskResumeIntro');
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_written') {
-      const prompt = "Next, we have a short written reflection task. In the spotlight panel on your right, please write down three things you like about yourself and why. Take your time, and submit when you have at least 100 characters.";
+      triggerTaskPanelInteraction(3800, true);
+      const prompt = pickUniqueVoiceline('taskWrittenIntro');
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_pressure') {
-      const prompt = "Great. Now we have a quick situational question. In the spotlight panel, select the rating that most accurately reflects how you perform under intense project pressure.";
+      triggerTaskPanelInteraction(3800, true);
+      const prompt = pickUniqueVoiceline('taskPressureIntro');
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_snapshot') {
+      triggerTaskPanelInteraction(3800, true);
       setSnapshotStep(1);
       snapshotStepRef.current = 1;
       setIsListeningForTrigger(false);
       isListeningForTriggerRef.current = false;
-      const prompt = "For fun and identity verification, please write down your phone number on a small piece of paper. First, hold it up and look directly forward, then say 'click' or 'ready' when you're set.";
+      const prompt = pickUniqueVoiceline('taskSnapshotIntro');
       speakHanaLine(
         prompt,
         () => {
@@ -1794,23 +2161,48 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     } else if (nextPhase === 'candidate_qa') {
+      setHanaLookTarget(null);
       setQaStageState('listening');
-      const prompt = "Thank you for completing all spotlight tasks. Now, do you have any questions for me or our recruiting team about the role or MuxAI?";
+      // Check if MuxAI Ollama server is online; if online, run the required hinting phase
+      refreshMuxAiServerStatus().then((online) => {
+        if (online) {
+          setQaStageState('hinting');
+          const hintingLine =
+            'Okay, I have all the information ready from the company. Feel free to ask any questions now';
+          speakHanaLine(
+            hintingLine,
+            () => {
+              setQaStageState('waiting_5s');
+              startQa5sSilenceTimer();
+            },
+            'neutral'
+          );
+        } else {
+          const prompt = pickUniqueVoiceline('qaIntroFallback');
+          speakHanaLine(
+            prompt,
+            () => {
+              setQaStageState('waiting_5s');
+              startQa5sSilenceTimer();
+            },
+            'neutral'
+          );
+        }
+      });
+    } else if (nextPhase === 'wrapup') {
+      setHanaLookTarget(null);
+      // Play "mixamo_thankful.fbx" for the final wrapup
+      triggerHanaAnimation('mixamo_thankful.fbx', true);
+      const wrapup = pickUniqueVoiceline('wrapupFinal');
       speakHanaLine(
-        prompt,
+        wrapup,
         () => {
-          setQaStageState('waiting_5s');
-          startQa5sSilenceTimer();
+          setTimeout(() => {
+            handleEndMeetingAndReview();
+          }, 1500);
         },
         'neutral'
       );
-    } else if (nextPhase === 'wrapup') {
-      const wrapup = "Thank you so much for your time today. It was a pleasure speaking with you. Our recruiting team will review your session dossier and reach out with next steps soon. Have a wonderful day!";
-      speakHanaLine(wrapup, () => {
-        setTimeout(() => {
-          handleEndMeetingAndReview();
-        }, 1500);
-      }, 'neutral');
     }
   };
 
@@ -1821,6 +2213,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
     setIsUploadingResume(true);
     soundManager.playSend();
+    // Look towards the task panel when candidate modifies/uploads document
+    triggerTaskPanelInteraction(2600, false);
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -1856,6 +2250,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     if (!uploadedResume) return;
     setResumeSubmitted(true);
     soundManager.playReceive();
+    triggerTaskPanelInteraction(2800, true);
 
     setRecordedResponses((prev) => [
       ...prev,
@@ -1868,14 +2263,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       },
     ]);
 
-    // Hana speaks transition verbal feedback
-    const transitionText = "Thank you! I've received your updated document. Now let's move forward to the written reflection task.";
+    // Hana speaks varied transition verbal feedback
+    const transitionText = pickUniqueVoiceline('taskResumeDone');
     speakHanaLine(
       transitionText,
       () => {
         setTimeout(() => {
           advanceToPhase('task_written');
-        }, 1000);
+        }, 900);
       },
       'neutral'
     );
@@ -1886,6 +2281,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     if (writtenText.trim().length < 100) return;
     setWrittenSubmitted(true);
     soundManager.playSend();
+    triggerTaskPanelInteraction(2800, true);
 
     setRecordedResponses((prev) => [
       ...prev,
@@ -1898,14 +2294,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       },
     ]);
 
-    // Hana verbal feedback and advance
-    const feedback = "Excellent self-reflection. I've recorded your response. Let's move on to the situational pressure rating.";
+    // Hana varied verbal feedback and advance
+    const feedback = pickUniqueVoiceline('taskWrittenDone');
     speakHanaLine(
       feedback,
       () => {
         setTimeout(() => {
           advanceToPhase('task_pressure');
-        }, 1000);
+        }, 900);
       },
       'neutral'
     );
@@ -1916,6 +2312,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     if (!pressureRating) return;
     setPressureSubmitted(true);
     soundManager.playSend();
+    triggerTaskPanelInteraction(2800, true);
 
     setRecordedResponses((prev) => [
       ...prev,
@@ -1928,13 +2325,13 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       },
     ]);
 
-    const feedback = "Noted! Next up, we will do a fast visual verification sequence.";
+    const feedback = pickUniqueVoiceline('taskPressureDone');
     speakHanaLine(
       feedback,
       () => {
         setTimeout(() => {
           advanceToPhase('task_snapshot');
-        }, 1000);
+        }, 900);
       },
       'neutral'
     );
@@ -1986,6 +2383,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     soundManager.playReceive();
     const frame = captureCameraFrame();
     const currentStep = snapshotStepRef.current || 1;
+    // Look towards task panel & trigger button push when snapshot step updates
+    triggerTaskPanelInteraction(2800, true);
 
     if (currentStep === 1) {
       setSnapshots((prev) => [
@@ -2002,7 +2401,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       setSnapshotStep(2);
       setIsListeningForTrigger(false);
       isListeningForTriggerRef.current = false;
-      const nextPrompt = "Awesome shot. Now, keep holding up the paper, turn your head slightly to the left, and say 'click' or 'ready'.";
+      const nextPrompt = pickUniqueVoiceline('taskSnapshotStep2');
       speakHanaLine(
         nextPrompt,
         () => {
@@ -2028,7 +2427,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       setSnapshotStep(3);
       setIsListeningForTrigger(false);
       isListeningForTriggerRef.current = false;
-      const nextPrompt = "Got it! Lastly, turn your head slightly to the right while holding the paper, and say 'click' or 'do it'.";
+      const nextPrompt = pickUniqueVoiceline('taskSnapshotStep3');
       speakHanaLine(
         nextPrompt,
         () => {
@@ -2066,7 +2465,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         },
       ]);
 
-      const finishedText = "Perfect! All three identity frames are captured and verified. Now let's open the floor for any questions you might have.";
+      const finishedText = pickUniqueVoiceline('taskSnapshotDone');
       speakHanaLine(
         finishedText,
         () => {
@@ -2079,30 +2478,16 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   };
 
-  // Candidate Q&A handling
+  // Candidate Q&A handling (manual text input fallback if used)
   const handleSendCandidateQuestion = () => {
     const qText = candidateQuestionInput.trim();
     if (!qText) return;
-
-    setQaHistory((prev) => [...prev, { sender: 'candidate', text: qText }]);
     setCandidateQuestionInput('');
-    soundManager.playSend();
-
-    setTimeout(() => {
-      let answer = "That's a good question. At MuxAI, our engineering team works directly on autonomous AI agent architectures with high shipping cadence. Collaboration is open and autonomy is prioritized.";
-      if (qText.toLowerCase().includes('salary') || qText.toLowerCase().includes('compensation')) {
-        answer = 'Compensation packages are highly competitive and include equity options and comprehensive benefits, discussed directly at the offer stage.';
-      } else if (qText.toLowerCase().includes('remote') || qText.toLowerCase().includes('location')) {
-        answer = 'We are remote-first with flexible asynchronous setups globally.';
-      }
-
-      setQaHistory((prev) => [...prev, { sender: 'hana', text: answer }]);
-      speakHanaLine(answer, undefined, 'neutral');
-    }, 600);
+    answerCandidateQaQuestion(qText);
   };
 
   const handleFinishQaNoQuestions = () => {
-    advanceToPhase('wrapup');
+    concludeQaSession();
   };
 
   // ----------------------------------------------------
@@ -2827,6 +3212,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           enablePointerTracking={false}
                           disableIdleWaitingAnimations={true}
                           nodTrigger={nodCount}
+                          customAnimationTrigger={customAnimationTrigger}
+                          lookTargetOffset={hanaLookTarget}
                           onLoaded={() => {
                             setTimeout(() => {
                               setIsHana3DReady(true);
@@ -2878,12 +3265,19 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     </div>
                   )}
 
-                  {/* Live speech auto-send visual indicator for candidate */}
+                  {/* Live speech auto-scrolling marquee subtitle indicator for candidate */}
                   {candidateLiveTranscript && (
                     <div className="absolute top-4 left-4 right-4 z-20 pointer-events-none">
-                      <div className="px-3.5 py-2 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 text-white text-xs leading-relaxed max-w-lg mx-auto shadow-lg flex items-center gap-2">
+                      <div className="px-3.5 py-2 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 text-white text-xs leading-relaxed max-w-lg mx-auto shadow-lg flex items-center gap-2.5 overflow-hidden">
                         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                        <span className="truncate flex-1">&ldquo;{candidateLiveTranscript}&rdquo;</span>
+                        <div
+                          ref={candidateSubtitleScrollRef}
+                          className="flex-1 overflow-x-auto whitespace-nowrap scroll-smooth flex items-center justify-end [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                        >
+                          <span className="inline-block pl-2">
+                            &ldquo;{candidateLiveTranscript.split(/\s+/).slice(-18).join(' ')}&rdquo;
+                          </span>
+                        </div>
                         <span className="text-[10px] text-neutral-400 font-mono shrink-0">Auto-sending on silence...</span>
                       </div>
                     </div>
@@ -2965,6 +3359,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         enablePointerTracking={false}
                         disableIdleWaitingAnimations={true}
                         nodTrigger={nodCount}
+                        customAnimationTrigger={customAnimationTrigger}
+                        lookTargetOffset={hanaLookTarget}
                         onLoaded={() => setIsHana3DReady(true)}
                       />
                     </div>
@@ -2992,6 +3388,21 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       <div className="flex flex-col items-center justify-center h-full text-neutral-400 gap-1.5 p-4">
                         <VideoOff className="w-8 h-8" />
                         <span className="text-[11px]">Camera Off</span>
+                      </div>
+                    )}
+                    {candidateLiveTranscript && (
+                      <div className="absolute top-2 inset-x-2 z-20 pointer-events-none">
+                        <div className="px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md border border-white/20 text-white text-[11px] flex items-center gap-1.5 overflow-hidden">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                          <div
+                            ref={spotlightSubtitleScrollRef}
+                            className="flex-1 overflow-x-auto whitespace-nowrap scroll-smooth flex items-center justify-end [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                          >
+                            <span className="inline-block pl-1">
+                              &ldquo;{candidateLiveTranscript.split(/\s+/).slice(-14).join(' ')}&rdquo;
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     )}
                     <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-10">
@@ -3098,10 +3509,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       </div>
 
                       <div className="space-y-2 flex-1 flex flex-col">
-                        <textarea
+                          <textarea
                           rows={6}
                           value={writtenText}
-                          onChange={(e) => setWrittenText(e.target.value)}
+                          onChange={(e) => {
+                            setWrittenText(e.target.value);
+                            if (e.target.value.length % 25 === 1) {
+                              triggerTaskPanelInteraction(1800, false);
+                            }
+                          }}
                           placeholder="1. I love diving deep into architectural puzzles because...&#10;2. I value empathetic communication with team members...&#10;3. I am resilient and relentless when debugging critical edge cases..."
                           className="w-full flex-1 p-4 rounded-2xl bg-neutral-50 border border-neutral-300 text-neutral-900 text-sm focus:outline-none focus:border-sky-500 resize-none leading-relaxed placeholder:text-neutral-400"
                         />
@@ -3171,7 +3587,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                               type="radio"
                               name="pressure"
                               checked={pressureRating === opt}
-                              onChange={() => setPressureRating(opt)}
+                              onChange={() => {
+                                setPressureRating(opt);
+                                triggerTaskPanelInteraction(2200, false);
+                              }}
                               className="accent-sky-500 w-4 h-4"
                             />
                             <span className="text-sm font-medium">{opt}</span>
@@ -3728,12 +4147,12 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
                   <h3 className="font-bold text-base text-neutral-900">{res.question}</h3>
 
-                  <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 text-sm leading-relaxed text-neutral-800 whitespace-pre-wrap">
+                  <div className="p-4 rounded-2xl bg-neutral-100 border border-neutral-200 text-sm leading-relaxed text-neutral-950 font-medium whitespace-pre-wrap">
                     {res.answer}
                   </div>
 
                   {res.aiNotes && (
-                    <div className="flex items-start gap-2 pt-1 text-xs text-neutral-600">
+                    <div className="flex items-start gap-2 pt-1 text-xs text-neutral-700">
                       <Sparkles className="w-3.5 h-3.5 text-sky-600 shrink-0 mt-0.5" />
                       <span>
                         <strong className="text-neutral-900">AI Recruiter Observation:</strong> {res.aiNotes}
@@ -3756,14 +4175,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       key={i}
                       className={`p-3.5 rounded-2xl text-xs sm:text-sm ${
                         qa.sender === 'candidate'
-                          ? 'bg-sky-50 border border-sky-200 text-sky-950 ml-6'
-                          : 'bg-neutral-50 border border-neutral-200 text-neutral-900 mr-6'
+                          ? 'bg-sky-50 border border-sky-200 text-neutral-950 font-medium ml-6'
+                          : 'bg-neutral-100 border border-neutral-200 text-neutral-950 mr-6'
                       }`}
                     >
-                      <span className="text-[10px] font-bold block mb-1 uppercase tracking-wider text-neutral-500">
+                      <span className="text-[10px] font-bold block mb-1 uppercase tracking-wider text-neutral-600">
                         {qa.sender === 'candidate' ? `${effectiveDossierName} (Candidate)` : 'Hana (AI Recruiter)'}
                       </span>
-                      <p className="leading-relaxed">{qa.text}</p>
+                      <p className="leading-relaxed text-neutral-950">{qa.text}</p>
                     </div>
                   ))}
                 </div>

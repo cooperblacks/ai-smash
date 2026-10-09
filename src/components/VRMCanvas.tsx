@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRMUtils, VRM } from '@pixiv/three-vrm';
 import { retargetAnimationFromUrl } from 'vrm-mixamo-retarget';
-import { VRM_CONFIG, AI_PROFILE, THEME_COLORS, getWaitingAnimationCandidateUrls } from '../constants';
+import { VRM_CONFIG, AI_PROFILE, THEME_COLORS, MODEL_SOURCE_DOMAIN, getWaitingAnimationCandidateUrls } from '../constants';
 import { lipSyncManager } from '../lib/lipSync';
 import { fetchVRMWithCache } from '../lib/vrmCache';
 import { AvatarEmotion } from '../lib/emotionDetector';
@@ -22,6 +22,8 @@ interface VRMCanvasProps {
   enablePointerTracking?: boolean;
   disableIdleWaitingAnimations?: boolean;
   nodTrigger?: number;
+  customAnimationTrigger?: { fileName: string; triggerId: number } | null;
+  lookTargetOffset?: { x: number; y: number } | null;
 }
 
 export const VRMCanvas: React.FC<VRMCanvasProps> = ({
@@ -37,6 +39,8 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   enablePointerTracking = true,
   disableIdleWaitingAnimations = false,
   nodTrigger = 0,
+  customAnimationTrigger = null,
+  lookTargetOffset = null,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -62,6 +66,25 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       nodProgressRef.current = 1.0;
     }
   }, [nodTrigger]);
+
+  const lookTargetOffsetRef = useRef<{ x: number; y: number } | null>(lookTargetOffset);
+  useEffect(() => {
+    lookTargetOffsetRef.current = lookTargetOffset;
+  }, [lookTargetOffset]);
+
+  const playCustomAnimationRef = useRef<((fileName: string) => void) | null>(null);
+  const pendingCustomAnimFileRef = useRef<string | null>(null);
+  const isCustomHeadGazeAllowedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    if (customAnimationTrigger && customAnimationTrigger.fileName && customAnimationTrigger.triggerId > 0) {
+      if (playCustomAnimationRef.current) {
+        playCustomAnimationRef.current(customAnimationTrigger.fileName);
+      } else {
+        pendingCustomAnimFileRef.current = customAnimationTrigger.fileName;
+      }
+    }
+  }, [customAnimationTrigger?.triggerId, customAnimationTrigger?.fileName]);
 
   // Store emotion state in ref to avoid recreating Three.js scene while updating expressions smoothly
   const emotionRef = useRef<AvatarEmotion>(emotion);
@@ -387,6 +410,113 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
                     waitingActionsRef.current.push(waitAction);
                   }
                 });
+              }
+
+              // 5. Preload & on-demand runner for interview/custom transition animations (mixamo_buttonpush.fbx, mixamo_thankful.fbx)
+              const customActionCache = new Map<string, THREE.AnimationAction>();
+              const getCustomCandidateUrls = (fileName: string) => [
+                `${MODEL_SOURCE_DOMAIN}/${fileName}`,
+                ...getWaitingAnimationCandidateUrls(fileName),
+              ];
+
+              const ensureCustomAction = async (fileName: string): Promise<THREE.AnimationAction | null> => {
+                if (customActionCache.has(fileName)) {
+                  return customActionCache.get(fileName)!;
+                }
+                const shouldFilterHeadNeck = fileName.includes('buttonpush');
+                const clip = await loadAndRetargetClip(getCustomCandidateUrls(fileName), shouldFilterHeadNeck);
+                if (clip && !isDisposed && mixerRef.current) {
+                  const action = mixerRef.current.clipAction(clip);
+                  action.setLoop(THREE.LoopOnce, 1);
+                  action.clampWhenFinished = true;
+                  customActionCache.set(fileName, action);
+                  return action;
+                }
+                return null;
+              };
+
+              // Preload default transition & wrapup animations in background
+              ensureCustomAction('mixamo_buttonpush.fbx');
+              ensureCustomAction('mixamo_thankful.fbx');
+
+              playCustomAnimationRef.current = async (fileName: string) => {
+                if (isDisposed || isFallSequenceActiveRef.current) return;
+                const action = await ensureCustomAction(fileName);
+                const mixer = mixerRef.current;
+                const idleAction = idleActionRef.current;
+                if (!action || !mixer || !idleAction || isDisposed) return;
+
+                if (waitFinishTimeoutId) {
+                  clearTimeout(waitFinishTimeoutId);
+                  waitFinishTimeoutId = null;
+                }
+                if (currentWaitFinishedListener) {
+                  mixer.removeEventListener('finished', currentWaitFinishedListener);
+                  currentWaitFinishedListener = null;
+                }
+
+                const fromAction = activeWaitActionRef.current || idleAction;
+                activeWaitActionRef.current = action;
+                isCustomHeadGazeAllowedRef.current = fileName.includes('buttonpush');
+
+                action.reset();
+                action.setLoop(THREE.LoopOnce, 1);
+                action.clampWhenFinished = true;
+                action.enabled = true;
+                action.setEffectiveTimeScale(1);
+                action.setEffectiveWeight(1);
+                if (fromAction !== action) {
+                  action.crossFadeFrom(fromAction, 0.35, false);
+                } else {
+                  action.fadeIn(0.25);
+                }
+                action.play();
+
+                let hasHandledCustomEnd = false;
+                const handleCustomComplete = () => {
+                  if (hasHandledCustomEnd || isDisposed) return;
+                  hasHandledCustomEnd = true;
+                  isCustomHeadGazeAllowedRef.current = false;
+                  if (currentWaitFinishedListener) {
+                    mixer.removeEventListener('finished', currentWaitFinishedListener);
+                    currentWaitFinishedListener = null;
+                  }
+                  if (waitFinishTimeoutId) {
+                    clearTimeout(waitFinishTimeoutId);
+                    waitFinishTimeoutId = null;
+                  }
+                  if (activeWaitActionRef.current === action) {
+                    activeWaitActionRef.current = null;
+                    if (!isFallSequenceActiveRef.current && idleActionRef.current) {
+                      const idle = idleActionRef.current;
+                      idle.reset();
+                      idle.setLoop(THREE.LoopRepeat, Infinity);
+                      idle.enabled = true;
+                      idle.setEffectiveTimeScale(1);
+                      idle.setEffectiveWeight(1);
+                      idle.crossFadeFrom(action, 0.45, false);
+                      idle.play();
+                    }
+                  }
+                };
+
+                const onCustomFinished = (e: any) => {
+                  if (e.action === action) {
+                    handleCustomComplete();
+                  }
+                };
+
+                currentWaitFinishedListener = onCustomFinished;
+                mixer.addEventListener('finished', onCustomFinished);
+
+                const clipDurationMs = (action.getClip()?.duration || 3.2) * 1000;
+                waitFinishTimeoutId = setTimeout(handleCustomComplete, Math.max(500, clipDurationMs - 120));
+              };
+
+              if (pendingCustomAnimFileRef.current) {
+                const pendingFile = pendingCustomAnimFileRef.current;
+                pendingCustomAnimFileRef.current = null;
+                playCustomAnimationRef.current(pendingFile);
               }
             };
 
@@ -770,10 +900,11 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
         // ----------------------------------------------------
         // Simplified v1 Rotational Logic:
-        // Smooth lerp reset to 0 when not holding
+        // Smooth lerp reset to 0 (or towards lookTargetOffset) when not holding
         // ----------------------------------------------------
         if (!isHoldingOnBody) {
-          targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, 0, delta * 3.8);
+          const desiredBodyRotY = lookTargetOffsetRef.current ? lookTargetOffsetRef.current.x * 0.22 : 0;
+          targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, desiredBodyRotY, delta * 3.8);
         }
 
         currentBodyRotationY = THREE.MathUtils.lerp(currentBodyRotationY, targetBodyRotationY, delta * 12.0);
@@ -1022,10 +1153,10 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           saccadeOffsetY = (Math.random() - 0.5) * 0.015;
         }
 
-        // Head & Neck Gaze Tracking (paused while full-body fall or wait animation is driving head/neck keyframes)
+        // Head & Neck Gaze Tracking (paused while full-body fall or wait animation is driving head/neck keyframes, unless custom head gaze is enabled)
         const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
         const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
-        const isWaitPlaying = Boolean(activeWaitActionRef.current);
+        const isWaitPlaying = Boolean(activeWaitActionRef.current) && !isCustomHeadGazeAllowedRef.current && !lookTargetOffsetRef.current;
 
         if (!isFalling && !isWaitPlaying && headNode && cameraRef.current) {
           headNode.getWorldPosition(scratchHeadWorldPos);
@@ -1040,13 +1171,24 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
             manualNodX = Math.sin((1.0 - nodProgressRef.current) * Math.PI) * 0.16;
           }
 
-          // If pointer tracking is disabled (e.g. in /interview), do not follow mouse cursor!
+          // If lookTargetOffset is provided (e.g. looking towards the task panel in /interview), prioritize it;
+          // otherwise use pointer tracking if enabled.
           const hasPointer = enablePointerTrackingRef.current;
-          const deltaX = hasPointer ? mouseRef.current.x - headScreenPos.x : 0;
-          const deltaY = hasPointer ? mouseRef.current.y - headScreenPos.y : 0;
+          const customLook = lookTargetOffsetRef.current;
+          const deltaX = customLook
+            ? customLook.x
+            : hasPointer
+            ? mouseRef.current.x - headScreenPos.x
+            : 0;
+          const deltaY = customLook
+            ? customLook.y
+            : hasPointer
+            ? mouseRef.current.y - headScreenPos.y
+            : 0;
 
-          const activeDeltaX = deltaX * (1.0 - speechFacingFactor);
-          const activeDeltaY = deltaY * (1.0 - speechFacingFactor);
+          const facingAttenuation = customLook ? speechFacingFactor * 0.3 : speechFacingFactor;
+          const activeDeltaX = deltaX * (1.0 - facingAttenuation);
+          const activeDeltaY = deltaY * (1.0 - facingAttenuation);
 
           const speechNodX = speechFacingFactor * Math.sin(elapsed * 4.5) * 0.02;
 
