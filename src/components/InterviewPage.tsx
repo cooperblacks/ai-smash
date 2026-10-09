@@ -39,9 +39,11 @@ import {
 import confetti from 'canvas-confetti';
 import { VRMCanvas } from './VRMCanvas';
 import { soundManager, waitForPersonaVoice, getPersonaVoice } from '../lib/audio';
-import { AI_PROFILE, SPEECH_RECOGNITION_CONFIG } from '../constants';
+import { AI_PROFILE, SPEECH_RECOGNITION_CONFIG, OLLAMA_CONFIG } from '../constants';
 import { AvatarEmotion } from '../lib/emotionDetector';
 import { lipSyncManager } from '../lib/lipSync';
+import { pingOllama, streamOllama } from '../lib/ollama';
+import { loadCustomOllamaUrl } from '../lib/storage';
 
 interface InterviewPageProps {
   onNavigateHome: () => void;
@@ -108,10 +110,241 @@ const DEFAULT_SCENARIO_CONFIG: InterviewScenarioConfig = {
     "Thank you for sharing that context. Let's move on to the next step.",
     "Got it, that gives me good context. Let's continue forward.",
     "Understood. That covers this part well, let's proceed to the next step.",
+    "Appreciated! I have logged those details. Let's transition to the next phase.",
+    "Wonderful, thank you for walking me through that. Let's move right along.",
   ],
   minCharsForOpenQuestionAdvance: 10,
   showHana3DModel: true,
 };
+
+// Varied transition voicelines to ensure unique, natural recruiter speech across phases
+const TRANSITION_VOICELINES = {
+  silenceAdvance: [
+    "I am assuming you have nothing else to say for now so let's move on to the next step.",
+    "Thank you for sharing that context. Let's move on to the next step.",
+    "Got it, that gives me good context. Let's continue forward.",
+    "Understood. That covers this part well, let's proceed to the next step.",
+    "Appreciated! I have noted your response in the dossier. Moving right along.",
+    "Wonderful, thank you for walking me through that. Let's move forward to the next part.",
+  ],
+  doneAcknowledgment: [
+    "Got it, thank you for confirming you are finished with that answer! Let's move right along.",
+    "Understood! I have logged your complete response. Let's proceed to the next step.",
+    "Perfect, thank you for wrapping up that point. Let's transition to the next part.",
+    "Thank you for letting me know you are done! Moving forward to our next phase.",
+    "All noted! Since that covers your answer, let's continue to the next stage.",
+  ],
+  question1Intro: [
+    "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?",
+    "To kick things off, I'd love to learn more about you. Could you walk me through your background and what excites you most about this opportunity?",
+    "Let's start with an introduction. Tell me about your journey so far, your core strengths, and what motivates you in this field.",
+  ],
+  question2Intro: [
+    "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?",
+    "Great context. Next, could you share a complex engineering challenge you faced recently and the steps you took to solve it?",
+    "I appreciate that overview. For our second question, tell me about a tough technical obstacle or system problem you debugged and how you brought it to resolution.",
+  ],
+  taskResumeIntro: [
+    "Before we proceed to written tasks, let's review your credentials. Please upload your updated resume or CV document so we have the latest version on file for our recruiting team.",
+    "Now let's pull up the credentials panel. Please upload your current resume or CV on the right so our recruiting system can attach it to your session dossier.",
+    "Let's transition to our first interactive task. In the panel I just opened, please upload your latest resume or CV document.",
+  ],
+  taskResumeDone: [
+    "Thank you! I've received your updated document. Now let's move forward to the written reflection task.",
+    "Awesome, your resume is securely attached to your profile. Let's switch the panel over to the written reflection exercise.",
+    "Got your document on file! Let's transition to the next task on your screen: a short written reflection.",
+  ],
+  taskWrittenIntro: [
+    "Next, we have a short written reflection task. In the spotlight panel on your right, please write down three things you like about yourself and why. Take your time, and submit when you have at least 100 characters.",
+    "Here is our written reflection prompt. In the task panel, please share three qualities you value in yourself and why, using at least 100 characters.",
+    "I've updated the task panel for your written reflection. Please write down three strengths or traits you appreciate about yourself and hit submit once you reach 100 characters.",
+  ],
+  taskWrittenDone: [
+    "Excellent self-reflection. I've recorded your response. Let's move on to the situational pressure rating.",
+    "Thank you for that thoughtful reflection! I've saved it to your dossier. Now let's switch to our situational pressure check.",
+    "Great insights—I have logged your written response. Let's bring up the situational pressure assessment next.",
+  ],
+  taskPressureIntro: [
+    "Great. Now we have a quick situational question. In the spotlight panel, select the rating that most accurately reflects how you perform under intense project pressure.",
+    "Next up is a quick situational check. Looking at the options in the task panel, choose the statement that best matches how you handle high-pressure deadlines.",
+    "I've switched the panel to our situational behavior check. Please pick the option that most honestly describes how you operate under project pressure.",
+  ],
+  taskPressureDone: [
+    "Noted! Next up, we will do a fast visual verification sequence.",
+    "Got your selection recorded! Now let's switch the panel to our final interactive step: visual identity verification.",
+    "Thank you, I've logged that rating. Let's pull up the camera verification panel for three quick angle snapshots.",
+  ],
+  taskSnapshotIntro: [
+    "For fun and identity verification, please write down your phone number on a small piece of paper. First, hold it up and look directly forward, then say 'click' or 'ready' when you're set.",
+    "Here is our visual liveness check. Please hold up a small piece of paper with your phone number or test digits, face forward, and say 'click' or 'ready' to snap the first photo.",
+    "Let's complete our multi-angle verification. Hold up your paper note, look straight ahead at the camera, and say 'click' whenever you are ready.",
+  ],
+  taskSnapshotStep2: [
+    "Awesome shot. Now, keep holding up the paper, turn your head slightly to the left, and say 'click' or 'ready'.",
+    "Great first frame! Next, keep the note visible, angle your head slightly to the left, and say 'click' when ready.",
+    "Forward pose captured! Now turn slightly to your left while holding the paper and say 'click' or 'do it'.",
+  ],
+  taskSnapshotStep3: [
+    "Got it! Lastly, turn your head slightly to the right while holding the paper, and say 'click' or 'do it'.",
+    "Nice! For the third and final angle, turn your head slightly to the right and say 'click' or 'ready'.",
+    "Left angle verified! One last shot—turn slightly to your right with the note and say 'click'.",
+  ],
+  taskSnapshotDone: [
+    "Perfect! All three identity frames are captured and verified. Now let's open the floor for any questions you might have.",
+    "All three verification angles are locked in! Let's close the task panel and move into our open Q and A session.",
+    "Fantastic, visual verification is complete. Let's transition to the final Q and A portion of our interview.",
+  ],
+  qaIntroFallback: [
+    "Thank you for completing all spotlight tasks. Now, do you have any questions for me or our recruiting team about the role or MuxAI?",
+    "You have completed every assessment task! Before we wrap up, what questions do you have for me about MuxAI, our engineering team, or the role?",
+    "Great job on all the tasks today. I'd love to open the floor now—do you have any questions about working at MuxAI or what comes next?",
+  ],
+  qaCheckMore: [
+    "Is that all, or do you have any other questions for me?",
+    "Do you have any other questions about the role or MuxAI, or does that cover everything?",
+    "Would you like to ask anything else before we wrap up our session?",
+  ],
+  qaConclude: [
+    "I am assuming that covers everything for now, so let's move on to conclude our interview session.",
+    "Alright, it looks like we've covered all your questions! Let's wrap up our interview session.",
+    "Wonderful, thank you for those thoughtful questions! Let's bring our session to a close.",
+  ],
+  wrapupFinal: [
+    "Thank you so much for your time today. It was a pleasure speaking with you. Our recruiting team will review your session dossier and reach out with next steps soon. Have a wonderful day!",
+    "Thank you again for joining me today and completing the interview! I've compiled your full evaluation dossier for our hiring team, and you'll hear back from us very soon. Take care!",
+    "It was truly a pleasure interviewing you today. Your responses and tasks have been saved for our engineering leadership review. Wishing you a fantastic rest of your day!",
+  ],
+};
+
+// MuxAI Company & Engineering RAG Knowledge Base for Q&A Session
+interface RagDocumentChunk {
+  id: string;
+  title: string;
+  keywords: string[];
+  content: string;
+}
+
+const MUXAI_COMPANY_KNOWLEDGE_BASE: RagDocumentChunk[] = [
+  {
+    id: 'company_mission',
+    title: 'MuxAI Company Overview & Mission',
+    keywords: ['muxai', 'company', 'mission', 'vision', 'what does', 'about', 'product', 'platform', 'hana', 'who are you', 'build'],
+    content:
+      'MuxAI is an AI research and product engineering company building decentralized, self-hosted, and browser-native multimodal AI platforms. Our flagship companion and interviewer persona, Hana, integrates real-time 3D VRM WebGL rendering, low-latency voice synthesis, WebGPU/WASM small language models, and distributed Ollama inference nodes.',
+  },
+  {
+    id: 'tech_stack_architecture',
+    title: 'Engineering Tech Stack & System Architecture',
+    keywords: ['stack', 'tech', 'technology', 'architecture', 'code', 'language', 'framework', 'react', 'three', 'webgl', 'vrm', 'database', 'backend', 'frontend', 'infrastructure', 'ai', 'llm', 'models', 'ollama'],
+    content:
+      'Our core stack uses TypeScript, React 19, Three.js / WebGL (@pixiv/three-vrm) for 60fps real-time 3D character animation and phoneme lip-syncing, Node.js/Express and serverless edge endpoints, Neon PostgreSQL for persistence, and a hybrid inference layer combining browser WebGPU (@huggingface/transformers) with self-hosted MuxAI Ollama GPU clusters.',
+  },
+  {
+    id: 'engineering_culture',
+    title: 'Engineering Culture, Autonomy & Day-to-Day Workflow',
+    keywords: ['culture', 'day', 'daily', 'workflow', 'work', 'life', 'balance', 'hours', 'sprint', 'agile', 'autonomy', 'team', 'size', 'collaborate', 'management', 'meetings', 'environment', 'routine', 'typical'],
+    content:
+      'MuxAI operates with a high-ownership, low-bureaucracy engineering culture. Engineers work in small autonomous pods of 3 to 5 builders with direct ownership from architecture to production deployment. We keep synchronous meetings minimal, rely on clear RFCs and async demos, and ship to production daily.',
+  },
+  {
+    id: 'remote_location_policy',
+    title: 'Remote-First Policy, Hours & Global Collaboration',
+    keywords: ['remote', 'hybrid', 'office', 'location', 'relocate', 'country', 'timezone', 'time zone', 'async', 'flexible', 'where', 'work from home', 'wfh'],
+    content:
+      'MuxAI is 100% remote-first across global timezones. Engineers have flexible schedules with 3 to 4 hours of core async/sync overlap for design reviews and pairing. We provide a $2,500 home office & GPU hardware setup stipend plus co-working space reimbursement.',
+  },
+  {
+    id: 'compensation_benefits',
+    title: 'Compensation, Salary, Equity & Benefits Package',
+    keywords: ['salary', 'compensation', 'pay', 'money', 'equity', 'stock', 'options', 'benefits', 'health', 'insurance', 'pto', 'vacation', 'bonus', 'stipend', 'offer', 'package'],
+    content:
+      'MuxAI offers top-of-market base salary bands benchmarked to San Francisco/NYC tiers regardless of location, meaningful early-stage equity with flexible exercise windows, comprehensive medical/dental/vision coverage, unlimited paid time off with a mandatory 4-week minimum vacation policy, and annual learning/compute stipends.',
+  },
+  {
+    id: 'interview_next_steps',
+    title: 'Hiring Process, Timeline & Next Steps After Screening',
+    keywords: ['next', 'step', 'steps', 'process', 'timeline', 'hear back', 'when', 'rounds', 'decision', 'recruiter', 'follow up', 'feedback', 'how long', 'stages', 'offer', 'after this'],
+    content:
+      'After this automated screening with Hana, our engineering hiring team reviews your session dossier within 24 to 48 hours. Shortlisted candidates advance to a 45-minute technical architecture deep-dive with a Staff Engineer, followed by a brief founder alignment chat and an offer decision within one week.',
+  },
+  {
+    id: 'growth_mentorship_roadmap',
+    title: 'Career Growth, Mentorship & 2026 Product Roadmap',
+    keywords: ['growth', 'career', 'promotion', 'mentor', 'learning', 'roadmap', 'future', 'challenges', 'projects', 'impact', 'first 90 days', 'onboarding', 'success'],
+    content:
+      'In your first 30 to 90 days, you will ship core features across our real-time multimodal pipeline, 3D avatar studio, and autonomous agent runtime. Every engineer pairs with a Principal/Staff mentor, has dedicated R&D exploration Fridays, and can grow along either the Staff IC track or Engineering Leadership track.',
+  },
+];
+
+function buildMuxAiQaRagPrompt(candidateQuestion: string, targetRole: string, candidateName: string): string {
+  const lowerQ = candidateQuestion.toLowerCase();
+  const scoredChunks = MUXAI_COMPANY_KNOWLEDGE_BASE.map((doc) => {
+    let score = 0;
+    for (const kw of doc.keywords) {
+      if (lowerQ.includes(kw)) score += 2;
+    }
+    return { doc, score };
+  }).sort((a, b) => b.score - a.score);
+
+  const topDocs = scoredChunks.slice(0, 4).map((item) => `[${item.doc.title}]: ${item.doc.content}`).join('\n');
+
+  return [
+    `You are Hana, the AI Technical Recruiter and Interviewer at MuxAI, conducting the live Q&A phase of an interview for the "${targetRole}" position${candidateName ? ` with candidate ${candidateName}` : ''}.`,
+    `Use the following retrieved MuxAI Company Knowledge Base (RAG Context) to answer the candidate's question accurately, smartly, and conversationally:`,
+    `--- MUXAI RAG KNOWLEDGE BASE ---`,
+    topDocs,
+    `--- END KNOWLEDGE BASE ---`,
+    `Instructions:`,
+    `- Speak directly to the candidate in first-person as Hana from MuxAI.`,
+    `- Keep your spoken response concise, warm, authoritative, and natural for live voice synthesis (2 to 4 sentences max, plain text only, no markdown bullets or asterisks).`,
+  ].join('\n');
+}
+
+function generateSmartQaFallbackAnswer(questionText: string, targetRole: string): string {
+  const lower = questionText.toLowerCase();
+
+  if (/(salary|compensation|pay|equity|benefits|offer|package|stipend|pto|vacation|insurance)/i.test(lower)) {
+    return "Compensation packages at MuxAI are top-of-market and include competitive base pay, meaningful early-stage equity grants, a dedicated home office and GPU hardware stipend, and comprehensive health and wellness benefits. Exact figures are tailored to your level during the offer phase.";
+  }
+  if (/(remote|location|hybrid|office|timezone|time zone|hours|schedule|flexible|work from home|wfh|async)/i.test(lower)) {
+    return "We operate with a 100% remote-first, globally distributed engineering team. We prioritize asynchronous communication, clear technical RFCs, and outcome-based productivity rather than rigid office hours.";
+  }
+  if (/(stack|tech|technology|architecture|tools|framework|language|code|model|llm|vrm|three|webgl|database|infrastructure)/i.test(lower)) {
+    return `For the ${targetRole} position, our tech stack centers around TypeScript, React 19, Three.js WebGL and 3D VRM engines, Node.js, Neon PostgreSQL, and hybrid AI inference combining browser WebGPU with our self-hosted MuxAI Ollama GPU clusters.`;
+  }
+  if (/(day|daily|routine|typical day|culture|team|workflow|sprint|management|autonomy|meetings|work life)/i.test(lower)) {
+    return "A typical day starts with an asynchronous standup, followed by deep focus time in small autonomous pods of three to five engineers. We keep synchronous meetings minimal and empower builders to own architecture and ship to production daily.";
+  }
+  if (/(next step|timeline|process|hear back|when|rounds|feedback|decision|stages|after this)/i.test(lower)) {
+    return "Following this session, our recruitment and engineering panel will review your completed dossier, tasks, and responses within 24 to 48 hours. Shortlisted candidates advance to a technical architecture deep-dive with a Staff Engineer.";
+  }
+  if (/(growth|career|mentor|onboarding|first 90|roadmap|future|project|challenge|impact)/i.test(lower)) {
+    return "In your first 90 days, you will pair with a Staff mentor and ship core improvements to our real-time multimodal companion runtime and autonomous recruiting suite, with dedicated R&D time to pioneer new AI capabilities.";
+  }
+
+  return "That's a great question. At MuxAI, our engineering culture emphasizes high agency, rapid iteration, and direct ownership of autonomous multimodal agent systems. We value pragmatic architecture, transparent communication, and continuous learning.";
+}
+
+// Smart layer of decision-making: detects when candidate explicitly says they are done or finished
+function detectCandidateFinishedIntent(text: string, phase: MeetingPhase): boolean {
+  const clean = text.trim().toLowerCase();
+  if (!clean) return false;
+
+  const explicitDoneRegex =
+    /\b(i'?m done|i am done|that'?s all|that is all|that'?s it|that is it|that'?s everything|that is everything|nothing else|no more to say|i have finished|i'?ve finished|that concludes my answer|that covers it|that'?s my answer|that is my answer|all done|done speaking|i'?m finished|i am finished|finished answering|move on|next question please|ready for the next question|that wraps it up)\b/i;
+
+  if (phase === 'candidate_qa') {
+    const qaDoneRegex =
+      /\b(no|nope|nah|none|nothing|not right now|i'?m good|i am good|all good|no questions|no more questions|that'?s all|that is all|no that'?s all|that'?s it|i don'?t have any|i do not have any|we are good|we'?re good|no thank you|no thanks|nothing from me|nothing further|i'?m all set|i am all set|done with questions|no other questions)\b/i;
+    const hasQuestionWord = /\b(what|how|when|where|why|who|which|can you|could you|tell me|is there|are there|do you|does the)\b/i.test(clean);
+    if ((qaDoneRegex.test(clean) || explicitDoneRegex.test(clean)) && (!clean.includes('?') && (!hasQuestionWord || clean.length < 48))) {
+      return true;
+    }
+    return false;
+  }
+
+  return explicitDoneRegex.test(clean);
+}
 
 // Lenient fuzzy matching so candidate can naturally say ready/agree phrases
 function calculateAgreementMatch(spoken: string): number {
@@ -271,8 +504,85 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const qaSilenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const resetSilenceTimerRef = useRef<() => void>(() => {});
   const [qaStageState, setQaStageState] = useState<
-    'listening' | 'answering' | 'waiting_5s' | 'asking_that_is_all' | 'waiting_final_5s'
+    'idle' | 'hinting' | 'listening' | 'answering' | 'waiting_5s' | 'asking_that_is_all' | 'waiting_final_5s' | 'concluded'
   >('listening');
+
+  // MuxAI Ollama Server Online Status for RAG Q&A
+  const [isMuxAiServerOnline, setIsMuxAiServerOnline] = useState<boolean>(false);
+  const muxAiServerOnlineRef = useRef<boolean>(false);
+
+  // Custom Mixamo Animation Trigger & 3D Look Target Offset towards Task Panel
+  const [customAnimationTrigger, setCustomAnimationTrigger] = useState<{
+    clipFileName: string;
+    triggerId: number;
+    loopOnce?: boolean;
+  } | null>(null);
+  const [hanaLookTarget, setHanaLookTarget] = useState<{ yaw: number; pitch: number } | null>(null);
+  const lookResetTimeoutRef = useRef<any>(null);
+
+  // Voiceline variance memory so Hana never repeats the exact same transition line back-to-back
+  const lastUsedVoicelineMapRef = useRef<Record<string, number>>({});
+
+  const pickUniqueVoiceline = useCallback((category: keyof typeof TRANSITION_VOICELINES): string => {
+    const list = TRANSITION_VOICELINES[category];
+    if (!list || list.length === 0) return '';
+    if (list.length === 1) return list[0];
+    const lastIdx = lastUsedVoicelineMapRef.current[category] ?? -1;
+    let nextIdx = Math.floor(Math.random() * list.length);
+    if (nextIdx === lastIdx) {
+      nextIdx = (lastIdx + 1) % list.length;
+    }
+    lastUsedVoicelineMapRef.current[category] = nextIdx;
+    return list[nextIdx];
+  }, []);
+
+  const triggerHanaAnimation = useCallback((clipFileName: string, loopOnce: boolean = true) => {
+    setCustomAnimationTrigger({
+      clipFileName,
+      triggerId: Date.now() + Math.floor(Math.random() * 1000),
+      loopOnce,
+    });
+  }, []);
+
+  const triggerTaskPanelInteraction = useCallback(
+    (durationMs: number = 3400, playButtonPush: boolean = true) => {
+      if (playButtonPush) {
+        triggerHanaAnimation('mixamo_buttonpush.fbx', true);
+      }
+      // Orient 3D model's head/neck/torso towards the spotlight task panel
+      setHanaLookTarget({ yaw: 0.44, pitch: -0.06 });
+      if (lookResetTimeoutRef.current) {
+        clearTimeout(lookResetTimeoutRef.current);
+      }
+      lookResetTimeoutRef.current = setTimeout(() => {
+        setHanaLookTarget(null);
+      }, durationMs);
+    },
+    [triggerHanaAnimation]
+  );
+
+  // Candidate live subtitle marquee scroll container refs
+  const candidateSubtitleScrollRef = useRef<HTMLDivElement | null>(null);
+  const spotlightSubtitleScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Probe MuxAI Ollama server status on mount & when entering Q&A
+  const refreshMuxAiServerStatus = useCallback(async (): Promise<boolean> => {
+    try {
+      const baseUrl = loadCustomOllamaUrl() || OLLAMA_CONFIG.muxAiEndpoint;
+      const result = await pingOllama(baseUrl);
+      muxAiServerOnlineRef.current = result.online;
+      setIsMuxAiServerOnline(result.online);
+      return result.online;
+    } catch {
+      muxAiServerOnlineRef.current = false;
+      setIsMuxAiServerOnline(false);
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshMuxAiServerStatus();
+  }, [refreshMuxAiServerStatus]);
 
   // Edge case: User interruption detection & resume prefix
   const hanaIsSpeakingRef = useRef<boolean>(false);
@@ -305,15 +615,44 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const candidateTranscriptRef = useRef<string>('');
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Auto-scroll candidate live word subtitles like a marquee to always show most recent words
+  useEffect(() => {
+    if (candidateSubtitleScrollRef.current) {
+      candidateSubtitleScrollRef.current.scrollLeft = candidateSubtitleScrollRef.current.scrollWidth;
+    }
+    if (spotlightSubtitleScrollRef.current) {
+      spotlightSubtitleScrollRef.current.scrollLeft = spotlightSubtitleScrollRef.current.scrollWidth;
+    }
+  }, [candidateLiveTranscript]);
+
+  // Accurately timed progress bar for candidate silence auto-send timer
+  const [silenceTimerProgress, setSilenceTimerProgress] = useState<{
+    id: number;
+    durationMs: number;
+  } | null>(null);
+
   // Spotlight Tasks Data
   // Task 1: Resume Document Upload (handled via uploadedResume)
   // Task 2: Written assessment (>= 100 characters)
   const [writtenText, setWrittenText] = useState<string>('');
   const [writtenSubmitted, setWrittenSubmitted] = useState<boolean>(false);
+  const writtenTextRef = useRef<string>('');
+  useEffect(() => {
+    writtenTextRef.current = writtenText;
+  }, [writtenText]);
 
   // Task 3: Situational assessment (Radio buttons)
   const [pressureRating, setPressureRating] = useState<string>('');
   const [pressureSubmitted, setPressureSubmitted] = useState<boolean>(false);
+  const pressureRatingRef = useRef<string>('');
+  useEffect(() => {
+    pressureRatingRef.current = pressureRating;
+  }, [pressureRating]);
+
+  const uploadedResumeRef = useRef<UploadedResume | null>(null);
+  useEffect(() => {
+    uploadedResumeRef.current = uploadedResume;
+  }, [uploadedResume]);
 
   // Task 4: Visual Identity Snapshots (Forward, Left, Right via trigger words "click", "do it", "okay", "ready")
   const [snapshotStep, setSnapshotStep] = useState<0 | 1 | 2 | 3>(0); // 0: not started, 1: forward, 2: left, 3: right
@@ -704,54 +1043,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   };
 
-  const lastMuteNoticeTimeRef = useRef<number>(0);
-
-  const notifyCandidateIfMuted = useCallback(() => {
-    const now = Date.now();
-    if (now - lastMuteNoticeTimeRef.current < 20000) return;
-    if (stageRef.current !== 'meeting' || hanaIsSpeakingRef.current) return;
-    lastMuteNoticeTimeRef.current = now;
-    speakHanaLine(
-      "It looks like your microphone is currently muted. Please unmute yourself whenever you are ready so I can hear your response.",
-      undefined,
-      'neutral'
-    );
-  }, [speakHanaLine]);
-
-  // Periodic active check during meeting to notify user if they remain muted
-  useEffect(() => {
-    if (stage !== 'meeting') return;
-    const interval = setInterval(() => {
-      if (
-        !isMicActive &&
-        stageRef.current === 'meeting' &&
-        !hanaIsSpeakingRef.current &&
-        meetingPhaseRef.current !== 'joining' &&
-        meetingPhaseRef.current !== 'wrapup'
-      ) {
-        notifyCandidateIfMuted();
-      }
-    }, 7000);
-    return () => clearInterval(interval);
-  }, [isMicActive, notifyCandidateIfMuted, stage]);
-
-  const toggleMic = () => {
-    if (mediaStreamRef.current) {
-      const audioTrack = mediaStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMicActive(audioTrack.enabled);
-        if (!audioTrack.enabled && stageRef.current === 'meeting') {
-          setTimeout(() => {
-            if (!audioTrack.enabled) {
-              notifyCandidateIfMuted();
-            }
-          }, 800);
-        }
-      }
-    }
-  };
-
   // ----------------------------------------------------
   // Speech Synthesis & Interruption Logic (Hana Voice)
   // Default mood is neutral (no smiling or grinning)
@@ -864,6 +1155,54 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     },
     []
   );
+
+  const lastMuteNoticeTimeRef = useRef<number>(0);
+
+  const notifyCandidateIfMuted = useCallback(() => {
+    const now = Date.now();
+    if (now - lastMuteNoticeTimeRef.current < 20000) return;
+    if (stageRef.current !== 'meeting' || hanaIsSpeakingRef.current) return;
+    lastMuteNoticeTimeRef.current = now;
+    speakHanaLine(
+      "It looks like your microphone is currently muted. Please unmute yourself whenever you are ready so I can hear your response.",
+      undefined,
+      'neutral'
+    );
+  }, [speakHanaLine]);
+
+  // Periodic active check during meeting to notify user if they remain muted
+  useEffect(() => {
+    if (stage !== 'meeting') return;
+    const interval = setInterval(() => {
+      if (
+        !isMicActive &&
+        stageRef.current === 'meeting' &&
+        !hanaIsSpeakingRef.current &&
+        meetingPhaseRef.current !== 'joining' &&
+        meetingPhaseRef.current !== 'wrapup'
+      ) {
+        notifyCandidateIfMuted();
+      }
+    }, 7000);
+    return () => clearInterval(interval);
+  }, [isMicActive, notifyCandidateIfMuted, stage]);
+
+  const toggleMic = () => {
+    if (mediaStreamRef.current) {
+      const audioTrack = mediaStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsMicActive(audioTrack.enabled);
+        if (!audioTrack.enabled && stageRef.current === 'meeting') {
+          setTimeout(() => {
+            if (!audioTrack.enabled) {
+              notifyCandidateIfMuted();
+            }
+          }, 800);
+        }
+      }
+    }
+  };
 
   // Active question prompt text for candidate reclarification / repeat requests
   const getCurrentQuestionText = useCallback((phase: MeetingPhase): string => {
@@ -1114,6 +1453,22 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   );
 
   // Candidate Q&A voice-first handlers
+  const concludeQaSession = useCallback(() => {
+    if (qaSilenceTimerRef.current) {
+      clearTimeout(qaSilenceTimerRef.current);
+      qaSilenceTimerRef.current = null;
+    }
+    setQaStageState('concluded');
+    const wrapupPrompt = pickUniqueVoiceline('qaConclude');
+    speakHanaLine(
+      wrapupPrompt,
+      () => {
+        advanceToPhase('wrapup');
+      },
+      'neutral'
+    );
+  }, [speakHanaLine, pickUniqueVoiceline]);
+
   const startQa5sSilenceTimer = useCallback(() => {
     if (qaSilenceTimerRef.current) {
       clearTimeout(qaSilenceTimerRef.current);
@@ -1125,10 +1480,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       if (meetingPhaseRef.current !== 'candidate_qa' || hanaIsSpeakingRef.current) return;
 
       // 5 seconds elapsed without candidate speaking!
-      // Hana asks if that is all (as requested):
+      // Hana asks if that is all with varied voiceline:
       setQaStageState('asking_that_is_all');
       setNodCount((c) => c + 1);
-      const followUp = "Is that all, or do you have any other questions for me?";
+      const followUp = pickUniqueVoiceline('qaCheckMore');
 
       speakHanaLine(
         followUp,
@@ -1144,25 +1499,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     }, waitDurationMs);
-  }, [scenarioConfig.qaSilenceSeconds, speakHanaLine]);
-
-  const concludeQaSession = useCallback(() => {
-    if (qaSilenceTimerRef.current) {
-      clearTimeout(qaSilenceTimerRef.current);
-      qaSilenceTimerRef.current = null;
-    }
-    const wrapupPrompt = "I am assuming that covers everything for now, so let's move on to conclude our interview session.";
-    speakHanaLine(
-      wrapupPrompt,
-      () => {
-        advanceToPhase('wrapup');
-      },
-      'neutral'
-    );
-  }, [speakHanaLine]);
+  }, [scenarioConfig.qaSilenceSeconds, speakHanaLine, pickUniqueVoiceline, concludeQaSession]);
 
   const answerCandidateQaQuestion = useCallback(
-    (qText: string) => {
+    async (qText: string) => {
       const trimmed = qText.trim();
       if (!trimmed || hanaIsSpeakingRef.current) return;
 
@@ -1178,26 +1518,44 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       setNodCount((c) => c + 1);
       setQaStageState('answering');
 
-      // Generate intelligent contextual response
-      const lower = trimmed.toLowerCase();
-      let answer =
-        "That's a great question. At MuxAI, our engineering culture emphasizes high agency, rapid iteration, and direct ownership of autonomous agent systems. We value pragmatic architecture, transparent communication, and continuous learning.";
+      let answer = '';
+      // Connect to MuxAI Ollama server's LLM with RAG system prompt if found to be online
+      const isOnline = muxAiServerOnlineRef.current || (await refreshMuxAiServerStatus());
+      if (isOnline) {
+        try {
+          setHanaReactionText('Consulting MuxAI company knowledge base...');
+          const ragSystemPrompt = buildMuxAiQaRagPrompt(trimmed, targetRole, candidateName.trim());
+          const baseUrl = loadCustomOllamaUrl() || OLLAMA_CONFIG.muxAiEndpoint;
+          const llmResponse = await streamOllama({
+            url: baseUrl,
+            model: OLLAMA_CONFIG.defaultFallbackModel,
+            history: qaHistory.slice(-4).map((item, idx) => ({
+              id: `qa_${idx}`,
+              role: (item.sender === 'candidate' ? 'user' : 'assistant') as 'user' | 'assistant',
+              content: item.text,
+              timestamp: Date.now(),
+            })),
+            userMessage: `${ragSystemPrompt}\n\nCandidate Question: "${trimmed}"\n\nHana's Spoken Recruiter Response:`,
+            maxTokens: 220,
+            onToken: () => {},
+          });
+          const cleaned = llmResponse
+            .replace(/[*#`_~]+/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (cleaned.length > 15) {
+            answer = cleaned;
+          }
+        } catch (err) {
+          console.warn('MuxAI Ollama Q&A RAG fallback triggered:', err);
+        } finally {
+          setHanaReactionText('');
+        }
+      }
 
-      if (lower.includes('salary') || lower.includes('compensation') || lower.includes('equity') || lower.includes('pay')) {
-        answer =
-          "Compensation packages are top-of-market and include competitive base pay, meaningful equity grants, and comprehensive health and wellness benefits. Exact numbers are tailored to experience during the offer phase.";
-      } else if (lower.includes('remote') || lower.includes('location') || lower.includes('wfh') || lower.includes('office')) {
-        answer =
-          "We operate with a remote-first, globally distributed team. We prioritize asynchronous communication and outcome-based productivity rather than fixed office hours.";
-      } else if (lower.includes('stack') || lower.includes('technology') || lower.includes('tools') || lower.includes('framework')) {
-        answer =
-          "Our tech stack centers around modern TypeScript, React, WebGL and 3D VRM engines, paired with low-latency LLM inference pipelines, Python microservices, and distributed streaming architectures.";
-      } else if (lower.includes('day') || lower.includes('daily') || lower.includes('routine') || lower.includes('typical day')) {
-        answer =
-          "A typical day starts with an asynchronous standup, followed by deep focus time on architecture and features. We hold minimal meetings and prioritize collaborative pair-programming and code reviews.";
-      } else if (lower.includes('next step') || lower.includes('process') || lower.includes('after this') || lower.includes('when hear back')) {
-        answer =
-          "Following this session, our recruitment panel will review your completed dossier, code artifacts, and responses. You can expect personalized feedback from our team within 48 to 72 hours.";
+      // Fallback to smart local Q&A engine if MuxAI Ollama server is offline or unreachable
+      if (!answer) {
+        answer = generateSmartQaFallbackAnswer(trimmed, targetRole);
       }
 
       setQaHistory((prev) => [...prev, { sender: 'hana', text: answer }]);
@@ -1212,11 +1570,18 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     },
-    [speakHanaLine, startQa5sSilenceTimer]
+    [
+      speakHanaLine,
+      startQa5sSilenceTimer,
+      refreshMuxAiServerStatus,
+      targetRole,
+      candidateName,
+      qaHistory,
+    ]
   );
 
   // Reset / Trigger Silence Auto-Send for Open Questions
-  // Uses configurable silence seconds and configurable varied voicelines
+  // Uses configurable silence seconds, varied voicelines, and smart done-intent detection
   const resetSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
@@ -1224,25 +1589,36 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
     const curPhase = meetingPhaseRef.current;
     if (curPhase !== 'question_1' && curPhase !== 'question_2') {
+      setSilenceTimerProgress(null);
       return;
     }
 
-    // Configurable duration (default 3.0s as requested)
-    const waitDurationMs = scenarioConfig.openQuestionSilenceSeconds * 1000;
+    const currentText = candidateTranscriptRef.current.trim();
+    const isExplicitlyDone = detectCandidateFinishedIntent(currentText, curPhase);
+
+    // Configurable duration (default 3.0s, or faster 1.0s if candidate explicitly stated they are done)
+    const waitDurationMs = isExplicitlyDone ? 1000 : scenarioConfig.openQuestionSilenceSeconds * 1000;
+
+    // Trigger accurate timed progress bar
+    setSilenceTimerProgress({ id: Date.now(), durationMs: waitDurationMs });
 
     silenceTimerRef.current = setTimeout(() => {
+      setSilenceTimerProgress(null);
       const text = candidateTranscriptRef.current.trim();
       const phaseNow = meetingPhaseRef.current;
+      const doneNow = detectCandidateFinishedIntent(text, phaseNow);
 
       if (!hanaIsSpeakingRef.current && (phaseNow === 'question_1' || phaseNow === 'question_2')) {
         soundManager.playSend();
         setIsCandidateSpeaking(false);
         setNodCount((c) => c + 1);
 
-        // Hana speaks varied voicelines before proceeding upon silence!
-        const voiceline =
-          scenarioConfig.activeSilenceVoiceline ||
-          "I am assuming you have nothing else to say for now so let's move on to the next step.";
+        // Hana speaks varied voicelines (or explicit done acknowledgment) before proceeding
+        const voiceline = doneNow
+          ? pickUniqueVoiceline('doneAcknowledgment')
+          : pickUniqueVoiceline('silenceAdvance') ||
+            scenarioConfig.activeSilenceVoiceline ||
+            "I am assuming you have nothing else to say for now so let's move on to the next step.";
 
         if (phaseNow === 'question_1') {
           speakHanaLine(
@@ -1278,7 +1654,13 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       }
       silenceTimerRef.current = null;
     }, waitDurationMs);
-  }, [handleSaveResponse, scenarioConfig.activeSilenceVoiceline, scenarioConfig.openQuestionSilenceSeconds, speakHanaLine]);
+  }, [
+    handleSaveResponse,
+    scenarioConfig.activeSilenceVoiceline,
+    scenarioConfig.openQuestionSilenceSeconds,
+    speakHanaLine,
+    pickUniqueVoiceline,
+  ]);
 
   useEffect(() => {
     resetSilenceTimerRef.current = resetSilenceTimer;
@@ -1342,10 +1724,23 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             return;
           }
 
+          // Voice-driven command to conclude / exit meeting hands-free (zero buttons required)
+          const isEndMeetingVoice = /\b(end interview|end the interview|leave meeting|leave the meeting|exit meeting|exit the meeting|finish interview|conclude interview|terminate interview)\b/i.test(lower);
+          if (isEndMeetingVoice && !hanaIsSpeakingRef.current) {
+            speakHanaLine(
+              "Understood. Concluding our interview session now and compiling your evaluation dossier.",
+              () => {
+                handleEndMeetingAndReview();
+              },
+              'neutral'
+            );
+            return;
+          }
+
           // Welcome phase affirmation
           if (curPhase === 'welcome') {
             setCandidateLiveTranscript(currentUtterance);
-            const isAffirmative = /\b(yes|yeah|yep|i can|hear you|loud and clear|see you|hello|hi)\b/i.test(lower);
+            const isAffirmative = /\b(yes|yeah|yep|i can|hear you|loud and clear|see you|hello|hi|ready|sure)\b/i.test(lower);
             if (isAffirmative && !hanaIsSpeakingRef.current) {
               setNodCount((c) => c + 1);
               setTimeout(() => {
@@ -1361,12 +1756,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             setCandidateLiveTranscript(candidateTranscriptRef.current);
             setIsCandidateSpeaking(true);
 
-            // Early completion phrase check (e.g. "That's all for this question")
-            const isDoneEarly =
-              /\b(that'?s all|that is all|i'?m done|i am done|that covers it|that'?s my answer|finished answering|nothing more to say)\b/i.test(
-                lower
-              );
-            if (isDoneEarly && candidateTranscriptRef.current.length >= 10 && !hanaIsSpeakingRef.current) {
+            // Smart decision-making layer: detect when candidate explicitly says they are done
+            const isDoneEarly = detectCandidateFinishedIntent(lower, curPhase);
+            if (isDoneEarly && candidateTranscriptRef.current.length >= 8 && !hanaIsSpeakingRef.current) {
               if (silenceTimerRef.current) {
                 clearTimeout(silenceTimerRef.current);
                 silenceTimerRef.current = null;
@@ -1374,7 +1766,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               soundManager.playSend();
               setIsCandidateSpeaking(false);
               setNodCount((c) => c + 1);
-              const voiceline = scenarioConfig.activeSilenceVoiceline || "I am assuming you have nothing else to say for now so let's move on to the next step.";
+              const voiceline = pickUniqueVoiceline('doneAcknowledgment');
               const text = candidateTranscriptRef.current.trim();
               if (curPhase === 'question_1') {
                 speakHanaLine(voiceline, () => {
@@ -1394,7 +1786,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
             // Contextual subtle reactions from Hana while candidate is answering
             if (candidateTranscriptRef.current.length > 25 && !hanaIsSpeakingRef.current) {
-              const reactions = ['Hmm...', 'I see', 'Got it', 'Understood'];
+              const reactions = ['Hmm...', 'I see', 'Got it', 'Understood', 'Noted'];
               const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
               setHanaReactionText(randomReaction);
               setHanaEmotion('neutral');
@@ -1404,14 +1796,17 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             resetSilenceTimer();
           }
 
-          // 2. CANDIDATE Q&A SESSION (Voice-First, No Manual Inputs)
+          // 2. CANDIDATE Q&A SESSION (Voice-First, Connected to MuxAI Ollama RAG + Smart Fallback)
           else if (curPhase === 'candidate_qa') {
-            const isFinishedPhrase =
-              /\b(that'?s all|that is all|no that'?s all|no questions|i'?m good|nope|all good|no thank you|nothing else|no more|we'?re good)\b/i.test(
-                lower
-              );
+            const isFinishedPhrase = detectCandidateFinishedIntent(lower, 'candidate_qa');
 
-            if (isFinishedPhrase && (qaStageState === 'waiting_5s' || qaStageState === 'waiting_final_5s' || qaStageState === 'listening')) {
+            if (
+              isFinishedPhrase &&
+              (qaStageState === 'waiting_5s' ||
+                qaStageState === 'waiting_final_5s' ||
+                qaStageState === 'listening' ||
+                qaStageState === 'hinting')
+            ) {
               concludeQaSession();
               return;
             }
@@ -1428,7 +1823,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             // Wait 2.0s silence after candidate finishes asking question before Hana responds
             qaSilenceTimerRef.current = setTimeout(() => {
               const qText = candidateTranscriptRef.current.trim();
-              if (qText.length >= 6 && !hanaIsSpeakingRef.current) {
+              if (!qText || hanaIsSpeakingRef.current) return;
+              if (detectCandidateFinishedIntent(qText, 'candidate_qa')) {
+                concludeQaSession();
+              } else if (qText.length >= 5) {
                 answerCandidateQaQuestion(qText);
               }
             }, 2000);
@@ -1485,24 +1883,124 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               return;
             }
 
-            // STRICT KEYWORD CAPTURE FOR SNAPSHOT STEP
-            // Strictly requires explicit trigger word, disallows questions or conversational noise!
-            if (curPhase === 'task_snapshot' && isListeningForTriggerRef.current) {
-              const isCandidateAskingQuestion = /(\?|what|how|why|where|should i|can i|do i|is it|is this|which|phone|paper)/i.test(lower);
+            // A. TASK RESUME VOICE ADVANCE
+            if (curPhase === 'task_resume') {
+              const isResumeDoneIntent = /\b(done|finished|submit|next|proceed|uploaded|uploaded my resume|uploaded the resume|ready|continue|that is my resume)\b/i.test(lower);
+              if (isResumeDoneIntent && !hanaIsSpeakingRef.current) {
+                if (uploadedResumeRef.current) {
+                  handleSubmitResumeTaskRef.current?.();
+                  setCandidateLiveTranscript('');
+                  candidateTranscriptRef.current = '';
+                } else {
+                  speakHanaLine(
+                    "Please select or drop your resume document first into the upload area, then say ready or done!",
+                    undefined,
+                    'neutral'
+                  );
+                }
+                return;
+              }
+            }
 
-              const isStrictTrigger =
-                /^(click|take photo|cheese|snap|capture)$/i.test(lower) ||
-                (/\b(click|take photo|capture photo)\b/i.test(lower) && !isCandidateAskingQuestion);
+            // B. TASK WRITTEN VOICE ADVANCE
+            else if (curPhase === 'task_written') {
+              const isWrittenDoneIntent = /\b(done|finished|submit|next|proceed|ready|i am done|i'm done|completed|all written)\b/i.test(lower);
+              if (isWrittenDoneIntent && !hanaIsSpeakingRef.current) {
+                if (writtenTextRef.current.trim().length >= 100) {
+                  handleSubmitWrittenTaskRef.current?.();
+                  setCandidateLiveTranscript('');
+                  candidateTranscriptRef.current = '';
+                } else {
+                  const currentChars = writtenTextRef.current.trim().length;
+                  speakHanaLine(
+                    `You currently have ${currentChars} characters. Please write at least 100 characters in the reflection box before submitting!`,
+                    undefined,
+                    'neutral'
+                  );
+                }
+                return;
+              }
+            }
 
-              if (isStrictTrigger && !isTriggerLockedRef.current && !isCandidateAskingQuestion) {
+            // C. TASK PRESSURE VOICE ADVANCE
+            else if (curPhase === 'task_pressure') {
+              let matchedPressure: string | null = null;
+              if (/\b(not at all|avoid)\b/i.test(lower)) {
+                matchedPressure = 'Not at all - I avoid such situations';
+              } else if (/\b(moderate|as long as the team|team does too)\b/i.test(lower)) {
+                matchedPressure = 'Moderate - I can work as long as the team does, too';
+              } else if (/\b(comfortable|exciting|find challenging)\b/i.test(lower)) {
+                matchedPressure = 'Comfortable - I find challenging situations very exciting for me';
+              } else if (/\b(hell yeah|pressure fears me|do not fear pressure)\b/i.test(lower)) {
+                matchedPressure = 'HELL YEAH - I do not fear pressure; pressure fears me';
+              }
+
+              if (matchedPressure && !hanaIsSpeakingRef.current) {
+                setPressureRating(matchedPressure);
+                triggerTaskPanelInteraction(2200, false);
+                setTimeout(() => {
+                  handleSubmitPressureRatingRef.current?.(matchedPressure!);
+                }, 400);
+                setCandidateLiveTranscript('');
+                candidateTranscriptRef.current = '';
+                return;
+              }
+
+              const isConfirmIntent = /\b(ready|done|submit|next|confirm|that is my answer)\b/i.test(lower);
+              if (isConfirmIntent && pressureRatingRef.current && !hanaIsSpeakingRef.current) {
+                handleSubmitPressureRatingRef.current?.();
+                setCandidateLiveTranscript('');
+                candidateTranscriptRef.current = '';
+                return;
+              }
+            }
+
+            // D. VOICE TRIGGER FOR SNAPSHOT STEP
+            else if (curPhase === 'task_snapshot') {
+              const isCandidateAskingQuestion = /(\?|what|how|why|where|should i|can i|do i|is it|is this|which|phone|paper|explain)/i.test(lower);
+
+              const isSkipIntent = /\b(skip|skip photo|next task|skip snapshot)\b/i.test(lower);
+              if (isSkipIntent && !hanaIsSpeakingRef.current) {
+                advanceToPhase('candidate_qa');
+                setCandidateLiveTranscript('');
+                candidateTranscriptRef.current = '';
+                return;
+              }
+
+              const snapshotTriggers = [
+                'take photo',
+                'take a photo',
+                'take picture',
+                'take a picture',
+                'say cheese',
+                'okay click',
+                'yes click',
+                'click',
+                'cheese',
+                'snap',
+                'capture',
+                'shoot',
+                'ready',
+                'do it',
+                'photo',
+                'picture',
+                'pose',
+              ];
+
+              const foundTrigger = snapshotTriggers.find((t) => {
+                const rx = new RegExp(`\\b${t}\\b`, 'i');
+                return rx.test(lower) || lower.includes(t);
+              });
+
+              if (foundTrigger && !isTriggerLockedRef.current && !isCandidateAskingQuestion && !hanaIsSpeakingRef.current) {
                 isTriggerLockedRef.current = true;
-                setLastDetectedTrigger('click');
-                handleTakeSnapshotTrigger();
+                setLastDetectedTrigger(foundTrigger);
+                handleTakeSnapshotTriggerRef.current?.();
                 setCandidateLiveTranscript('');
                 candidateTranscriptRef.current = '';
                 setTimeout(() => {
                   isTriggerLockedRef.current = false;
-                }, 2200);
+                }, 2400);
               }
             }
           }
@@ -1744,14 +2242,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }, 2400);
   };
 
-  // Unified phase advance with vocal instructions before every task
+  // Unified phase advance with vocal instructions, Mixamo animations, and 3D gaze towards task panels
   const advanceToPhase = (nextPhase: MeetingPhase) => {
     setMeetingPhase(nextPhase);
     setCandidateLiveTranscript('');
     candidateTranscriptRef.current = '';
 
     if (nextPhase === 'question_1') {
-      const q1 = "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?";
+      setHanaLookTarget(null);
+      const q1 = pickUniqueVoiceline('question1Intro');
       speakHanaLine(
         q1,
         () => {
@@ -1760,7 +2259,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     } else if (nextPhase === 'question_2') {
-      const q2 = "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?";
+      setHanaLookTarget(null);
+      const q2 = pickUniqueVoiceline('question2Intro');
       speakHanaLine(
         q2,
         () => {
@@ -1769,20 +2269,24 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     } else if (nextPhase === 'task_resume') {
-      const prompt = "Before we proceed to written tasks, let's review your credentials. Please upload your updated resume or CV document so we have the latest version on file for our recruiting team.";
+      triggerTaskPanelInteraction(3800, true);
+      const prompt = pickUniqueVoiceline('taskResumeIntro');
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_written') {
-      const prompt = "Next, we have a short written reflection task. In the spotlight panel on your right, please write down three things you like about yourself and why. Take your time, and submit when you have at least 100 characters.";
+      triggerTaskPanelInteraction(3800, true);
+      const prompt = pickUniqueVoiceline('taskWrittenIntro');
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_pressure') {
-      const prompt = "Great. Now we have a quick situational question. In the spotlight panel, select the rating that most accurately reflects how you perform under intense project pressure.";
+      triggerTaskPanelInteraction(3800, true);
+      const prompt = pickUniqueVoiceline('taskPressureIntro');
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_snapshot') {
+      triggerTaskPanelInteraction(3800, true);
       setSnapshotStep(1);
       snapshotStepRef.current = 1;
       setIsListeningForTrigger(false);
       isListeningForTriggerRef.current = false;
-      const prompt = "For fun and identity verification, please write down your phone number on a small piece of paper. First, hold it up and look directly forward, then say 'click' or 'ready' when you're set.";
+      const prompt = pickUniqueVoiceline('taskSnapshotIntro');
       speakHanaLine(
         prompt,
         () => {
@@ -1794,33 +2298,60 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         'neutral'
       );
     } else if (nextPhase === 'candidate_qa') {
+      setHanaLookTarget(null);
       setQaStageState('listening');
-      const prompt = "Thank you for completing all spotlight tasks. Now, do you have any questions for me or our recruiting team about the role or MuxAI?";
+      // Check if MuxAI Ollama server is online; if online, run the required hinting phase
+      refreshMuxAiServerStatus().then((online) => {
+        if (online) {
+          setQaStageState('hinting');
+          const hintingLine =
+            'Okay, I have all the information ready from the company. Feel free to ask any questions now';
+          speakHanaLine(
+            hintingLine,
+            () => {
+              setQaStageState('waiting_5s');
+              startQa5sSilenceTimer();
+            },
+            'neutral'
+          );
+        } else {
+          const prompt = pickUniqueVoiceline('qaIntroFallback');
+          speakHanaLine(
+            prompt,
+            () => {
+              setQaStageState('waiting_5s');
+              startQa5sSilenceTimer();
+            },
+            'neutral'
+          );
+        }
+      });
+    } else if (nextPhase === 'wrapup') {
+      setHanaLookTarget(null);
+      // Play "mixamo_thankful.fbx" for the final wrapup
+      triggerHanaAnimation('mixamo_thankful.fbx', true);
+      const wrapup = pickUniqueVoiceline('wrapupFinal');
       speakHanaLine(
-        prompt,
+        wrapup,
         () => {
-          setQaStageState('waiting_5s');
-          startQa5sSilenceTimer();
+          setTimeout(() => {
+            handleEndMeetingAndReview();
+          }, 1500);
         },
         'neutral'
       );
-    } else if (nextPhase === 'wrapup') {
-      const wrapup = "Thank you so much for your time today. It was a pleasure speaking with you. Our recruiting team will review your session dossier and reach out with next steps soon. Have a wonderful day!";
-      speakHanaLine(wrapup, () => {
-        setTimeout(() => {
-          handleEndMeetingAndReview();
-        }, 1500);
-      }, 'neutral');
     }
   };
 
-  // Handle Resume File Upload
+  // Handle Resume File Upload (with automatic voice-first advance upon upload)
   const handleResumeFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploadingResume(true);
     soundManager.playSend();
+    // Look towards the task panel when candidate modifies/uploads document
+    triggerTaskPanelInteraction(2600, false);
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -1839,43 +2370,55 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         textReader.onload = () => {
           uploaded.textContent = textReader.result as string;
           setUploadedResume(uploaded);
+          uploadedResumeRef.current = uploaded;
           setIsUploadingResume(false);
           soundManager.playReceive();
+          // Auto-advance seamlessly without requiring manual buttons
+          setTimeout(() => {
+            handleSubmitResumeTask(uploaded);
+          }, 1100);
         };
         textReader.readAsText(file);
       } else {
         setUploadedResume(uploaded);
+        uploadedResumeRef.current = uploaded;
         setIsUploadingResume(false);
         soundManager.playReceive();
+        // Auto-advance seamlessly without requiring manual buttons
+        setTimeout(() => {
+          handleSubmitResumeTask(uploaded);
+        }, 1100);
       }
     };
     reader.readAsDataURL(file);
   };
 
-  const handleSubmitResumeTask = () => {
-    if (!uploadedResume) return;
+  const handleSubmitResumeTask = (docToSubmit?: UploadedResume) => {
+    const doc = docToSubmit || uploadedResumeRef.current || uploadedResume;
+    if (!doc) return;
     setResumeSubmitted(true);
     soundManager.playReceive();
+    triggerTaskPanelInteraction(2800, true);
 
     setRecordedResponses((prev) => [
       ...prev,
       {
         phase: 'task_resume',
         question: 'Credentials Document Verification',
-        answer: `Uploaded: ${uploadedResume.fileName} (${uploadedResume.fileSize})`,
+        answer: `Uploaded: ${doc.fileName} (${doc.fileSize})`,
         timestamp: new Date().toLocaleTimeString(),
         aiNotes: 'Document uploaded and attached to candidate dossier for recruiter evaluation.',
       },
     ]);
 
-    // Hana speaks transition verbal feedback
-    const transitionText = "Thank you! I've received your updated document. Now let's move forward to the written reflection task.";
+    // Hana speaks varied transition verbal feedback
+    const transitionText = pickUniqueVoiceline('taskResumeDone');
     speakHanaLine(
       transitionText,
       () => {
         setTimeout(() => {
           advanceToPhase('task_written');
-        }, 1000);
+        }, 900);
       },
       'neutral'
     );
@@ -1883,58 +2426,63 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
   // Submit Written Task
   const handleSubmitWrittenTask = () => {
-    if (writtenText.trim().length < 100) return;
+    const textVal = writtenTextRef.current || writtenText;
+    if (textVal.trim().length < 100) return;
     setWrittenSubmitted(true);
     soundManager.playSend();
+    triggerTaskPanelInteraction(2800, true);
 
     setRecordedResponses((prev) => [
       ...prev,
       {
         phase: 'task_written',
         question: 'Write down 3 things you like about yourself and why.',
-        answer: writtenText,
+        answer: textVal,
         timestamp: new Date().toLocaleTimeString(),
         aiNotes: 'Exceeds length threshold. Structured answers showing self-awareness and confidence.',
       },
     ]);
 
-    // Hana verbal feedback and advance
-    const feedback = "Excellent self-reflection. I've recorded your response. Let's move on to the situational pressure rating.";
+    // Hana varied verbal feedback and advance
+    const feedback = pickUniqueVoiceline('taskWrittenDone');
     speakHanaLine(
       feedback,
       () => {
         setTimeout(() => {
           advanceToPhase('task_pressure');
-        }, 1000);
+        }, 900);
       },
       'neutral'
     );
   };
 
   // Submit Pressure Rating Task
-  const handleSubmitPressureRating = () => {
-    if (!pressureRating) return;
+  const handleSubmitPressureRating = (val?: string) => {
+    const chosen = val || pressureRatingRef.current || pressureRating;
+    if (!chosen) return;
+    setPressureRating(chosen);
     setPressureSubmitted(true);
     soundManager.playSend();
+    triggerTaskPanelInteraction(2800, true);
 
     setRecordedResponses((prev) => [
       ...prev,
       {
         phase: 'task_pressure',
         question: 'How well do you perform under pressure?',
-        answer: pressureRating,
+        answer: chosen,
         timestamp: new Date().toLocaleTimeString(),
-        aiNotes: `Candidate selected: "${pressureRating}". Demonstrates high resilience and initiative.`,
+        aiNotes: `Candidate selected: "${chosen}". Demonstrates high resilience and initiative.`,
       },
     ]);
 
-    const feedback = "Noted! Next up, we will do a fast visual verification sequence.";
+    const feedback = pickUniqueVoiceline('taskPressureDone');
     speakHanaLine(
       feedback,
       () => {
         setTimeout(() => {
           advanceToPhase('task_snapshot');
-        }, 1000);
+        }, 900);
       },
       'neutral'
     );
@@ -1986,6 +2534,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     soundManager.playReceive();
     const frame = captureCameraFrame();
     const currentStep = snapshotStepRef.current || 1;
+    // Look towards task panel & trigger button push when snapshot step updates
+    triggerTaskPanelInteraction(2800, true);
 
     if (currentStep === 1) {
       setSnapshots((prev) => [
@@ -2002,7 +2552,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       setSnapshotStep(2);
       setIsListeningForTrigger(false);
       isListeningForTriggerRef.current = false;
-      const nextPrompt = "Awesome shot. Now, keep holding up the paper, turn your head slightly to the left, and say 'click' or 'ready'.";
+      const nextPrompt = pickUniqueVoiceline('taskSnapshotStep2');
       speakHanaLine(
         nextPrompt,
         () => {
@@ -2028,7 +2578,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       setSnapshotStep(3);
       setIsListeningForTrigger(false);
       isListeningForTriggerRef.current = false;
-      const nextPrompt = "Got it! Lastly, turn your head slightly to the right while holding the paper, and say 'click' or 'do it'.";
+      const nextPrompt = pickUniqueVoiceline('taskSnapshotStep3');
       speakHanaLine(
         nextPrompt,
         () => {
@@ -2066,7 +2616,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         },
       ]);
 
-      const finishedText = "Perfect! All three identity frames are captured and verified. Now let's open the floor for any questions you might have.";
+      const finishedText = pickUniqueVoiceline('taskSnapshotDone');
       speakHanaLine(
         finishedText,
         () => {
@@ -2079,30 +2629,84 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   };
 
-  // Candidate Q&A handling
+  // Keep fresh function references accessible by speech recognition without closure staleness
+  const handleSubmitResumeTaskRef = useRef(handleSubmitResumeTask);
+  useEffect(() => {
+    handleSubmitResumeTaskRef.current = handleSubmitResumeTask;
+  });
+
+  const handleSubmitWrittenTaskRef = useRef(handleSubmitWrittenTask);
+  useEffect(() => {
+    handleSubmitWrittenTaskRef.current = handleSubmitWrittenTask;
+  });
+
+  const handleSubmitPressureRatingRef = useRef(handleSubmitPressureRating);
+  useEffect(() => {
+    handleSubmitPressureRatingRef.current = handleSubmitPressureRating;
+  });
+
+  const handleTakeSnapshotTriggerRef = useRef(handleTakeSnapshotTrigger);
+  useEffect(() => {
+    handleTakeSnapshotTriggerRef.current = handleTakeSnapshotTrigger;
+  });
+
+  // Active watcher: even if keywords appear anywhere in candidate's live subtitles during snapshot task, act upon it!
+  useEffect(() => {
+    if (meetingPhase !== 'task_snapshot') return;
+    if (isTriggerLockedRef.current || hanaIsSpeakingRef.current) return;
+    const lower = candidateLiveTranscript.toLowerCase().trim();
+    if (!lower) return;
+
+    const isQuestion = /(\?|what|how|why|where|should i|can i|explain)/i.test(lower);
+    if (isQuestion) return;
+
+    const snapshotKeywords = [
+      'take photo',
+      'take a photo',
+      'take picture',
+      'take a picture',
+      'say cheese',
+      'okay click',
+      'yes click',
+      'click',
+      'cheese',
+      'snap',
+      'capture',
+      'shoot',
+      'ready',
+      'do it',
+      'photo',
+      'picture',
+      'pose',
+    ];
+
+    const matched = snapshotKeywords.find((kw) => {
+      const rx = new RegExp(`\\b${kw}\\b`, 'i');
+      return rx.test(lower) || lower.includes(kw);
+    });
+
+    if (matched) {
+      isTriggerLockedRef.current = true;
+      setLastDetectedTrigger(matched);
+      handleTakeSnapshotTriggerRef.current?.();
+      setCandidateLiveTranscript('');
+      candidateTranscriptRef.current = '';
+      setTimeout(() => {
+        isTriggerLockedRef.current = false;
+      }, 1800);
+    }
+  }, [candidateLiveTranscript, meetingPhase]);
+
+  // Candidate Q&A handling (manual text input fallback if used)
   const handleSendCandidateQuestion = () => {
     const qText = candidateQuestionInput.trim();
     if (!qText) return;
-
-    setQaHistory((prev) => [...prev, { sender: 'candidate', text: qText }]);
     setCandidateQuestionInput('');
-    soundManager.playSend();
-
-    setTimeout(() => {
-      let answer = "That's a good question. At MuxAI, our engineering team works directly on autonomous AI agent architectures with high shipping cadence. Collaboration is open and autonomy is prioritized.";
-      if (qText.toLowerCase().includes('salary') || qText.toLowerCase().includes('compensation')) {
-        answer = 'Compensation packages are highly competitive and include equity options and comprehensive benefits, discussed directly at the offer stage.';
-      } else if (qText.toLowerCase().includes('remote') || qText.toLowerCase().includes('location')) {
-        answer = 'We are remote-first with flexible asynchronous setups globally.';
-      }
-
-      setQaHistory((prev) => [...prev, { sender: 'hana', text: answer }]);
-      speakHanaLine(answer, undefined, 'neutral');
-    }, 600);
+    answerCandidateQaQuestion(qText);
   };
 
   const handleFinishQaNoQuestions = () => {
-    advanceToPhase('wrapup');
+    concludeQaSession();
   };
 
   // ----------------------------------------------------
@@ -2750,199 +3354,66 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={handleEndMeetingAndReview}
-              className="px-3.5 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              End Interview
-            </button>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-100 border border-neutral-200 text-neutral-600 text-xs font-mono">
+              <Mic className="w-3.5 h-3.5 text-sky-500 animate-pulse" />
+              <span>Hands-Free • Say &quot;End interview&quot; to conclude</span>
+            </div>
           </div>
         </header>
 
         {/* Video Conference Layout */}
         <main className="flex-1 p-3 sm:p-4 overflow-hidden flex flex-col min-h-0 relative">
-          <div className="flex-1 grid gap-4 min-h-0 h-full overflow-hidden">
-            {/* Standard Conversational Layout (Two large tiles) */}
-            {!isSpotlightActive && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full min-h-0">
-                {/* Tile 1: Hana (AI Interviewer) */}
-                <div className="relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex flex-col items-center justify-center">
-                  {!hanaEntered ? (
-                    <div className="flex flex-col items-center gap-4 text-center p-6 animate-pulse">
-                      <div className="w-20 h-20 rounded-full bg-sky-500/20 border border-sky-400 flex items-center justify-center text-sky-400">
-                        <UserCheck className="w-10 h-10" />
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-lg text-white font-heading">
-                          Interviewer is entering the meeting...
-                        </h3>
-                        <p className="text-xs text-neutral-400 mt-1">Connecting AI interviewer</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      {/* Initial Camera Off view of Hana's panel while 3D model loads in background */}
-                      <div
-                        className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 transition-opacity duration-700 bg-neutral-900 ${
-                          isHana3DReady ? 'opacity-0 pointer-events-none' : 'opacity-100'
-                        }`}
-                      >
-                        <div className="relative mb-4">
-                          <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-white/20 shadow-2xl relative">
-                            <img
-                              src="/Thumbnail.png"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLImageElement).src = 'https://muxai.vercel.app/logo_Hana.png';
-                              }}
-                              alt="Hana"
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          {hanaIsSpeaking && (
-                            <span className="absolute -inset-2 rounded-full border-2 border-sky-400 animate-ping opacity-75 pointer-events-none" />
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-xs text-neutral-300 font-medium mb-1">
-                          <VideoOff className="w-3.5 h-3.5 text-neutral-400" />
-                          <span>Camera Off • Interviewer</span>
-                        </div>
-                        <p className="text-[11px] text-neutral-400 font-mono">
-                          Connecting 3D neural feed...
-                        </p>
-                      </div>
-
-                      {/* Live 3D VRM Canvas (Avatar interaction touching disabled, neutral emotion default) */}
-                      <div
-                        className={`w-full h-full relative pointer-events-none select-none transition-opacity duration-700 ${
-                          isHana3DReady ? 'opacity-100' : 'opacity-0'
-                        }`}
-                      >
-                        <VRMCanvas
-                          interactive={false}
-                          isSpeaking={hanaIsSpeaking}
-                          emotion={hanaEmotion}
-                          modelFileName="hana_v1.0_moderncasual_vrm1.vrm"
-                          enablePointerTracking={false}
-                          disableIdleWaitingAnimations={true}
-                          nodTrigger={nodCount}
-                          onLoaded={() => {
-                            setTimeout(() => {
-                              setIsHana3DReady(true);
-                            }, 1200);
-                          }}
-                        />
-                      </div>
-
-                      {/* Speaking Glow Halo */}
-                      {hanaIsSpeaking && (
-                        <div className="absolute inset-0 pointer-events-none ring-2 ring-sky-400/50 rounded-3xl animate-pulse" />
-                      )}
-
-                      {/* Reaction Tag */}
-                      {hanaReactionText && !hanaIsSpeaking && (
-                        <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-xs text-sky-400 font-mono animate-in fade-in z-20">
-                          {hanaReactionText}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {/* Tile Label */}
-                  <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2 z-20">
-                    <span className={`w-2 h-2 rounded-full ${hanaIsSpeaking ? 'bg-sky-400 animate-pulse' : 'bg-emerald-400'}`} />
-                    <span className="text-xs font-semibold text-white">Interviewer</span>
-                  </div>
-                </div>
-
-                {/* Tile 2: Candidate Video Feed (Always active in interview feed) */}
-                <div className="relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex items-center justify-center">
-                  <video
-                    ref={(el) => {
-                      localVideoRef.current = el;
-                      if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
-                        el.srcObject = mediaStreamRef.current;
-                      }
-                    }}
-                    autoPlay
-                    playsInline
-                    muted
-                    className={`w-full h-full object-cover transform -scale-x-100 ${!isCameraActive ? 'hidden' : ''}`}
-                  />
-
-                  {!isCameraActive && (
-                    <div className="flex flex-col items-center gap-2 text-neutral-400">
-                      <VideoOff className="w-10 h-10" />
-                      <span className="text-xs">Camera Turned Off</span>
-                    </div>
-                  )}
-
-                  {/* Live speech auto-send visual indicator for candidate */}
-                  {candidateLiveTranscript && (
-                    <div className="absolute top-4 left-4 right-4 z-20 pointer-events-none">
-                      <div className="px-3.5 py-2 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 text-white text-xs leading-relaxed max-w-lg mx-auto shadow-lg flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                        <span className="truncate flex-1">&ldquo;{candidateLiveTranscript}&rdquo;</span>
-                        <span className="text-[10px] text-neutral-400 font-mono shrink-0">Auto-sending on silence...</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Candidate Tile Label & Controls */}
-                  <div className="absolute bottom-4 inset-x-4 flex items-center justify-between z-10">
-                    <div className="px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${isCandidateSpeaking ? 'bg-sky-400 animate-ping' : 'bg-emerald-400'}`} />
-                      <span className="text-xs font-semibold text-white">
-                        {candidateName.trim() ? `${candidateName.trim()} (You)` : 'You'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={toggleCamera}
-                        className={`p-2.5 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
-                          isCameraActive ? 'bg-white/20 border-white/30 text-white' : 'bg-red-500 border-red-400 text-white'
-                        }`}
-                      >
-                        {isCameraActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={toggleMic}
-                        className={`p-2.5 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
-                          isMicActive ? 'bg-white/20 border-white/30 text-white' : 'bg-red-500 border-red-400 text-white'
-                        }`}
-                      >
-                        {isMicActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
+          {/* Re-explaining Banner Toast */}
+          {taskClarificationNotice && (
+            <div className="absolute top-2 inset-x-4 z-40 pointer-events-none">
+              <div className="px-4 py-2 rounded-2xl bg-sky-600 text-white text-xs font-semibold text-center shadow-lg max-w-md mx-auto flex items-center justify-center gap-2">
+                <Info className="w-4 h-4 shrink-0 text-white animate-pulse" />
+                <span>{taskClarificationNotice}</span>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Spotlight Dynamic Layout (Tasks: Resume Upload, Written, Pressure, Snapshots) */}
-            {isSpotlightActive && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0 relative">
-                {/* Re-explaining Banner Toast */}
-                {taskClarificationNotice && (
-                  <div className="absolute top-2 inset-x-4 z-40 pointer-events-none">
-                    <div className="px-4 py-2 rounded-2xl bg-sky-600 text-white text-xs font-semibold text-center shadow-lg max-w-md mx-auto flex items-center justify-center gap-2">
-                      <Info className="w-4 h-4 shrink-0 text-white animate-pulse" />
-                      <span>{taskClarificationNotice}</span>
+          <div
+            className={`flex-1 grid gap-4 min-h-0 h-full overflow-hidden transition-all duration-300 ${
+              isSpotlightActive ? 'grid-cols-1 lg:grid-cols-12' : 'grid-cols-1 md:grid-cols-2'
+            }`}
+          >
+            {/* Unified Participant Tiles: ALWAYS MOUNTED (Eliminates VRM recreation / blank panel bugs) */}
+            <div
+              className={`min-h-0 flex gap-4 transition-all duration-300 ${
+                isSpotlightActive
+                  ? 'lg:col-span-4 flex-col'
+                  : 'col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2'
+              }`}
+            >
+              {/* Tile 1: Hana (AI Interviewer) */}
+              <div
+                className={`relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex flex-col items-center justify-center transition-all duration-300 ${
+                  isSpotlightActive ? 'flex-1 min-h-[160px]' : 'h-full min-h-0'
+                }`}
+              >
+                {!hanaEntered ? (
+                  <div className="flex flex-col items-center gap-4 text-center p-6 animate-pulse">
+                    <div className="w-20 h-20 rounded-full bg-sky-500/20 border border-sky-400 flex items-center justify-center text-sky-400">
+                      <UserCheck className="w-10 h-10" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-white font-heading">
+                        Interviewer is entering the meeting...
+                      </h3>
+                      <p className="text-xs text-neutral-400 mt-1">Connecting AI interviewer</p>
                     </div>
                   </div>
-                )}
-
-                {/* Left 4 cols: Compact Participant Video Tiles */}
-                <div className="lg:col-span-4 flex flex-col gap-3 min-h-0">
-                  {/* Hana Mini Tile */}
-                  <div className="relative rounded-2xl bg-neutral-900 border border-neutral-300 overflow-hidden flex-1 min-h-[160px] shadow-sm">
-                    {!isHana3DReady ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-neutral-900 z-10">
-                        <div className="w-14 h-14 rounded-full overflow-hidden border border-white/20 relative mb-2">
+                ) : (
+                  <>
+                    {/* Initial Camera Off view of Hana's panel while 3D model loads in background */}
+                    <div
+                      className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 transition-opacity duration-700 bg-neutral-900 ${
+                        isHana3DReady ? 'opacity-0 pointer-events-none' : 'opacity-100'
+                      }`}
+                    >
+                      <div className="relative mb-4">
+                        <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-white/20 shadow-2xl relative">
                           <img
                             src="/Thumbnail.png"
                             onError={(e) => {
@@ -2952,365 +3423,480 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                             className="w-full h-full object-cover"
                           />
                         </div>
-                        <span className="text-[11px] text-neutral-400">Camera Off</span>
+                        {hanaIsSpeaking && (
+                          <span className="absolute -inset-2 rounded-full border-2 border-sky-400 animate-ping opacity-75 pointer-events-none" />
+                        )}
                       </div>
-                    ) : null}
 
-                    <div className="w-full h-full relative pointer-events-none select-none">
+                      <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-xs text-neutral-300 font-medium mb-1">
+                        <VideoOff className="w-3.5 h-3.5 text-neutral-400" />
+                        <span>Camera Off • Interviewer</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-400 font-mono">
+                        Connecting 3D neural feed...
+                      </p>
+                    </div>
+
+                    {/* Live 3D VRM Canvas (Avatar interaction touching disabled, neutral emotion default) */}
+                    <div
+                      className={`w-full h-full relative pointer-events-none select-none transition-opacity duration-700 ${
+                        isHana3DReady ? 'opacity-100' : 'opacity-0'
+                      }`}
+                    >
                       <VRMCanvas
                         interactive={false}
                         isSpeaking={hanaIsSpeaking}
                         emotion={hanaEmotion}
-                        modelFileName="hana_v1.0_moderncasual_vrm1.vrm"
+                        modelFileName="hana_v1.2_interviewer_vrm1.vrm"
                         enablePointerTracking={false}
                         disableIdleWaitingAnimations={true}
                         nodTrigger={nodCount}
-                        onLoaded={() => setIsHana3DReady(true)}
+                        customAnimationTrigger={customAnimationTrigger}
+                        lookTargetOffset={hanaLookTarget}
+                        onLoaded={() => {
+                          setTimeout(() => {
+                            setIsHana3DReady(true);
+                          }, 1200);
+                        }}
                       />
                     </div>
-                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-20">
-                      Interviewer
-                    </div>
-                  </div>
 
-                  {/* Candidate Mini Tile */}
-                  <div className="relative rounded-2xl bg-neutral-900 border border-neutral-300 overflow-hidden flex-1 min-h-[160px] shadow-sm">
-                    <video
-                      autoPlay
-                      playsInline
-                      muted
-                      ref={(el) => {
-                        spotlightVideoRef.current = el;
-                        localVideoRef.current = el;
-                        if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
-                          el.srcObject = mediaStreamRef.current;
-                        }
-                      }}
-                      className={`w-full h-full object-cover transform -scale-x-100 ${!isCameraActive ? 'hidden' : ''}`}
-                    />
-                    {!isCameraActive && (
-                      <div className="flex flex-col items-center justify-center h-full text-neutral-400 gap-1.5 p-4">
-                        <VideoOff className="w-8 h-8" />
-                        <span className="text-[11px]">Camera Off</span>
+                    {/* Speaking Glow Halo */}
+                    {hanaIsSpeaking && (
+                      <div className="absolute inset-0 pointer-events-none ring-2 ring-sky-400/50 rounded-3xl animate-pulse" />
+                    )}
+
+                    {/* Reaction Tag */}
+                    {hanaReactionText && !hanaIsSpeaking && (
+                      <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-xs text-sky-400 font-mono animate-in fade-in z-20">
+                        {hanaReactionText}
                       </div>
                     )}
-                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-10">
-                      {candidateName.trim() || 'You'}
-                    </div>
-                  </div>
-                </div>
+                  </>
+                )}
 
-                {/* Right 8 cols: Spotlight Frame (Light Theme Card) */}
-                <div className="lg:col-span-8 rounded-3xl bg-white border border-neutral-200 p-6 shadow-md flex flex-col justify-between overflow-y-auto">
-                  {/* TASK 1: Resume / CV Document Upload */}
-                  {meetingPhase === 'task_resume' && (
-                    <div className="space-y-4 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
-                          <FileUp className="w-3.5 h-3.5" />
-                          <span>Credentials Document Upload</span>
-                        </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
-                          Upload your updated resume or CV
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                          Our autonomous recruiting system indexes your experiences and matches your skillset with our engineering roles.
-                        </p>
+                {/* Tile Label */}
+                <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2 z-20">
+                  <span className={`w-2 h-2 rounded-full ${hanaIsSpeaking ? 'bg-sky-400 animate-pulse' : 'bg-emerald-400'}`} />
+                  <span className="text-xs font-semibold text-white">Interviewer</span>
+                </div>
+              </div>
+
+              {/* Tile 2: Candidate Video Feed (Always active in interview feed) */}
+              <div
+                className={`relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex items-center justify-center transition-all duration-300 ${
+                  isSpotlightActive ? 'flex-1 min-h-[160px]' : 'h-full min-h-0'
+                }`}
+              >
+                <video
+                  ref={(el) => {
+                    localVideoRef.current = el;
+                    spotlightVideoRef.current = el;
+                    if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
+                      el.srcObject = mediaStreamRef.current;
+                    }
+                  }}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover transform -scale-x-100 ${!isCameraActive ? 'hidden' : ''}`}
+                />
+
+                {!isCameraActive && (
+                  <div className="flex flex-col items-center gap-2 text-neutral-400">
+                    <VideoOff className="w-10 h-10" />
+                    <span className="text-xs">Camera Turned Off</span>
+                  </div>
+                )}
+
+                {/* Live speech auto-scrolling marquee subtitle indicator & accurately timed silence progress bar */}
+                {(candidateLiveTranscript || silenceTimerProgress) && (
+                  <div className="absolute top-4 left-4 right-4 z-20 pointer-events-none">
+                    <div className="px-3.5 py-2 rounded-2xl bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs leading-relaxed max-w-lg mx-auto shadow-xl flex items-center gap-3 overflow-hidden">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                      <div
+                        ref={candidateSubtitleScrollRef}
+                        className="flex-1 overflow-x-auto whitespace-nowrap scroll-smooth flex items-center justify-end [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                      >
+                        <span className="inline-block pl-2 font-medium">
+                          {candidateLiveTranscript ? (
+                            <>&ldquo;{candidateLiveTranscript.split(/\s+/).slice(-18).join(' ')}&rdquo;</>
+                          ) : (
+                            <span className="text-neutral-400 italic">Listening...</span>
+                          )}
+                        </span>
                       </div>
 
-                      <div className="flex-1 flex flex-col justify-center">
-                        {!uploadedResume ? (
-                          <label className="border-2 border-dashed border-neutral-300 hover:border-sky-500 rounded-3xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-neutral-50/60 hover:bg-sky-50/40 group">
+                      {/* Accurate timed progress bar based on silence delay timer */}
+                      {silenceTimerProgress && (
+                        <div className="flex items-center gap-2 shrink-0 bg-white/10 px-2.5 py-1 rounded-xl border border-white/15">
+                          <div className="flex flex-col gap-1 w-20 sm:w-24">
+                            <div className="flex items-center justify-between text-[10px] font-mono text-neutral-300">
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-2.5 h-2.5 text-sky-400 animate-spin" />
+                                <span>Silence</span>
+                              </span>
+                              <span className="text-sky-300 font-semibold font-mono">
+                                {(silenceTimerProgress.durationMs / 1000).toFixed(1)}s
+                              </span>
+                            </div>
+                            <div className="h-1.5 w-full bg-black/40 rounded-full overflow-hidden shadow-inner">
+                              <div
+                                key={silenceTimerProgress.id}
+                                className="h-full bg-gradient-to-r from-sky-400 via-teal-400 to-emerald-400 rounded-full"
+                                style={{
+                                  animation: `silence-progress-fill ${silenceTimerProgress.durationMs}ms linear forwards`,
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Candidate Tile Label & Controls (Clean voice status, no manual buttons required) */}
+                <div className="absolute bottom-4 inset-x-4 flex items-center justify-between z-10">
+                  <div className="px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${isCandidateSpeaking ? 'bg-sky-400 animate-ping' : 'bg-emerald-400'}`} />
+                    <span className="text-xs font-semibold text-white">
+                      {candidateName.trim() ? `${candidateName.trim()} (You)` : 'You'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-mono text-neutral-300">
+                      {isMicActive ? 'Mic Active' : 'Mic Muted'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Spotlight Dynamic Layout (Tasks: Resume Upload, Written, Pressure, Snapshots) - VOICE ORIENTED, NO MANUAL BUTTONS */}
+            {isSpotlightActive && (
+              <div className="lg:col-span-8 rounded-3xl bg-white border border-neutral-200 p-6 shadow-md flex flex-col justify-between overflow-y-auto animate-in fade-in zoom-in-95 duration-300">
+                {/* TASK 1: Resume / CV Document Upload */}
+                {meetingPhase === 'task_resume' && (
+                  <div className="space-y-4 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
+                        <FileUp className="w-3.5 h-3.5" />
+                        <span>Credentials Document Upload</span>
+                      </div>
+                      <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                        Upload your updated resume or CV
+                      </h3>
+                      <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                        Select or drag your document here. Once loaded, the system automatically indexes it and proceeds by voice.
+                      </p>
+                    </div>
+
+                    <div className="flex-1 flex flex-col justify-center">
+                      {!uploadedResume ? (
+                        <label className="border-2 border-dashed border-neutral-300 hover:border-sky-500 rounded-3xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-neutral-50/60 hover:bg-sky-50/40 group">
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,.doc,.txt,.png,.jpg"
+                            onChange={handleResumeFileUpload}
+                            className="hidden"
+                          />
+                          <div className="w-16 h-16 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
+                            <Upload className="w-8 h-8" />
+                          </div>
+                          <h4 className="text-base font-bold text-neutral-900">
+                            {isUploadingResume ? 'Processing document...' : 'Click to select or drag and drop your resume'}
+                          </h4>
+                          <p className="text-xs text-neutral-500 mt-1.5 max-w-sm">
+                            Supported formats: PDF, DOCX, TXT, PNG, or JPG (max 10MB)
+                          </p>
+                        </label>
+                      ) : (
+                        <div className="p-6 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-center gap-3.5">
+                            <div className="w-12 h-12 rounded-xl bg-sky-500 text-white flex items-center justify-center">
+                              <FileCheck className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-bold text-neutral-900">{uploadedResume.fileName}</h4>
+                              <div className="flex items-center gap-2 text-xs text-neutral-600 mt-0.5">
+                                <span>{uploadedResume.fileSize}</span>
+                                <span>•</span>
+                                <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                                  <Check className="w-3.5 h-3.5" /> Indexed &amp; Ready
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <label className="text-xs text-sky-600 hover:text-sky-800 font-semibold cursor-pointer underline self-start sm:self-center">
                             <input
                               type="file"
                               accept=".pdf,.docx,.doc,.txt,.png,.jpg"
                               onChange={handleResumeFileUpload}
                               className="hidden"
                             />
-                            <div className="w-16 h-16 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
-                              <Upload className="w-8 h-8" />
-                            </div>
-                            <h4 className="text-base font-bold text-neutral-900">
-                              {isUploadingResume ? 'Processing document...' : 'Click to select or drag and drop your resume'}
-                            </h4>
-                            <p className="text-xs text-neutral-500 mt-1.5 max-w-sm">
-                              Supported formats: PDF, DOCX, TXT, PNG, or JPG (max 10MB)
-                            </p>
+                            Replace file
                           </label>
-                        ) : (
-                          <div className="p-6 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div className="flex items-center gap-3.5">
-                              <div className="w-12 h-12 rounded-xl bg-sky-500 text-white flex items-center justify-center">
-                                <FileCheck className="w-6 h-6" />
-                              </div>
-                              <div>
-                                <h4 className="text-sm font-bold text-neutral-900">{uploadedResume.fileName}</h4>
-                                <div className="flex items-center gap-2 text-xs text-neutral-600 mt-0.5">
-                                  <span>{uploadedResume.fileSize}</span>
-                                  <span>•</span>
-                                  <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                                    <Check className="w-3.5 h-3.5" /> Ready for submission
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <label className="text-xs text-sky-600 hover:text-sky-800 font-semibold cursor-pointer underline self-start sm:self-center">
-                              <input
-                                type="file"
-                                accept=".pdf,.docx,.doc,.txt,.png,.jpg"
-                                onChange={handleResumeFileUpload}
-                                className="hidden"
-                              />
-                              Replace file
-                            </label>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="pt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={handleSubmitResumeTask}
-                          disabled={!uploadedResume || resumeSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                        >
-                          Confirm &amp; Proceed to Next Task
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TASK 2: Written Self-Reflection (>= 100 chars) */}
-                  {meetingPhase === 'task_written' && (
-                    <div className="space-y-4 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>Written Reflection Spotlight</span>
-                        </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
-                          Write down 3 things you like about yourself and why.
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                          Reflect on your personal strengths, values, or technical curiosity. Minimum 100 characters required.
-                        </p>
-                      </div>
-
-                      <div className="space-y-2 flex-1 flex flex-col">
-                        <textarea
-                          rows={6}
-                          value={writtenText}
-                          onChange={(e) => setWrittenText(e.target.value)}
-                          placeholder="1. I love diving deep into architectural puzzles because...&#10;2. I value empathetic communication with team members...&#10;3. I am resilient and relentless when debugging critical edge cases..."
-                          className="w-full flex-1 p-4 rounded-2xl bg-neutral-50 border border-neutral-300 text-neutral-900 text-sm focus:outline-none focus:border-sky-500 resize-none leading-relaxed placeholder:text-neutral-400"
-                        />
-                        <div className="flex items-center justify-between text-xs font-mono">
-                          <span
-                            className={
-                              writtenText.trim().length >= 100
-                                ? 'text-emerald-600 font-bold'
-                                : 'text-amber-600 font-medium'
-                            }
-                          >
-                            {writtenText.trim().length} / 100 characters minimum
-                          </span>
-                          {writtenText.trim().length >= 100 && (
-                            <span className="text-emerald-600 font-semibold flex items-center gap-1">
-                              <Check className="w-3.5 h-3.5" /> Ready to submit
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="pt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={handleSubmitWrittenTask}
-                          disabled={writtenText.trim().length < 100 || writtenSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                        >
-                          Confirm &amp; Submit Written Task
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TASK 3: Situational Pressure Rating */}
-                  {meetingPhase === 'task_pressure' && (
-                    <div className="space-y-6 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
-                          <Award className="w-3.5 h-3.5" />
-                          <span>Situational Behavior Check</span>
-                        </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
-                          How well do you perform under pressure?
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                          Select the answer that most genuinely reflects your reaction to challenging constraints.
-                        </p>
-                      </div>
-
-                      <div className="space-y-3">
-                        {[
-                          'Not at all - I avoid such situations',
-                          'Moderate - I can work as long as the team does, too',
-                          'Comfortable - I find challenging situations very exciting for me',
-                          'HELL YEAH - I do not fear pressure; pressure fears me',
-                        ].map((opt) => (
-                          <label
-                            key={opt}
-                            className={`flex items-center gap-3.5 p-4 rounded-2xl border transition-all cursor-pointer ${
-                              pressureRating === opt
-                                ? 'bg-sky-50 border-sky-500 text-neutral-900 shadow-xs'
-                                : 'bg-neutral-50 border-neutral-200 hover:border-neutral-300 text-neutral-700'
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="pressure"
-                              checked={pressureRating === opt}
-                              onChange={() => setPressureRating(opt)}
-                              className="accent-sky-500 w-4 h-4"
-                            />
-                            <span className="text-sm font-medium">{opt}</span>
-                          </label>
-                        ))}
-                      </div>
-
-                      <div className="pt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={handleSubmitPressureRating}
-                          disabled={!pressureRating || pressureSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                        >
-                          Confirm Situational Rating
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TASK 4: Camera Feed Snapshots via Voice Triggers */}
-                  {meetingPhase === 'task_snapshot' && (
-                    <div className="space-y-4 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
-                          <Camera className="w-3.5 h-3.5" />
-                          <span>Voice-Activated Visual Identity Verification</span>
-                        </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
-                          Hold your written phone number up &amp; pose
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                          Say <strong className="text-neutral-900">&quot;click&quot;</strong>,{' '}
-                          <strong className="text-neutral-900">&quot;do it&quot;</strong>,{' '}
-                          <strong className="text-neutral-900">&quot;okay&quot;</strong>, or{' '}
-                          <strong className="text-neutral-900">&quot;ready&quot;</strong> to capture each shot automatically.
-                        </p>
-                      </div>
-
-                      {/* Pose Progress Tracker */}
-                      <div className="grid grid-cols-3 gap-3">
-                        <div
-                          className={`p-3.5 rounded-2xl border text-center transition-all ${
-                            snapshotStep === 1
-                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
-                              : snapshots.length >= 1
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
-                          }`}
-                        >
-                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 1</span>
-                          <span className="text-xs font-semibold mt-1 block">Look Forward</span>
-                          {snapshots.length >= 1 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
-                        </div>
-
-                        <div
-                          className={`p-3.5 rounded-2xl border text-center transition-all ${
-                            snapshotStep === 2
-                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
-                              : snapshots.length >= 2
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
-                          }`}
-                        >
-                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 2</span>
-                          <span className="text-xs font-semibold mt-1 block">Look Left</span>
-                          {snapshots.length >= 2 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
-                        </div>
-
-                        <div
-                          className={`p-3.5 rounded-2xl border text-center transition-all ${
-                            snapshotStep === 3
-                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
-                              : snapshots.length >= 3
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
-                          }`}
-                        >
-                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 3</span>
-                          <span className="text-xs font-semibold mt-1 block">Look Right</span>
-                          {snapshots.length >= 3 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
-                        </div>
-                      </div>
-
-                      {/* Live Listener Monitor & Manual Trigger Fallback */}
-                      <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
-                          <div>
-                            <span className="text-xs font-semibold text-neutral-900 block">
-                              Listening for voice trigger: &quot;click&quot;, &quot;ready&quot;, &quot;do it&quot;, or &quot;cheese&quot;
-                            </span>
-                            <span className="text-[11px] text-neutral-500 font-mono block">
-                              {lastDetectedTrigger ? `Heard: "${lastDetectedTrigger}" • Capturing pose` : 'Speak clearly or click button to snap'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleTakeSnapshotTrigger}
-                            className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 active:scale-95 text-white text-xs font-bold transition-all shadow-sm cursor-pointer shrink-0 flex items-center gap-1.5"
-                          >
-                            <Camera className="w-3.5 h-3.5" />
-                            <span>Take Photo (Pose {snapshotStep || 1} of 3)</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => advanceToPhase('candidate_qa')}
-                            className="px-3.5 py-2 rounded-xl bg-neutral-200 hover:bg-neutral-300 text-neutral-700 text-xs font-semibold transition-colors cursor-pointer shrink-0"
-                          >
-                            Skip / Proceed
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Display Captured Gallery */}
-                      {snapshots.length > 0 && (
-                        <div className="flex gap-3 overflow-x-auto pb-1">
-                          {snapshots.map((snap) => (
-                            <div key={snap.id} className="relative w-24 h-18 rounded-xl overflow-hidden border border-neutral-200 shrink-0 shadow-xs">
-                              <img src={snap.dataUrl} alt={snap.label} className="w-full h-full object-cover transform -scale-x-100" />
-                              <span className="absolute bottom-1 inset-x-1 text-[9px] bg-black/70 text-white text-center rounded px-1 truncate">
-                                {snap.angle}
-                              </span>
-                            </div>
-                          ))}
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
+
+                    {/* Voice Direction Indicator (No manual buttons) */}
+                    <div className="p-4 rounded-2xl bg-sky-50/70 border border-sky-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                        <span className="text-xs font-semibold text-neutral-800">
+                          Voice-Guided: Say &quot;done&quot;, &quot;submit&quot;, or &quot;ready&quot; to continue
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
+                        Auto-advancing on upload
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* TASK 2: Written Self-Reflection (>= 100 chars) */}
+                {meetingPhase === 'task_written' && (
+                  <div className="space-y-4 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Written Reflection Spotlight</span>
+                      </div>
+                      <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                        Write down 3 things you like about yourself and why.
+                      </h3>
+                      <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                        Reflect on your personal strengths, values, or technical curiosity. Minimum 100 characters required. When finished, say &quot;I am done&quot; or &quot;submit&quot;.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2 flex-1 flex flex-col">
+                      <textarea
+                        rows={6}
+                        value={writtenText}
+                        onChange={(e) => {
+                          setWrittenText(e.target.value);
+                          if (e.target.value.length % 25 === 1) {
+                            triggerTaskPanelInteraction(1800, false);
+                          }
+                        }}
+                        placeholder="1. I love diving deep into architectural puzzles because...&#10;2. I value empathetic communication with team members...&#10;3. I am resilient and relentless when debugging critical edge cases..."
+                        className="w-full flex-1 p-4 rounded-2xl bg-neutral-50 border border-neutral-300 text-neutral-900 text-sm focus:outline-none focus:border-sky-500 resize-none leading-relaxed placeholder:text-neutral-400"
+                      />
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span
+                          className={
+                            writtenText.trim().length >= 100
+                              ? 'text-emerald-600 font-bold'
+                              : 'text-amber-600 font-medium'
+                          }
+                        >
+                          {writtenText.trim().length} / 100 characters minimum
+                        </span>
+                        {writtenText.trim().length >= 100 && (
+                          <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" /> Ready for submission
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Voice Direction Indicator (No manual buttons) */}
+                    <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full ${
+                            writtenText.trim().length >= 100 ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+                          }`}
+                        />
+                        <span className="text-xs font-semibold text-neutral-800">
+                          {writtenText.trim().length >= 100
+                            ? 'Voice-Guided: Say "I am done" or "submit" to proceed'
+                            : 'Reach 100 characters, then say "I am done"'}
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
+                        Hands-Free Voice Flow
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* TASK 3: Situational Pressure Rating */}
+                {meetingPhase === 'task_pressure' && (
+                  <div className="space-y-6 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
+                        <Award className="w-3.5 h-3.5" />
+                        <span>Situational Behavior Check</span>
+                      </div>
+                      <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                        How well do you perform under pressure?
+                      </h3>
+                      <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                        Select your option or state your choice aloud (&quot;hell yeah&quot;, &quot;comfortable&quot;, &quot;moderate&quot;, &quot;not at all&quot;).
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      {[
+                        'Not at all - I avoid such situations',
+                        'Moderate - I can work as long as the team does, too',
+                        'Comfortable - I find challenging situations very exciting for me',
+                        'HELL YEAH - I do not fear pressure; pressure fears me',
+                      ].map((opt) => (
+                        <label
+                          key={opt}
+                          className={`flex items-center gap-3.5 p-4 rounded-2xl border transition-all cursor-pointer ${
+                            pressureRating === opt
+                              ? 'bg-sky-50 border-sky-500 text-neutral-900 shadow-xs'
+                              : 'bg-neutral-50 border-neutral-200 hover:border-neutral-300 text-neutral-700'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="pressure"
+                            checked={pressureRating === opt}
+                            onChange={() => {
+                              setPressureRating(opt);
+                              triggerTaskPanelInteraction(2200, false);
+                              setTimeout(() => {
+                                handleSubmitPressureRating(opt);
+                              }, 600);
+                            }}
+                            className="accent-sky-500 w-4 h-4"
+                          />
+                          <span className="text-sm font-medium">{opt}</span>
+                        </label>
+                      ))}
+                    </div>
+
+                    {/* Voice Direction Indicator (No manual buttons) */}
+                    <div className="p-4 rounded-2xl bg-sky-50/70 border border-sky-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                        <span className="text-xs font-semibold text-neutral-800">
+                          Voice-Guided: Say your choice aloud or say &quot;ready&quot; / &quot;submit&quot;
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
+                        Auto-confirms on selection
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* TASK 4: Camera Feed Snapshots via Voice Triggers (NO MANUAL BUTTONS) */}
+                {meetingPhase === 'task_snapshot' && (
+                  <div className="space-y-4 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Voice-Activated Visual Identity Verification</span>
+                      </div>
+                      <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                        Hold your written phone number up &amp; pose
+                      </h3>
+                      <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                        Say <strong className="text-neutral-900">&quot;click&quot;</strong>,{' '}
+                        <strong className="text-neutral-900">&quot;do it&quot;</strong>,{' '}
+                        <strong className="text-neutral-900">&quot;okay&quot;</strong>,{' '}
+                        <strong className="text-neutral-900">&quot;cheese&quot;</strong>, or{' '}
+                        <strong className="text-neutral-900">&quot;ready&quot;</strong>. Even keywords in live subtitles trigger the photo instantly.
+                      </p>
+                    </div>
+
+                    {/* Pose Progress Tracker */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div
+                        className={`p-3.5 rounded-2xl border text-center transition-all ${
+                          snapshotStep === 1
+                            ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                            : snapshots.length >= 1
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                        }`}
+                      >
+                        <span className="text-[11px] font-bold uppercase tracking-wider block">Step 1</span>
+                        <span className="text-xs font-semibold mt-1 block">Look Forward</span>
+                        {snapshots.length >= 1 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
+                      </div>
+
+                      <div
+                        className={`p-3.5 rounded-2xl border text-center transition-all ${
+                          snapshotStep === 2
+                            ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                            : snapshots.length >= 2
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                        }`}
+                      >
+                        <span className="text-[11px] font-bold uppercase tracking-wider block">Step 2</span>
+                        <span className="text-xs font-semibold mt-1 block">Look Left</span>
+                        {snapshots.length >= 2 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
+                      </div>
+
+                      <div
+                        className={`p-3.5 rounded-2xl border text-center transition-all ${
+                          snapshotStep === 3
+                            ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                            : snapshots.length >= 3
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                        }`}
+                      >
+                        <span className="text-[11px] font-bold uppercase tracking-wider block">Step 3</span>
+                        <span className="text-xs font-semibold mt-1 block">Look Right</span>
+                        {snapshots.length >= 3 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
+                      </div>
+                    </div>
+
+                    {/* Live Listener Monitor (NO MANUAL BUTTONS) */}
+                    <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
+                        <div>
+                          <span className="text-xs font-semibold text-neutral-900 block">
+                            Listening for voice trigger: &quot;click&quot;, &quot;ready&quot;, &quot;do it&quot;, or &quot;cheese&quot;
+                          </span>
+                          <span className="text-[11px] text-neutral-500 font-mono block">
+                            {lastDetectedTrigger ? `Detected: "${lastDetectedTrigger}" • Capturing pose` : 'Say keyword or "skip" to proceed'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="px-3.5 py-1.5 rounded-full bg-sky-100 text-sky-800 text-xs font-mono font-semibold">
+                          Pose {snapshotStep || 1} of 3
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Display Captured Gallery */}
+                    {snapshots.length > 0 && (
+                      <div className="flex gap-3 overflow-x-auto pb-1">
+                        {snapshots.map((snap) => (
+                          <div key={snap.id} className="relative w-24 h-18 rounded-xl overflow-hidden border border-neutral-200 shrink-0 shadow-xs">
+                            <img src={snap.dataUrl} alt={snap.label} className="w-full h-full object-cover transform -scale-x-100" />
+                            <span className="absolute bottom-1 inset-x-1 text-[9px] bg-black/70 text-white text-center rounded px-1 truncate">
+                              {snap.angle}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </main>
 
-        {/* Meeting Bottom Toolbar */}
+        {/* Meeting Bottom Toolbar (CLEAN, NO MANUAL ADVANCE BUTTONS) */}
         <footer className="h-16 border-t border-neutral-200 px-4 sm:px-6 flex items-center justify-between bg-white shrink-0 z-30 shadow-xs">
           {/* Phase Indicators */}
           <div className="flex items-center gap-2">
@@ -3319,69 +3905,43 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               {meetingPhase.replace('_', ' ').toUpperCase()}
             </span>
             {(meetingPhase === 'question_1' || meetingPhase === 'question_2') && (
-              <span className="text-[11px] text-emerald-600 font-medium ml-2 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                Listening &amp; auto-sending to Hana
-              </span>
+              <div className="flex items-center gap-2 ml-2">
+                {silenceTimerProgress ? (
+                  <div className="flex items-center gap-2 px-3 py-1 bg-sky-50 border border-sky-200 rounded-full">
+                    <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse shrink-0" />
+                    <span className="text-xs font-mono font-medium text-sky-800 shrink-0">
+                      Auto-sending in {(silenceTimerProgress.durationMs / 1000).toFixed(1)}s
+                    </span>
+                    <div className="w-24 sm:w-32 h-2 bg-neutral-200 rounded-full overflow-hidden shadow-inner shrink-0">
+                      <div
+                        key={silenceTimerProgress.id}
+                        className="h-full bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-500 rounded-full"
+                        style={{
+                          animation: `silence-progress-fill ${silenceTimerProgress.durationMs}ms linear forwards`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-2.5 py-1 bg-neutral-100 border border-neutral-200 rounded-full text-xs font-mono text-neutral-600">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                    <span>Silence delay: {scenarioConfig.openQuestionSilenceSeconds}s</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Contextual Action Advance Controls for the candidate */}
-          <div className="flex items-center gap-2.5">
-            {meetingPhase === 'welcome' && (
-              <button
-                type="button"
-                onClick={() => advanceToPhase('question_1')}
-                className="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs font-bold cursor-pointer transition-colors shadow-xs"
-              >
-                Start Question 1
-              </button>
-            )}
-
-            {/* During Question 1 & 2, responses auto-forward to Hana on speech pause. A skip button is available if needed */}
-            {(meetingPhase === 'question_1' || meetingPhase === 'question_2') && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (meetingPhase === 'question_1') {
-                    handleSaveResponse(
-                      'question_1',
-                      'Introduction and background',
-                      candidateLiveTranscript,
-                      'question_2'
-                    );
-                  } else {
-                    handleSaveResponse(
-                      'question_2',
-                      'Challenging technical problem',
-                      candidateLiveTranscript,
-                      'task_resume'
-                    );
-                  }
-                }}
-                className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-600 text-xs font-medium cursor-pointer transition-colors flex items-center gap-1"
-                title="Skip to next phase if you are finished speaking"
-              >
-                <span>Next</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            {meetingPhase === 'candidate_qa' && (
-              <div className="flex items-center gap-2.5">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Voice-First Q&amp;A Session</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={concludeQaSession}
-                  className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-700 text-xs font-semibold cursor-pointer transition-colors"
-                >
-                  Conclude Q&amp;A
-                </button>
-              </div>
-            )}
+          {/* Voice status info indicator */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs font-mono text-neutral-600">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Voice-Oriented Meeting Session</span>
+            </div>
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-neutral-500 font-mono pl-3 border-l border-neutral-200">
+              <Mic className={`w-3.5 h-3.5 ${isCandidateSpeaking ? 'text-emerald-500 animate-bounce' : 'text-neutral-400'}`} />
+              <span>{isCandidateSpeaking ? 'Candidate Speaking' : hanaIsSpeaking ? 'Hana Speaking' : 'Listening...'}</span>
+            </div>
           </div>
         </footer>
       </div>
@@ -3728,12 +4288,12 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
                   <h3 className="font-bold text-base text-neutral-900">{res.question}</h3>
 
-                  <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 text-sm leading-relaxed text-neutral-800 whitespace-pre-wrap">
+                  <div className="p-4 rounded-2xl bg-neutral-100 border border-neutral-200 text-sm leading-relaxed text-neutral-950 font-medium whitespace-pre-wrap">
                     {res.answer}
                   </div>
 
                   {res.aiNotes && (
-                    <div className="flex items-start gap-2 pt-1 text-xs text-neutral-600">
+                    <div className="flex items-start gap-2 pt-1 text-xs text-neutral-700">
                       <Sparkles className="w-3.5 h-3.5 text-sky-600 shrink-0 mt-0.5" />
                       <span>
                         <strong className="text-neutral-900">AI Recruiter Observation:</strong> {res.aiNotes}
@@ -3756,14 +4316,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       key={i}
                       className={`p-3.5 rounded-2xl text-xs sm:text-sm ${
                         qa.sender === 'candidate'
-                          ? 'bg-sky-50 border border-sky-200 text-sky-950 ml-6'
-                          : 'bg-neutral-50 border border-neutral-200 text-neutral-900 mr-6'
+                          ? 'bg-sky-50 border border-sky-200 text-neutral-950 font-medium ml-6'
+                          : 'bg-neutral-100 border border-neutral-200 text-neutral-950 mr-6'
                       }`}
                     >
-                      <span className="text-[10px] font-bold block mb-1 uppercase tracking-wider text-neutral-500">
+                      <span className="text-[10px] font-bold block mb-1 uppercase tracking-wider text-neutral-600">
                         {qa.sender === 'candidate' ? `${effectiveDossierName} (Candidate)` : 'Hana (AI Recruiter)'}
                       </span>
-                      <p className="leading-relaxed">{qa.text}</p>
+                      <p className="leading-relaxed text-neutral-950">{qa.text}</p>
                     </div>
                   ))}
                 </div>

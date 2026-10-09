@@ -2115,6 +2115,13 @@ export const ACT_STANDBY_ANIMATIONS: ActStandbyAnimationItem[] = [
     category: 'action',
     candidateUrls: getWaitingAnimationCandidateUrls('mixamo_touchscreen.fbx'),
   },
+   {
+    key: 'walk-female',
+    name: 'Walk Female',
+    fileName: 'mixamo_walk_female.fbx',
+    category: 'action',
+    candidateUrls: getWaitingAnimationCandidateUrls('mixamo_walk_female.fbx'),
+  },
 ];
 
 export const ACT_INITIAL_CUES: TimelineCue[] = [
