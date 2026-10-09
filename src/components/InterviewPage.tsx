@@ -625,15 +625,34 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   }, [candidateLiveTranscript]);
 
+  // Accurately timed progress bar for candidate silence auto-send timer
+  const [silenceTimerProgress, setSilenceTimerProgress] = useState<{
+    id: number;
+    durationMs: number;
+  } | null>(null);
+
   // Spotlight Tasks Data
   // Task 1: Resume Document Upload (handled via uploadedResume)
   // Task 2: Written assessment (>= 100 characters)
   const [writtenText, setWrittenText] = useState<string>('');
   const [writtenSubmitted, setWrittenSubmitted] = useState<boolean>(false);
+  const writtenTextRef = useRef<string>('');
+  useEffect(() => {
+    writtenTextRef.current = writtenText;
+  }, [writtenText]);
 
   // Task 3: Situational assessment (Radio buttons)
   const [pressureRating, setPressureRating] = useState<string>('');
   const [pressureSubmitted, setPressureSubmitted] = useState<boolean>(false);
+  const pressureRatingRef = useRef<string>('');
+  useEffect(() => {
+    pressureRatingRef.current = pressureRating;
+  }, [pressureRating]);
+
+  const uploadedResumeRef = useRef<UploadedResume | null>(null);
+  useEffect(() => {
+    uploadedResumeRef.current = uploadedResume;
+  }, [uploadedResume]);
 
   // Task 4: Visual Identity Snapshots (Forward, Left, Right via trigger words "click", "do it", "okay", "ready")
   const [snapshotStep, setSnapshotStep] = useState<0 | 1 | 2 | 3>(0); // 0: not started, 1: forward, 2: left, 3: right
@@ -1570,6 +1589,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
     const curPhase = meetingPhaseRef.current;
     if (curPhase !== 'question_1' && curPhase !== 'question_2') {
+      setSilenceTimerProgress(null);
       return;
     }
 
@@ -1579,7 +1599,11 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     // Configurable duration (default 3.0s, or faster 1.0s if candidate explicitly stated they are done)
     const waitDurationMs = isExplicitlyDone ? 1000 : scenarioConfig.openQuestionSilenceSeconds * 1000;
 
+    // Trigger accurate timed progress bar
+    setSilenceTimerProgress({ id: Date.now(), durationMs: waitDurationMs });
+
     silenceTimerRef.current = setTimeout(() => {
+      setSilenceTimerProgress(null);
       const text = candidateTranscriptRef.current.trim();
       const phaseNow = meetingPhaseRef.current;
       const doneNow = detectCandidateFinishedIntent(text, phaseNow);
@@ -1697,6 +1721,19 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           if (handleSituationalQuery(lower, curPhase)) {
             setCandidateLiveTranscript('');
             candidateTranscriptRef.current = '';
+            return;
+          }
+
+          // Voice-driven command to conclude / exit meeting hands-free (zero buttons required)
+          const isEndMeetingVoice = /\b(end interview|end the interview|leave meeting|leave the meeting|exit meeting|exit the meeting|finish interview|conclude interview|terminate interview)\b/i.test(lower);
+          if (isEndMeetingVoice && !hanaIsSpeakingRef.current) {
+            speakHanaLine(
+              "Understood. Concluding our interview session now and compiling your evaluation dossier.",
+              () => {
+                handleEndMeetingAndReview();
+              },
+              'neutral'
+            );
             return;
           }
 
@@ -1846,24 +1883,124 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               return;
             }
 
-            // STRICT KEYWORD CAPTURE FOR SNAPSHOT STEP
-            // Strictly requires explicit trigger word, disallows questions or conversational noise!
-            if (curPhase === 'task_snapshot' && isListeningForTriggerRef.current) {
-              const isCandidateAskingQuestion = /(\?|what|how|why|where|should i|can i|do i|is it|is this|which|phone|paper)/i.test(lower);
+            // A. TASK RESUME VOICE ADVANCE
+            if (curPhase === 'task_resume') {
+              const isResumeDoneIntent = /\b(done|finished|submit|next|proceed|uploaded|uploaded my resume|uploaded the resume|ready|continue|that is my resume)\b/i.test(lower);
+              if (isResumeDoneIntent && !hanaIsSpeakingRef.current) {
+                if (uploadedResumeRef.current) {
+                  handleSubmitResumeTaskRef.current?.();
+                  setCandidateLiveTranscript('');
+                  candidateTranscriptRef.current = '';
+                } else {
+                  speakHanaLine(
+                    "Please select or drop your resume document first into the upload area, then say ready or done!",
+                    undefined,
+                    'neutral'
+                  );
+                }
+                return;
+              }
+            }
 
-              const isStrictTrigger =
-                /^(click|take photo|cheese|snap|capture)$/i.test(lower) ||
-                (/\b(click|take photo|capture photo)\b/i.test(lower) && !isCandidateAskingQuestion);
+            // B. TASK WRITTEN VOICE ADVANCE
+            else if (curPhase === 'task_written') {
+              const isWrittenDoneIntent = /\b(done|finished|submit|next|proceed|ready|i am done|i'm done|completed|all written)\b/i.test(lower);
+              if (isWrittenDoneIntent && !hanaIsSpeakingRef.current) {
+                if (writtenTextRef.current.trim().length >= 100) {
+                  handleSubmitWrittenTaskRef.current?.();
+                  setCandidateLiveTranscript('');
+                  candidateTranscriptRef.current = '';
+                } else {
+                  const currentChars = writtenTextRef.current.trim().length;
+                  speakHanaLine(
+                    `You currently have ${currentChars} characters. Please write at least 100 characters in the reflection box before submitting!`,
+                    undefined,
+                    'neutral'
+                  );
+                }
+                return;
+              }
+            }
 
-              if (isStrictTrigger && !isTriggerLockedRef.current && !isCandidateAskingQuestion) {
+            // C. TASK PRESSURE VOICE ADVANCE
+            else if (curPhase === 'task_pressure') {
+              let matchedPressure: string | null = null;
+              if (/\b(not at all|avoid)\b/i.test(lower)) {
+                matchedPressure = 'Not at all - I avoid such situations';
+              } else if (/\b(moderate|as long as the team|team does too)\b/i.test(lower)) {
+                matchedPressure = 'Moderate - I can work as long as the team does, too';
+              } else if (/\b(comfortable|exciting|find challenging)\b/i.test(lower)) {
+                matchedPressure = 'Comfortable - I find challenging situations very exciting for me';
+              } else if (/\b(hell yeah|pressure fears me|do not fear pressure)\b/i.test(lower)) {
+                matchedPressure = 'HELL YEAH - I do not fear pressure; pressure fears me';
+              }
+
+              if (matchedPressure && !hanaIsSpeakingRef.current) {
+                setPressureRating(matchedPressure);
+                triggerTaskPanelInteraction(2200, false);
+                setTimeout(() => {
+                  handleSubmitPressureRatingRef.current?.(matchedPressure!);
+                }, 400);
+                setCandidateLiveTranscript('');
+                candidateTranscriptRef.current = '';
+                return;
+              }
+
+              const isConfirmIntent = /\b(ready|done|submit|next|confirm|that is my answer)\b/i.test(lower);
+              if (isConfirmIntent && pressureRatingRef.current && !hanaIsSpeakingRef.current) {
+                handleSubmitPressureRatingRef.current?.();
+                setCandidateLiveTranscript('');
+                candidateTranscriptRef.current = '';
+                return;
+              }
+            }
+
+            // D. VOICE TRIGGER FOR SNAPSHOT STEP
+            else if (curPhase === 'task_snapshot') {
+              const isCandidateAskingQuestion = /(\?|what|how|why|where|should i|can i|do i|is it|is this|which|phone|paper|explain)/i.test(lower);
+
+              const isSkipIntent = /\b(skip|skip photo|next task|skip snapshot)\b/i.test(lower);
+              if (isSkipIntent && !hanaIsSpeakingRef.current) {
+                advanceToPhase('candidate_qa');
+                setCandidateLiveTranscript('');
+                candidateTranscriptRef.current = '';
+                return;
+              }
+
+              const snapshotTriggers = [
+                'take photo',
+                'take a photo',
+                'take picture',
+                'take a picture',
+                'say cheese',
+                'okay click',
+                'yes click',
+                'click',
+                'cheese',
+                'snap',
+                'capture',
+                'shoot',
+                'ready',
+                'do it',
+                'photo',
+                'picture',
+                'pose',
+              ];
+
+              const foundTrigger = snapshotTriggers.find((t) => {
+                const rx = new RegExp(`\\b${t}\\b`, 'i');
+                return rx.test(lower) || lower.includes(t);
+              });
+
+              if (foundTrigger && !isTriggerLockedRef.current && !isCandidateAskingQuestion && !hanaIsSpeakingRef.current) {
                 isTriggerLockedRef.current = true;
-                setLastDetectedTrigger('click');
-                handleTakeSnapshotTrigger();
+                setLastDetectedTrigger(foundTrigger);
+                handleTakeSnapshotTriggerRef.current?.();
                 setCandidateLiveTranscript('');
                 candidateTranscriptRef.current = '';
                 setTimeout(() => {
                   isTriggerLockedRef.current = false;
-                }, 2200);
+                }, 2400);
               }
             }
           }
@@ -2206,7 +2343,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   };
 
-  // Handle Resume File Upload
+  // Handle Resume File Upload (with automatic voice-first advance upon upload)
   const handleResumeFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2233,21 +2370,32 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         textReader.onload = () => {
           uploaded.textContent = textReader.result as string;
           setUploadedResume(uploaded);
+          uploadedResumeRef.current = uploaded;
           setIsUploadingResume(false);
           soundManager.playReceive();
+          // Auto-advance seamlessly without requiring manual buttons
+          setTimeout(() => {
+            handleSubmitResumeTask(uploaded);
+          }, 1100);
         };
         textReader.readAsText(file);
       } else {
         setUploadedResume(uploaded);
+        uploadedResumeRef.current = uploaded;
         setIsUploadingResume(false);
         soundManager.playReceive();
+        // Auto-advance seamlessly without requiring manual buttons
+        setTimeout(() => {
+          handleSubmitResumeTask(uploaded);
+        }, 1100);
       }
     };
     reader.readAsDataURL(file);
   };
 
-  const handleSubmitResumeTask = () => {
-    if (!uploadedResume) return;
+  const handleSubmitResumeTask = (docToSubmit?: UploadedResume) => {
+    const doc = docToSubmit || uploadedResumeRef.current || uploadedResume;
+    if (!doc) return;
     setResumeSubmitted(true);
     soundManager.playReceive();
     triggerTaskPanelInteraction(2800, true);
@@ -2257,7 +2405,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       {
         phase: 'task_resume',
         question: 'Credentials Document Verification',
-        answer: `Uploaded: ${uploadedResume.fileName} (${uploadedResume.fileSize})`,
+        answer: `Uploaded: ${doc.fileName} (${doc.fileSize})`,
         timestamp: new Date().toLocaleTimeString(),
         aiNotes: 'Document uploaded and attached to candidate dossier for recruiter evaluation.',
       },
@@ -2278,7 +2426,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
   // Submit Written Task
   const handleSubmitWrittenTask = () => {
-    if (writtenText.trim().length < 100) return;
+    const textVal = writtenTextRef.current || writtenText;
+    if (textVal.trim().length < 100) return;
     setWrittenSubmitted(true);
     soundManager.playSend();
     triggerTaskPanelInteraction(2800, true);
@@ -2288,7 +2437,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       {
         phase: 'task_written',
         question: 'Write down 3 things you like about yourself and why.',
-        answer: writtenText,
+        answer: textVal,
         timestamp: new Date().toLocaleTimeString(),
         aiNotes: 'Exceeds length threshold. Structured answers showing self-awareness and confidence.',
       },
@@ -2308,8 +2457,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   };
 
   // Submit Pressure Rating Task
-  const handleSubmitPressureRating = () => {
-    if (!pressureRating) return;
+  const handleSubmitPressureRating = (val?: string) => {
+    const chosen = val || pressureRatingRef.current || pressureRating;
+    if (!chosen) return;
+    setPressureRating(chosen);
     setPressureSubmitted(true);
     soundManager.playSend();
     triggerTaskPanelInteraction(2800, true);
@@ -2319,9 +2470,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       {
         phase: 'task_pressure',
         question: 'How well do you perform under pressure?',
-        answer: pressureRating,
+        answer: chosen,
         timestamp: new Date().toLocaleTimeString(),
-        aiNotes: `Candidate selected: "${pressureRating}". Demonstrates high resilience and initiative.`,
+        aiNotes: `Candidate selected: "${chosen}". Demonstrates high resilience and initiative.`,
       },
     ]);
 
@@ -2477,6 +2628,74 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       );
     }
   };
+
+  // Keep fresh function references accessible by speech recognition without closure staleness
+  const handleSubmitResumeTaskRef = useRef(handleSubmitResumeTask);
+  useEffect(() => {
+    handleSubmitResumeTaskRef.current = handleSubmitResumeTask;
+  });
+
+  const handleSubmitWrittenTaskRef = useRef(handleSubmitWrittenTask);
+  useEffect(() => {
+    handleSubmitWrittenTaskRef.current = handleSubmitWrittenTask;
+  });
+
+  const handleSubmitPressureRatingRef = useRef(handleSubmitPressureRating);
+  useEffect(() => {
+    handleSubmitPressureRatingRef.current = handleSubmitPressureRating;
+  });
+
+  const handleTakeSnapshotTriggerRef = useRef(handleTakeSnapshotTrigger);
+  useEffect(() => {
+    handleTakeSnapshotTriggerRef.current = handleTakeSnapshotTrigger;
+  });
+
+  // Active watcher: even if keywords appear anywhere in candidate's live subtitles during snapshot task, act upon it!
+  useEffect(() => {
+    if (meetingPhase !== 'task_snapshot') return;
+    if (isTriggerLockedRef.current || hanaIsSpeakingRef.current) return;
+    const lower = candidateLiveTranscript.toLowerCase().trim();
+    if (!lower) return;
+
+    const isQuestion = /(\?|what|how|why|where|should i|can i|explain)/i.test(lower);
+    if (isQuestion) return;
+
+    const snapshotKeywords = [
+      'take photo',
+      'take a photo',
+      'take picture',
+      'take a picture',
+      'say cheese',
+      'okay click',
+      'yes click',
+      'click',
+      'cheese',
+      'snap',
+      'capture',
+      'shoot',
+      'ready',
+      'do it',
+      'photo',
+      'picture',
+      'pose',
+    ];
+
+    const matched = snapshotKeywords.find((kw) => {
+      const rx = new RegExp(`\\b${kw}\\b`, 'i');
+      return rx.test(lower) || lower.includes(kw);
+    });
+
+    if (matched) {
+      isTriggerLockedRef.current = true;
+      setLastDetectedTrigger(matched);
+      handleTakeSnapshotTriggerRef.current?.();
+      setCandidateLiveTranscript('');
+      candidateTranscriptRef.current = '';
+      setTimeout(() => {
+        isTriggerLockedRef.current = false;
+      }, 1800);
+    }
+  }, [candidateLiveTranscript, meetingPhase]);
 
   // Candidate Q&A handling (manual text input fallback if used)
   const handleSendCandidateQuestion = () => {
@@ -3135,208 +3354,66 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={handleEndMeetingAndReview}
-              className="px-3.5 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              End Interview
-            </button>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-100 border border-neutral-200 text-neutral-600 text-xs font-mono">
+              <Mic className="w-3.5 h-3.5 text-sky-500 animate-pulse" />
+              <span>Hands-Free • Say &quot;End interview&quot; to conclude</span>
+            </div>
           </div>
         </header>
 
         {/* Video Conference Layout */}
         <main className="flex-1 p-3 sm:p-4 overflow-hidden flex flex-col min-h-0 relative">
-          <div className="flex-1 grid gap-4 min-h-0 h-full overflow-hidden">
-            {/* Standard Conversational Layout (Two large tiles) */}
-            {!isSpotlightActive && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full min-h-0">
-                {/* Tile 1: Hana (AI Interviewer) */}
-                <div className="relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex flex-col items-center justify-center">
-                  {!hanaEntered ? (
-                    <div className="flex flex-col items-center gap-4 text-center p-6 animate-pulse">
-                      <div className="w-20 h-20 rounded-full bg-sky-500/20 border border-sky-400 flex items-center justify-center text-sky-400">
-                        <UserCheck className="w-10 h-10" />
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-lg text-white font-heading">
-                          Interviewer is entering the meeting...
-                        </h3>
-                        <p className="text-xs text-neutral-400 mt-1">Connecting AI interviewer</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      {/* Initial Camera Off view of Hana's panel while 3D model loads in background */}
-                      <div
-                        className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 transition-opacity duration-700 bg-neutral-900 ${
-                          isHana3DReady ? 'opacity-0 pointer-events-none' : 'opacity-100'
-                        }`}
-                      >
-                        <div className="relative mb-4">
-                          <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-white/20 shadow-2xl relative">
-                            <img
-                              src="/Thumbnail.png"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLImageElement).src = 'https://muxai.vercel.app/logo_Hana.png';
-                              }}
-                              alt="Hana"
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          {hanaIsSpeaking && (
-                            <span className="absolute -inset-2 rounded-full border-2 border-sky-400 animate-ping opacity-75 pointer-events-none" />
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-xs text-neutral-300 font-medium mb-1">
-                          <VideoOff className="w-3.5 h-3.5 text-neutral-400" />
-                          <span>Camera Off • Interviewer</span>
-                        </div>
-                        <p className="text-[11px] text-neutral-400 font-mono">
-                          Connecting 3D neural feed...
-                        </p>
-                      </div>
-
-                      {/* Live 3D VRM Canvas (Avatar interaction touching disabled, neutral emotion default) */}
-                      <div
-                        className={`w-full h-full relative pointer-events-none select-none transition-opacity duration-700 ${
-                          isHana3DReady ? 'opacity-100' : 'opacity-0'
-                        }`}
-                      >
-                        <VRMCanvas
-                          interactive={false}
-                          isSpeaking={hanaIsSpeaking}
-                          emotion={hanaEmotion}
-                          modelFileName="hana_v1.2_interviewer_vrm1.vrm"
-                          enablePointerTracking={false}
-                          disableIdleWaitingAnimations={true}
-                          nodTrigger={nodCount}
-                          customAnimationTrigger={customAnimationTrigger}
-                          lookTargetOffset={hanaLookTarget}
-                          onLoaded={() => {
-                            setTimeout(() => {
-                              setIsHana3DReady(true);
-                            }, 1200);
-                          }}
-                        />
-                      </div>
-
-                      {/* Speaking Glow Halo */}
-                      {hanaIsSpeaking && (
-                        <div className="absolute inset-0 pointer-events-none ring-2 ring-sky-400/50 rounded-3xl animate-pulse" />
-                      )}
-
-                      {/* Reaction Tag */}
-                      {hanaReactionText && !hanaIsSpeaking && (
-                        <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-xs text-sky-400 font-mono animate-in fade-in z-20">
-                          {hanaReactionText}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {/* Tile Label */}
-                  <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2 z-20">
-                    <span className={`w-2 h-2 rounded-full ${hanaIsSpeaking ? 'bg-sky-400 animate-pulse' : 'bg-emerald-400'}`} />
-                    <span className="text-xs font-semibold text-white">Interviewer</span>
-                  </div>
-                </div>
-
-                {/* Tile 2: Candidate Video Feed (Always active in interview feed) */}
-                <div className="relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex items-center justify-center">
-                  <video
-                    ref={(el) => {
-                      localVideoRef.current = el;
-                      if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
-                        el.srcObject = mediaStreamRef.current;
-                      }
-                    }}
-                    autoPlay
-                    playsInline
-                    muted
-                    className={`w-full h-full object-cover transform -scale-x-100 ${!isCameraActive ? 'hidden' : ''}`}
-                  />
-
-                  {!isCameraActive && (
-                    <div className="flex flex-col items-center gap-2 text-neutral-400">
-                      <VideoOff className="w-10 h-10" />
-                      <span className="text-xs">Camera Turned Off</span>
-                    </div>
-                  )}
-
-                  {/* Live speech auto-scrolling marquee subtitle indicator for candidate */}
-                  {candidateLiveTranscript && (
-                    <div className="absolute top-4 left-4 right-4 z-20 pointer-events-none">
-                      <div className="px-3.5 py-2 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 text-white text-xs leading-relaxed max-w-lg mx-auto shadow-lg flex items-center gap-2.5 overflow-hidden">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                        <div
-                          ref={candidateSubtitleScrollRef}
-                          className="flex-1 overflow-x-auto whitespace-nowrap scroll-smooth flex items-center justify-end [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                        >
-                          <span className="inline-block pl-2">
-                            &ldquo;{candidateLiveTranscript.split(/\s+/).slice(-18).join(' ')}&rdquo;
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-neutral-400 font-mono shrink-0">Auto-sending on silence...</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Candidate Tile Label & Controls */}
-                  <div className="absolute bottom-4 inset-x-4 flex items-center justify-between z-10">
-                    <div className="px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${isCandidateSpeaking ? 'bg-sky-400 animate-ping' : 'bg-emerald-400'}`} />
-                      <span className="text-xs font-semibold text-white">
-                        {candidateName.trim() ? `${candidateName.trim()} (You)` : 'You'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={toggleCamera}
-                        className={`p-2.5 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
-                          isCameraActive ? 'bg-white/20 border-white/30 text-white' : 'bg-red-500 border-red-400 text-white'
-                        }`}
-                      >
-                        {isCameraActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={toggleMic}
-                        className={`p-2.5 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
-                          isMicActive ? 'bg-white/20 border-white/30 text-white' : 'bg-red-500 border-red-400 text-white'
-                        }`}
-                      >
-                        {isMicActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-                </div>
+          {/* Re-explaining Banner Toast */}
+          {taskClarificationNotice && (
+            <div className="absolute top-2 inset-x-4 z-40 pointer-events-none">
+              <div className="px-4 py-2 rounded-2xl bg-sky-600 text-white text-xs font-semibold text-center shadow-lg max-w-md mx-auto flex items-center justify-center gap-2">
+                <Info className="w-4 h-4 shrink-0 text-white animate-pulse" />
+                <span>{taskClarificationNotice}</span>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Spotlight Dynamic Layout (Tasks: Resume Upload, Written, Pressure, Snapshots) */}
-            {isSpotlightActive && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0 relative">
-                {/* Re-explaining Banner Toast */}
-                {taskClarificationNotice && (
-                  <div className="absolute top-2 inset-x-4 z-40 pointer-events-none">
-                    <div className="px-4 py-2 rounded-2xl bg-sky-600 text-white text-xs font-semibold text-center shadow-lg max-w-md mx-auto flex items-center justify-center gap-2">
-                      <Info className="w-4 h-4 shrink-0 text-white animate-pulse" />
-                      <span>{taskClarificationNotice}</span>
+          <div
+            className={`flex-1 grid gap-4 min-h-0 h-full overflow-hidden transition-all duration-300 ${
+              isSpotlightActive ? 'grid-cols-1 lg:grid-cols-12' : 'grid-cols-1 md:grid-cols-2'
+            }`}
+          >
+            {/* Unified Participant Tiles: ALWAYS MOUNTED (Eliminates VRM recreation / blank panel bugs) */}
+            <div
+              className={`min-h-0 flex gap-4 transition-all duration-300 ${
+                isSpotlightActive
+                  ? 'lg:col-span-4 flex-col'
+                  : 'col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2'
+              }`}
+            >
+              {/* Tile 1: Hana (AI Interviewer) */}
+              <div
+                className={`relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex flex-col items-center justify-center transition-all duration-300 ${
+                  isSpotlightActive ? 'flex-1 min-h-[160px]' : 'h-full min-h-0'
+                }`}
+              >
+                {!hanaEntered ? (
+                  <div className="flex flex-col items-center gap-4 text-center p-6 animate-pulse">
+                    <div className="w-20 h-20 rounded-full bg-sky-500/20 border border-sky-400 flex items-center justify-center text-sky-400">
+                      <UserCheck className="w-10 h-10" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg text-white font-heading">
+                        Interviewer is entering the meeting...
+                      </h3>
+                      <p className="text-xs text-neutral-400 mt-1">Connecting AI interviewer</p>
                     </div>
                   </div>
-                )}
-
-                {/* Left 4 cols: Compact Participant Video Tiles */}
-                <div className="lg:col-span-4 flex flex-col gap-3 min-h-0">
-                  {/* Hana Mini Tile */}
-                  <div className="relative rounded-2xl bg-neutral-900 border border-neutral-300 overflow-hidden flex-1 min-h-[160px] shadow-sm">
-                    {!isHana3DReady ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-neutral-900 z-10">
-                        <div className="w-14 h-14 rounded-full overflow-hidden border border-white/20 relative mb-2">
+                ) : (
+                  <>
+                    {/* Initial Camera Off view of Hana's panel while 3D model loads in background */}
+                    <div
+                      className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 transition-opacity duration-700 bg-neutral-900 ${
+                        isHana3DReady ? 'opacity-0 pointer-events-none' : 'opacity-100'
+                      }`}
+                    >
+                      <div className="relative mb-4">
+                        <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-white/20 shadow-2xl relative">
                           <img
                             src="/Thumbnail.png"
                             onError={(e) => {
@@ -3346,11 +3423,26 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                             className="w-full h-full object-cover"
                           />
                         </div>
-                        <span className="text-[11px] text-neutral-400">Camera Off</span>
+                        {hanaIsSpeaking && (
+                          <span className="absolute -inset-2 rounded-full border-2 border-sky-400 animate-ping opacity-75 pointer-events-none" />
+                        )}
                       </div>
-                    ) : null}
 
-                    <div className="w-full h-full relative pointer-events-none select-none">
+                      <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-xs text-neutral-300 font-medium mb-1">
+                        <VideoOff className="w-3.5 h-3.5 text-neutral-400" />
+                        <span>Camera Off • Interviewer</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-400 font-mono">
+                        Connecting 3D neural feed...
+                      </p>
+                    </div>
+
+                    {/* Live 3D VRM Canvas (Avatar interaction touching disabled, neutral emotion default) */}
+                    <div
+                      className={`w-full h-full relative pointer-events-none select-none transition-opacity duration-700 ${
+                        isHana3DReady ? 'opacity-100' : 'opacity-0'
+                      }`}
+                    >
                       <VRMCanvas
                         interactive={false}
                         isSpeaking={hanaIsSpeaking}
@@ -3361,375 +3453,450 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         nodTrigger={nodCount}
                         customAnimationTrigger={customAnimationTrigger}
                         lookTargetOffset={hanaLookTarget}
-                        onLoaded={() => setIsHana3DReady(true)}
+                        onLoaded={() => {
+                          setTimeout(() => {
+                            setIsHana3DReady(true);
+                          }, 1200);
+                        }}
                       />
                     </div>
-                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-20">
-                      Interviewer
-                    </div>
-                  </div>
 
-                  {/* Candidate Mini Tile */}
-                  <div className="relative rounded-2xl bg-neutral-900 border border-neutral-300 overflow-hidden flex-1 min-h-[160px] shadow-sm">
-                    <video
-                      autoPlay
-                      playsInline
-                      muted
-                      ref={(el) => {
-                        spotlightVideoRef.current = el;
-                        localVideoRef.current = el;
-                        if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
-                          el.srcObject = mediaStreamRef.current;
-                        }
-                      }}
-                      className={`w-full h-full object-cover transform -scale-x-100 ${!isCameraActive ? 'hidden' : ''}`}
-                    />
-                    {!isCameraActive && (
-                      <div className="flex flex-col items-center justify-center h-full text-neutral-400 gap-1.5 p-4">
-                        <VideoOff className="w-8 h-8" />
-                        <span className="text-[11px]">Camera Off</span>
+                    {/* Speaking Glow Halo */}
+                    {hanaIsSpeaking && (
+                      <div className="absolute inset-0 pointer-events-none ring-2 ring-sky-400/50 rounded-3xl animate-pulse" />
+                    )}
+
+                    {/* Reaction Tag */}
+                    {hanaReactionText && !hanaIsSpeaking && (
+                      <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-xs text-sky-400 font-mono animate-in fade-in z-20">
+                        {hanaReactionText}
                       </div>
                     )}
-                    {candidateLiveTranscript && (
-                      <div className="absolute top-2 inset-x-2 z-20 pointer-events-none">
-                        <div className="px-2.5 py-1 rounded-xl bg-black/75 backdrop-blur-md border border-white/20 text-white text-[11px] flex items-center gap-1.5 overflow-hidden">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                          <div
-                            ref={spotlightSubtitleScrollRef}
-                            className="flex-1 overflow-x-auto whitespace-nowrap scroll-smooth flex items-center justify-end [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                          >
-                            <span className="inline-block pl-1">
-                              &ldquo;{candidateLiveTranscript.split(/\s+/).slice(-14).join(' ')}&rdquo;
-                            </span>
+                  </>
+                )}
+
+                {/* Tile Label */}
+                <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2 z-20">
+                  <span className={`w-2 h-2 rounded-full ${hanaIsSpeaking ? 'bg-sky-400 animate-pulse' : 'bg-emerald-400'}`} />
+                  <span className="text-xs font-semibold text-white">Interviewer</span>
+                </div>
+              </div>
+
+              {/* Tile 2: Candidate Video Feed (Always active in interview feed) */}
+              <div
+                className={`relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex items-center justify-center transition-all duration-300 ${
+                  isSpotlightActive ? 'flex-1 min-h-[160px]' : 'h-full min-h-0'
+                }`}
+              >
+                <video
+                  ref={(el) => {
+                    localVideoRef.current = el;
+                    spotlightVideoRef.current = el;
+                    if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
+                      el.srcObject = mediaStreamRef.current;
+                    }
+                  }}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover transform -scale-x-100 ${!isCameraActive ? 'hidden' : ''}`}
+                />
+
+                {!isCameraActive && (
+                  <div className="flex flex-col items-center gap-2 text-neutral-400">
+                    <VideoOff className="w-10 h-10" />
+                    <span className="text-xs">Camera Turned Off</span>
+                  </div>
+                )}
+
+                {/* Live speech auto-scrolling marquee subtitle indicator & accurately timed silence progress bar */}
+                {(candidateLiveTranscript || silenceTimerProgress) && (
+                  <div className="absolute top-4 left-4 right-4 z-20 pointer-events-none">
+                    <div className="px-3.5 py-2 rounded-2xl bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs leading-relaxed max-w-lg mx-auto shadow-xl flex items-center gap-3 overflow-hidden">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                      <div
+                        ref={candidateSubtitleScrollRef}
+                        className="flex-1 overflow-x-auto whitespace-nowrap scroll-smooth flex items-center justify-end [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                      >
+                        <span className="inline-block pl-2 font-medium">
+                          {candidateLiveTranscript ? (
+                            <>&ldquo;{candidateLiveTranscript.split(/\s+/).slice(-18).join(' ')}&rdquo;</>
+                          ) : (
+                            <span className="text-neutral-400 italic">Listening...</span>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Accurate timed progress bar based on silence delay timer */}
+                      {silenceTimerProgress && (
+                        <div className="flex items-center gap-2 shrink-0 bg-white/10 px-2.5 py-1 rounded-xl border border-white/15">
+                          <div className="flex flex-col gap-1 w-20 sm:w-24">
+                            <div className="flex items-center justify-between text-[10px] font-mono text-neutral-300">
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-2.5 h-2.5 text-sky-400 animate-spin" />
+                                <span>Silence</span>
+                              </span>
+                              <span className="text-sky-300 font-semibold font-mono">
+                                {(silenceTimerProgress.durationMs / 1000).toFixed(1)}s
+                              </span>
+                            </div>
+                            <div className="h-1.5 w-full bg-black/40 rounded-full overflow-hidden shadow-inner">
+                              <div
+                                key={silenceTimerProgress.id}
+                                className="h-full bg-gradient-to-r from-sky-400 via-teal-400 to-emerald-400 rounded-full"
+                                style={{
+                                  animation: `silence-progress-fill ${silenceTimerProgress.durationMs}ms linear forwards`,
+                                }}
+                              />
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )}
-                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-10">
-                      {candidateName.trim() || 'You'}
+                      )}
                     </div>
                   </div>
+                )}
+
+                {/* Candidate Tile Label & Controls (Clean voice status, no manual buttons required) */}
+                <div className="absolute bottom-4 inset-x-4 flex items-center justify-between z-10">
+                  <div className="px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${isCandidateSpeaking ? 'bg-sky-400 animate-ping' : 'bg-emerald-400'}`} />
+                    <span className="text-xs font-semibold text-white">
+                      {candidateName.trim() ? `${candidateName.trim()} (You)` : 'You'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[11px] font-mono text-neutral-300">
+                      {isMicActive ? 'Mic Active' : 'Mic Muted'}
+                    </span>
+                  </div>
                 </div>
+              </div>
+            </div>
 
-                {/* Right 8 cols: Spotlight Frame (Light Theme Card) */}
-                <div className="lg:col-span-8 rounded-3xl bg-white border border-neutral-200 p-6 shadow-md flex flex-col justify-between overflow-y-auto">
-                  {/* TASK 1: Resume / CV Document Upload */}
-                  {meetingPhase === 'task_resume' && (
-                    <div className="space-y-4 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
-                          <FileUp className="w-3.5 h-3.5" />
-                          <span>Credentials Document Upload</span>
-                        </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
-                          Upload your updated resume or CV
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                          Our autonomous recruiting system indexes your experiences and matches your skillset with our engineering roles.
-                        </p>
+            {/* Spotlight Dynamic Layout (Tasks: Resume Upload, Written, Pressure, Snapshots) - VOICE ORIENTED, NO MANUAL BUTTONS */}
+            {isSpotlightActive && (
+              <div className="lg:col-span-8 rounded-3xl bg-white border border-neutral-200 p-6 shadow-md flex flex-col justify-between overflow-y-auto animate-in fade-in zoom-in-95 duration-300">
+                {/* TASK 1: Resume / CV Document Upload */}
+                {meetingPhase === 'task_resume' && (
+                  <div className="space-y-4 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
+                        <FileUp className="w-3.5 h-3.5" />
+                        <span>Credentials Document Upload</span>
                       </div>
+                      <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                        Upload your updated resume or CV
+                      </h3>
+                      <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                        Select or drag your document here. Once loaded, the system automatically indexes it and proceeds by voice.
+                      </p>
+                    </div>
 
-                      <div className="flex-1 flex flex-col justify-center">
-                        {!uploadedResume ? (
-                          <label className="border-2 border-dashed border-neutral-300 hover:border-sky-500 rounded-3xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-neutral-50/60 hover:bg-sky-50/40 group">
+                    <div className="flex-1 flex flex-col justify-center">
+                      {!uploadedResume ? (
+                        <label className="border-2 border-dashed border-neutral-300 hover:border-sky-500 rounded-3xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-neutral-50/60 hover:bg-sky-50/40 group">
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,.doc,.txt,.png,.jpg"
+                            onChange={handleResumeFileUpload}
+                            className="hidden"
+                          />
+                          <div className="w-16 h-16 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
+                            <Upload className="w-8 h-8" />
+                          </div>
+                          <h4 className="text-base font-bold text-neutral-900">
+                            {isUploadingResume ? 'Processing document...' : 'Click to select or drag and drop your resume'}
+                          </h4>
+                          <p className="text-xs text-neutral-500 mt-1.5 max-w-sm">
+                            Supported formats: PDF, DOCX, TXT, PNG, or JPG (max 10MB)
+                          </p>
+                        </label>
+                      ) : (
+                        <div className="p-6 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                          <div className="flex items-center gap-3.5">
+                            <div className="w-12 h-12 rounded-xl bg-sky-500 text-white flex items-center justify-center">
+                              <FileCheck className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm font-bold text-neutral-900">{uploadedResume.fileName}</h4>
+                              <div className="flex items-center gap-2 text-xs text-neutral-600 mt-0.5">
+                                <span>{uploadedResume.fileSize}</span>
+                                <span>•</span>
+                                <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                                  <Check className="w-3.5 h-3.5" /> Indexed &amp; Ready
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <label className="text-xs text-sky-600 hover:text-sky-800 font-semibold cursor-pointer underline self-start sm:self-center">
                             <input
                               type="file"
                               accept=".pdf,.docx,.doc,.txt,.png,.jpg"
                               onChange={handleResumeFileUpload}
                               className="hidden"
                             />
-                            <div className="w-16 h-16 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
-                              <Upload className="w-8 h-8" />
-                            </div>
-                            <h4 className="text-base font-bold text-neutral-900">
-                              {isUploadingResume ? 'Processing document...' : 'Click to select or drag and drop your resume'}
-                            </h4>
-                            <p className="text-xs text-neutral-500 mt-1.5 max-w-sm">
-                              Supported formats: PDF, DOCX, TXT, PNG, or JPG (max 10MB)
-                            </p>
+                            Replace file
                           </label>
-                        ) : (
-                          <div className="p-6 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div className="flex items-center gap-3.5">
-                              <div className="w-12 h-12 rounded-xl bg-sky-500 text-white flex items-center justify-center">
-                                <FileCheck className="w-6 h-6" />
-                              </div>
-                              <div>
-                                <h4 className="text-sm font-bold text-neutral-900">{uploadedResume.fileName}</h4>
-                                <div className="flex items-center gap-2 text-xs text-neutral-600 mt-0.5">
-                                  <span>{uploadedResume.fileSize}</span>
-                                  <span>•</span>
-                                  <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                                    <Check className="w-3.5 h-3.5" /> Ready for submission
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <label className="text-xs text-sky-600 hover:text-sky-800 font-semibold cursor-pointer underline self-start sm:self-center">
-                              <input
-                                type="file"
-                                accept=".pdf,.docx,.doc,.txt,.png,.jpg"
-                                onChange={handleResumeFileUpload}
-                                className="hidden"
-                              />
-                              Replace file
-                            </label>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="pt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={handleSubmitResumeTask}
-                          disabled={!uploadedResume || resumeSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                        >
-                          Confirm &amp; Proceed to Next Task
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TASK 2: Written Self-Reflection (>= 100 chars) */}
-                  {meetingPhase === 'task_written' && (
-                    <div className="space-y-4 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
-                          <FileText className="w-3.5 h-3.5" />
-                          <span>Written Reflection Spotlight</span>
-                        </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
-                          Write down 3 things you like about yourself and why.
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                          Reflect on your personal strengths, values, or technical curiosity. Minimum 100 characters required.
-                        </p>
-                      </div>
-
-                      <div className="space-y-2 flex-1 flex flex-col">
-                          <textarea
-                          rows={6}
-                          value={writtenText}
-                          onChange={(e) => {
-                            setWrittenText(e.target.value);
-                            if (e.target.value.length % 25 === 1) {
-                              triggerTaskPanelInteraction(1800, false);
-                            }
-                          }}
-                          placeholder="1. I love diving deep into architectural puzzles because...&#10;2. I value empathetic communication with team members...&#10;3. I am resilient and relentless when debugging critical edge cases..."
-                          className="w-full flex-1 p-4 rounded-2xl bg-neutral-50 border border-neutral-300 text-neutral-900 text-sm focus:outline-none focus:border-sky-500 resize-none leading-relaxed placeholder:text-neutral-400"
-                        />
-                        <div className="flex items-center justify-between text-xs font-mono">
-                          <span
-                            className={
-                              writtenText.trim().length >= 100
-                                ? 'text-emerald-600 font-bold'
-                                : 'text-amber-600 font-medium'
-                            }
-                          >
-                            {writtenText.trim().length} / 100 characters minimum
-                          </span>
-                          {writtenText.trim().length >= 100 && (
-                            <span className="text-emerald-600 font-semibold flex items-center gap-1">
-                              <Check className="w-3.5 h-3.5" /> Ready to submit
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="pt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={handleSubmitWrittenTask}
-                          disabled={writtenText.trim().length < 100 || writtenSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                        >
-                          Confirm &amp; Submit Written Task
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TASK 3: Situational Pressure Rating */}
-                  {meetingPhase === 'task_pressure' && (
-                    <div className="space-y-6 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
-                          <Award className="w-3.5 h-3.5" />
-                          <span>Situational Behavior Check</span>
-                        </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
-                          How well do you perform under pressure?
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                          Select the answer that most genuinely reflects your reaction to challenging constraints.
-                        </p>
-                      </div>
-
-                      <div className="space-y-3">
-                        {[
-                          'Not at all - I avoid such situations',
-                          'Moderate - I can work as long as the team does, too',
-                          'Comfortable - I find challenging situations very exciting for me',
-                          'HELL YEAH - I do not fear pressure; pressure fears me',
-                        ].map((opt) => (
-                          <label
-                            key={opt}
-                            className={`flex items-center gap-3.5 p-4 rounded-2xl border transition-all cursor-pointer ${
-                              pressureRating === opt
-                                ? 'bg-sky-50 border-sky-500 text-neutral-900 shadow-xs'
-                                : 'bg-neutral-50 border-neutral-200 hover:border-neutral-300 text-neutral-700'
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="pressure"
-                              checked={pressureRating === opt}
-                              onChange={() => {
-                                setPressureRating(opt);
-                                triggerTaskPanelInteraction(2200, false);
-                              }}
-                              className="accent-sky-500 w-4 h-4"
-                            />
-                            <span className="text-sm font-medium">{opt}</span>
-                          </label>
-                        ))}
-                      </div>
-
-                      <div className="pt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={handleSubmitPressureRating}
-                          disabled={!pressureRating || pressureSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                        >
-                          Confirm Situational Rating
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TASK 4: Camera Feed Snapshots via Voice Triggers */}
-                  {meetingPhase === 'task_snapshot' && (
-                    <div className="space-y-4 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
-                          <Camera className="w-3.5 h-3.5" />
-                          <span>Voice-Activated Visual Identity Verification</span>
-                        </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
-                          Hold your written phone number up &amp; pose
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                          Say <strong className="text-neutral-900">&quot;click&quot;</strong>,{' '}
-                          <strong className="text-neutral-900">&quot;do it&quot;</strong>,{' '}
-                          <strong className="text-neutral-900">&quot;okay&quot;</strong>, or{' '}
-                          <strong className="text-neutral-900">&quot;ready&quot;</strong> to capture each shot automatically.
-                        </p>
-                      </div>
-
-                      {/* Pose Progress Tracker */}
-                      <div className="grid grid-cols-3 gap-3">
-                        <div
-                          className={`p-3.5 rounded-2xl border text-center transition-all ${
-                            snapshotStep === 1
-                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
-                              : snapshots.length >= 1
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
-                          }`}
-                        >
-                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 1</span>
-                          <span className="text-xs font-semibold mt-1 block">Look Forward</span>
-                          {snapshots.length >= 1 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
-                        </div>
-
-                        <div
-                          className={`p-3.5 rounded-2xl border text-center transition-all ${
-                            snapshotStep === 2
-                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
-                              : snapshots.length >= 2
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
-                          }`}
-                        >
-                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 2</span>
-                          <span className="text-xs font-semibold mt-1 block">Look Left</span>
-                          {snapshots.length >= 2 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
-                        </div>
-
-                        <div
-                          className={`p-3.5 rounded-2xl border text-center transition-all ${
-                            snapshotStep === 3
-                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
-                              : snapshots.length >= 3
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
-                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
-                          }`}
-                        >
-                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 3</span>
-                          <span className="text-xs font-semibold mt-1 block">Look Right</span>
-                          {snapshots.length >= 3 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
-                        </div>
-                      </div>
-
-                      {/* Live Listener Monitor & Manual Trigger Fallback */}
-                      <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
-                          <div>
-                            <span className="text-xs font-semibold text-neutral-900 block">
-                              Listening for voice trigger: &quot;click&quot;, &quot;ready&quot;, &quot;do it&quot;, or &quot;cheese&quot;
-                            </span>
-                            <span className="text-[11px] text-neutral-500 font-mono block">
-                              {lastDetectedTrigger ? `Heard: "${lastDetectedTrigger}" • Capturing pose` : 'Speak clearly or click button to snap'}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleTakeSnapshotTrigger}
-                            className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 active:scale-95 text-white text-xs font-bold transition-all shadow-sm cursor-pointer shrink-0 flex items-center gap-1.5"
-                          >
-                            <Camera className="w-3.5 h-3.5" />
-                            <span>Take Photo (Pose {snapshotStep || 1} of 3)</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => advanceToPhase('candidate_qa')}
-                            className="px-3.5 py-2 rounded-xl bg-neutral-200 hover:bg-neutral-300 text-neutral-700 text-xs font-semibold transition-colors cursor-pointer shrink-0"
-                          >
-                            Skip / Proceed
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Display Captured Gallery */}
-                      {snapshots.length > 0 && (
-                        <div className="flex gap-3 overflow-x-auto pb-1">
-                          {snapshots.map((snap) => (
-                            <div key={snap.id} className="relative w-24 h-18 rounded-xl overflow-hidden border border-neutral-200 shrink-0 shadow-xs">
-                              <img src={snap.dataUrl} alt={snap.label} className="w-full h-full object-cover transform -scale-x-100" />
-                              <span className="absolute bottom-1 inset-x-1 text-[9px] bg-black/70 text-white text-center rounded px-1 truncate">
-                                {snap.angle}
-                              </span>
-                            </div>
-                          ))}
                         </div>
                       )}
                     </div>
-                  )}
-                </div>
+
+                    {/* Voice Direction Indicator (No manual buttons) */}
+                    <div className="p-4 rounded-2xl bg-sky-50/70 border border-sky-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                        <span className="text-xs font-semibold text-neutral-800">
+                          Voice-Guided: Say &quot;done&quot;, &quot;submit&quot;, or &quot;ready&quot; to continue
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
+                        Auto-advancing on upload
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* TASK 2: Written Self-Reflection (>= 100 chars) */}
+                {meetingPhase === 'task_written' && (
+                  <div className="space-y-4 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>Written Reflection Spotlight</span>
+                      </div>
+                      <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                        Write down 3 things you like about yourself and why.
+                      </h3>
+                      <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                        Reflect on your personal strengths, values, or technical curiosity. Minimum 100 characters required. When finished, say &quot;I am done&quot; or &quot;submit&quot;.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2 flex-1 flex flex-col">
+                      <textarea
+                        rows={6}
+                        value={writtenText}
+                        onChange={(e) => {
+                          setWrittenText(e.target.value);
+                          if (e.target.value.length % 25 === 1) {
+                            triggerTaskPanelInteraction(1800, false);
+                          }
+                        }}
+                        placeholder="1. I love diving deep into architectural puzzles because...&#10;2. I value empathetic communication with team members...&#10;3. I am resilient and relentless when debugging critical edge cases..."
+                        className="w-full flex-1 p-4 rounded-2xl bg-neutral-50 border border-neutral-300 text-neutral-900 text-sm focus:outline-none focus:border-sky-500 resize-none leading-relaxed placeholder:text-neutral-400"
+                      />
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span
+                          className={
+                            writtenText.trim().length >= 100
+                              ? 'text-emerald-600 font-bold'
+                              : 'text-amber-600 font-medium'
+                          }
+                        >
+                          {writtenText.trim().length} / 100 characters minimum
+                        </span>
+                        {writtenText.trim().length >= 100 && (
+                          <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" /> Ready for submission
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Voice Direction Indicator (No manual buttons) */}
+                    <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full ${
+                            writtenText.trim().length >= 100 ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+                          }`}
+                        />
+                        <span className="text-xs font-semibold text-neutral-800">
+                          {writtenText.trim().length >= 100
+                            ? 'Voice-Guided: Say "I am done" or "submit" to proceed'
+                            : 'Reach 100 characters, then say "I am done"'}
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
+                        Hands-Free Voice Flow
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* TASK 3: Situational Pressure Rating */}
+                {meetingPhase === 'task_pressure' && (
+                  <div className="space-y-6 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
+                        <Award className="w-3.5 h-3.5" />
+                        <span>Situational Behavior Check</span>
+                      </div>
+                      <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                        How well do you perform under pressure?
+                      </h3>
+                      <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                        Select your option or state your choice aloud (&quot;hell yeah&quot;, &quot;comfortable&quot;, &quot;moderate&quot;, &quot;not at all&quot;).
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      {[
+                        'Not at all - I avoid such situations',
+                        'Moderate - I can work as long as the team does, too',
+                        'Comfortable - I find challenging situations very exciting for me',
+                        'HELL YEAH - I do not fear pressure; pressure fears me',
+                      ].map((opt) => (
+                        <label
+                          key={opt}
+                          className={`flex items-center gap-3.5 p-4 rounded-2xl border transition-all cursor-pointer ${
+                            pressureRating === opt
+                              ? 'bg-sky-50 border-sky-500 text-neutral-900 shadow-xs'
+                              : 'bg-neutral-50 border-neutral-200 hover:border-neutral-300 text-neutral-700'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="pressure"
+                            checked={pressureRating === opt}
+                            onChange={() => {
+                              setPressureRating(opt);
+                              triggerTaskPanelInteraction(2200, false);
+                              setTimeout(() => {
+                                handleSubmitPressureRating(opt);
+                              }, 600);
+                            }}
+                            className="accent-sky-500 w-4 h-4"
+                          />
+                          <span className="text-sm font-medium">{opt}</span>
+                        </label>
+                      ))}
+                    </div>
+
+                    {/* Voice Direction Indicator (No manual buttons) */}
+                    <div className="p-4 rounded-2xl bg-sky-50/70 border border-sky-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                        <span className="text-xs font-semibold text-neutral-800">
+                          Voice-Guided: Say your choice aloud or say &quot;ready&quot; / &quot;submit&quot;
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
+                        Auto-confirms on selection
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* TASK 4: Camera Feed Snapshots via Voice Triggers (NO MANUAL BUTTONS) */}
+                {meetingPhase === 'task_snapshot' && (
+                  <div className="space-y-4 flex-1 flex flex-col justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>Voice-Activated Visual Identity Verification</span>
+                      </div>
+                      <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                        Hold your written phone number up &amp; pose
+                      </h3>
+                      <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                        Say <strong className="text-neutral-900">&quot;click&quot;</strong>,{' '}
+                        <strong className="text-neutral-900">&quot;do it&quot;</strong>,{' '}
+                        <strong className="text-neutral-900">&quot;okay&quot;</strong>,{' '}
+                        <strong className="text-neutral-900">&quot;cheese&quot;</strong>, or{' '}
+                        <strong className="text-neutral-900">&quot;ready&quot;</strong>. Even keywords in live subtitles trigger the photo instantly.
+                      </p>
+                    </div>
+
+                    {/* Pose Progress Tracker */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div
+                        className={`p-3.5 rounded-2xl border text-center transition-all ${
+                          snapshotStep === 1
+                            ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                            : snapshots.length >= 1
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                        }`}
+                      >
+                        <span className="text-[11px] font-bold uppercase tracking-wider block">Step 1</span>
+                        <span className="text-xs font-semibold mt-1 block">Look Forward</span>
+                        {snapshots.length >= 1 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
+                      </div>
+
+                      <div
+                        className={`p-3.5 rounded-2xl border text-center transition-all ${
+                          snapshotStep === 2
+                            ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                            : snapshots.length >= 2
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                        }`}
+                      >
+                        <span className="text-[11px] font-bold uppercase tracking-wider block">Step 2</span>
+                        <span className="text-xs font-semibold mt-1 block">Look Left</span>
+                        {snapshots.length >= 2 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
+                      </div>
+
+                      <div
+                        className={`p-3.5 rounded-2xl border text-center transition-all ${
+                          snapshotStep === 3
+                            ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                            : snapshots.length >= 3
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                            : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                        }`}
+                      >
+                        <span className="text-[11px] font-bold uppercase tracking-wider block">Step 3</span>
+                        <span className="text-xs font-semibold mt-1 block">Look Right</span>
+                        {snapshots.length >= 3 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
+                      </div>
+                    </div>
+
+                    {/* Live Listener Monitor (NO MANUAL BUTTONS) */}
+                    <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
+                        <div>
+                          <span className="text-xs font-semibold text-neutral-900 block">
+                            Listening for voice trigger: &quot;click&quot;, &quot;ready&quot;, &quot;do it&quot;, or &quot;cheese&quot;
+                          </span>
+                          <span className="text-[11px] text-neutral-500 font-mono block">
+                            {lastDetectedTrigger ? `Detected: "${lastDetectedTrigger}" • Capturing pose` : 'Say keyword or "skip" to proceed'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="px-3.5 py-1.5 rounded-full bg-sky-100 text-sky-800 text-xs font-mono font-semibold">
+                          Pose {snapshotStep || 1} of 3
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Display Captured Gallery */}
+                    {snapshots.length > 0 && (
+                      <div className="flex gap-3 overflow-x-auto pb-1">
+                        {snapshots.map((snap) => (
+                          <div key={snap.id} className="relative w-24 h-18 rounded-xl overflow-hidden border border-neutral-200 shrink-0 shadow-xs">
+                            <img src={snap.dataUrl} alt={snap.label} className="w-full h-full object-cover transform -scale-x-100" />
+                            <span className="absolute bottom-1 inset-x-1 text-[9px] bg-black/70 text-white text-center rounded px-1 truncate">
+                              {snap.angle}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </main>
 
-        {/* Meeting Bottom Toolbar */}
+        {/* Meeting Bottom Toolbar (CLEAN, NO MANUAL ADVANCE BUTTONS) */}
         <footer className="h-16 border-t border-neutral-200 px-4 sm:px-6 flex items-center justify-between bg-white shrink-0 z-30 shadow-xs">
           {/* Phase Indicators */}
           <div className="flex items-center gap-2">
@@ -3738,69 +3905,43 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               {meetingPhase.replace('_', ' ').toUpperCase()}
             </span>
             {(meetingPhase === 'question_1' || meetingPhase === 'question_2') && (
-              <span className="text-[11px] text-emerald-600 font-medium ml-2 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                Listening &amp; auto-sending to Hana
-              </span>
+              <div className="flex items-center gap-2 ml-2">
+                {silenceTimerProgress ? (
+                  <div className="flex items-center gap-2 px-3 py-1 bg-sky-50 border border-sky-200 rounded-full">
+                    <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse shrink-0" />
+                    <span className="text-xs font-mono font-medium text-sky-800 shrink-0">
+                      Auto-sending in {(silenceTimerProgress.durationMs / 1000).toFixed(1)}s
+                    </span>
+                    <div className="w-24 sm:w-32 h-2 bg-neutral-200 rounded-full overflow-hidden shadow-inner shrink-0">
+                      <div
+                        key={silenceTimerProgress.id}
+                        className="h-full bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-500 rounded-full"
+                        style={{
+                          animation: `silence-progress-fill ${silenceTimerProgress.durationMs}ms linear forwards`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-2.5 py-1 bg-neutral-100 border border-neutral-200 rounded-full text-xs font-mono text-neutral-600">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                    <span>Silence delay: {scenarioConfig.openQuestionSilenceSeconds}s</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Contextual Action Advance Controls for the candidate */}
-          <div className="flex items-center gap-2.5">
-            {meetingPhase === 'welcome' && (
-              <button
-                type="button"
-                onClick={() => advanceToPhase('question_1')}
-                className="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs font-bold cursor-pointer transition-colors shadow-xs"
-              >
-                Start Question 1
-              </button>
-            )}
-
-            {/* During Question 1 & 2, responses auto-forward to Hana on speech pause. A skip button is available if needed */}
-            {(meetingPhase === 'question_1' || meetingPhase === 'question_2') && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (meetingPhase === 'question_1') {
-                    handleSaveResponse(
-                      'question_1',
-                      'Introduction and background',
-                      candidateLiveTranscript,
-                      'question_2'
-                    );
-                  } else {
-                    handleSaveResponse(
-                      'question_2',
-                      'Challenging technical problem',
-                      candidateLiveTranscript,
-                      'task_resume'
-                    );
-                  }
-                }}
-                className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-600 text-xs font-medium cursor-pointer transition-colors flex items-center gap-1"
-                title="Skip to next phase if you are finished speaking"
-              >
-                <span>Next</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            {meetingPhase === 'candidate_qa' && (
-              <div className="flex items-center gap-2.5">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Voice-First Q&amp;A Session</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={concludeQaSession}
-                  className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-700 text-xs font-semibold cursor-pointer transition-colors"
-                >
-                  Conclude Q&amp;A
-                </button>
-              </div>
-            )}
+          {/* Voice status info indicator */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs font-mono text-neutral-600">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Voice-Oriented Meeting Session</span>
+            </div>
+            <div className="hidden sm:flex items-center gap-1.5 text-xs text-neutral-500 font-mono pl-3 border-l border-neutral-200">
+              <Mic className={`w-3.5 h-3.5 ${isCandidateSpeaking ? 'text-emerald-500 animate-bounce' : 'text-neutral-400'}`} />
+              <span>{isCandidateSpeaking ? 'Candidate Speaking' : hanaIsSpeaking ? 'Hana Speaking' : 'Listening...'}</span>
+            </div>
           </div>
         </footer>
       </div>

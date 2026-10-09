@@ -22,8 +22,18 @@ interface VRMCanvasProps {
   enablePointerTracking?: boolean;
   disableIdleWaitingAnimations?: boolean;
   nodTrigger?: number;
-  customAnimationTrigger?: { fileName: string; triggerId: number } | null;
-  lookTargetOffset?: { x: number; y: number } | null;
+  customAnimationTrigger?: {
+    fileName?: string;
+    clipFileName?: string;
+    triggerId: number;
+    loopOnce?: boolean;
+  } | null;
+  lookTargetOffset?: {
+    x?: number;
+    y?: number;
+    yaw?: number;
+    pitch?: number;
+  } | null;
 }
 
 export const VRMCanvas: React.FC<VRMCanvasProps> = ({
@@ -67,7 +77,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     }
   }, [nodTrigger]);
 
-  const lookTargetOffsetRef = useRef<{ x: number; y: number } | null>(lookTargetOffset);
+  const lookTargetOffsetRef = useRef<{ x?: number; y?: number; yaw?: number; pitch?: number } | null>(lookTargetOffset);
   useEffect(() => {
     lookTargetOffsetRef.current = lookTargetOffset;
   }, [lookTargetOffset]);
@@ -77,14 +87,15 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   const isCustomHeadGazeAllowedRef = useRef<boolean>(false);
 
   useEffect(() => {
-    if (customAnimationTrigger && customAnimationTrigger.fileName && customAnimationTrigger.triggerId > 0) {
+    const targetFile = customAnimationTrigger?.fileName || customAnimationTrigger?.clipFileName;
+    if (targetFile && customAnimationTrigger?.triggerId && customAnimationTrigger.triggerId > 0) {
       if (playCustomAnimationRef.current) {
-        playCustomAnimationRef.current(customAnimationTrigger.fileName);
+        playCustomAnimationRef.current(targetFile);
       } else {
-        pendingCustomAnimFileRef.current = customAnimationTrigger.fileName;
+        pendingCustomAnimFileRef.current = targetFile;
       }
     }
-  }, [customAnimationTrigger?.triggerId, customAnimationTrigger?.fileName]);
+  }, [customAnimationTrigger?.triggerId, customAnimationTrigger?.fileName, customAnimationTrigger?.clipFileName]);
 
   // Store emotion state in ref to avoid recreating Three.js scene while updating expressions smoothly
   const emotionRef = useRef<AvatarEmotion>(emotion);
@@ -903,11 +914,27 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         // Smooth lerp reset to 0 (or towards lookTargetOffset) when not holding
         // ----------------------------------------------------
         if (!isHoldingOnBody) {
-          const desiredBodyRotY = lookTargetOffsetRef.current ? lookTargetOffsetRef.current.x * 0.22 : 0;
-          targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, desiredBodyRotY, delta * 3.8);
+          const customLook = lookTargetOffsetRef.current;
+          const rawLookX = customLook
+            ? Number.isFinite(customLook.yaw)
+              ? customLook.yaw!
+              : Number.isFinite(customLook.x)
+              ? customLook.x!
+              : 0
+            : 0;
+          const desiredBodyRotY = rawLookX * 0.22;
+          if (Number.isFinite(desiredBodyRotY)) {
+            targetBodyRotationY = THREE.MathUtils.lerp(targetBodyRotationY, desiredBodyRotY, delta * 3.8);
+          }
         }
 
+        if (!Number.isFinite(targetBodyRotationY)) {
+          targetBodyRotationY = 0;
+        }
         currentBodyRotationY = THREE.MathUtils.lerp(currentBodyRotationY, targetBodyRotationY, delta * 12.0);
+        if (!Number.isFinite(currentBodyRotationY)) {
+          currentBodyRotationY = 0;
+        }
 
         // Apply position and rotation directly to scene
         vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
@@ -1175,34 +1202,56 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           // otherwise use pointer tracking if enabled.
           const hasPointer = enablePointerTrackingRef.current;
           const customLook = lookTargetOffsetRef.current;
-          const deltaX = customLook
-            ? customLook.x
+
+          const customX = customLook
+            ? Number.isFinite(customLook.yaw)
+              ? customLook.yaw!
+              : Number.isFinite(customLook.x)
+              ? customLook.x!
+              : null
+            : null;
+
+          const customY = customLook
+            ? Number.isFinite(customLook.pitch)
+              ? customLook.pitch!
+              : Number.isFinite(customLook.y)
+              ? customLook.y!
+              : null
+            : null;
+
+          const deltaX = customX !== null
+            ? customX
             : hasPointer
             ? mouseRef.current.x - headScreenPos.x
             : 0;
-          const deltaY = customLook
-            ? customLook.y
+
+          const deltaY = customY !== null
+            ? customY
             : hasPointer
             ? mouseRef.current.y - headScreenPos.y
             : 0;
 
           const facingAttenuation = customLook ? speechFacingFactor * 0.3 : speechFacingFactor;
-          const activeDeltaX = deltaX * (1.0 - facingAttenuation);
-          const activeDeltaY = deltaY * (1.0 - facingAttenuation);
+          const activeDeltaX = Number.isFinite(deltaX) ? deltaX * (1.0 - facingAttenuation) : 0;
+          const activeDeltaY = Number.isFinite(deltaY) ? deltaY * (1.0 - facingAttenuation) : 0;
 
           const speechNodX = speechFacingFactor * Math.sin(elapsed * 4.5) * 0.02;
 
           const targetRotY = THREE.MathUtils.clamp(activeDeltaX * 0.75, -0.85, 0.85) + (hasPointer ? saccadeOffsetX * (1.0 - speechFacingFactor * 0.6) : saccadeOffsetX * 0.4);
           const targetRotX = THREE.MathUtils.clamp(-activeDeltaY * 0.6, -0.45, 0.45) + (hasPointer ? saccadeOffsetY * (1.0 - speechFacingFactor * 0.6) : saccadeOffsetY * 0.4) + speechNodX + manualNodX;
 
-          headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 7.5);
-          headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 7.5);
+          if (Number.isFinite(targetRotY) && Number.isFinite(targetRotX)) {
+            headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 7.5);
+            headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 7.5);
+          }
 
           if (neckNode) {
             const targetNeckY = THREE.MathUtils.clamp(activeDeltaX * 0.35, -0.4, 0.4);
             const targetNeckX = THREE.MathUtils.clamp(-activeDeltaY * 0.25, -0.25, 0.25) + speechNodX * 0.4 + manualNodX * 0.5;
-            neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 6.0);
-            neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 6.0);
+            if (Number.isFinite(targetNeckY) && Number.isFinite(targetNeckX)) {
+              neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 6.0);
+              neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 6.0);
+            }
           }
         }
       }
@@ -1217,6 +1266,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       if (!container || !camera || !renderer) return;
       const newW = container.clientWidth || window.innerWidth;
       const newH = container.clientHeight || window.innerHeight;
+      if (newW <= 0 || newH <= 0) return;
       camera.aspect = newW / newH;
       camera.updateProjectionMatrix();
       adjustCameraFraming();
@@ -1224,6 +1274,14 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
     };
 
     window.addEventListener('resize', handleResize);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && container) {
+      resizeObserver = new ResizeObserver(() => {
+        handleResize();
+      });
+      resizeObserver.observe(container);
+    }
 
     // 9. Pointer movement for gaze tracking & drag rotation (v1 rotational multiplier)
     const handlePointerMove = (e: PointerEvent) => {
@@ -1373,6 +1431,9 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       cancelAnimationFrame(animationFrameId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('resize', handleResize);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       window.removeEventListener('pointermove', handlePointerMove);
       container.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('pointerup', handlePointerUp);

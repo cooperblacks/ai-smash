@@ -225,3 +225,13 @@ select,
   opacity: 0;
   animation: click-shockwave-ring 0.44s cubic-bezier(0.16, 1, 0.3, 1) 0.16s forwards;
 }
+
+@keyframes silence-progress-fill {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
