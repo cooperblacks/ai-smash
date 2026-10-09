@@ -41,9 +41,9 @@ export async function fetchVRMWithCache(
     const candidateUrls = isDefaultModel
       ? VRM_CONFIG.candidateModelUrls
       : [
-          `/api/vrm?file=${encodeURIComponent(cleanFile)}`,
           `${MODEL_SOURCE_DOMAIN}/${cleanFile}`,
           `${MODEL_FALLBACK_DOMAIN}/${cleanFile}`,
+          `/api/vrm?file=${encodeURIComponent(cleanFile)}`,
         ];
 
     let cache: Cache | null = null;

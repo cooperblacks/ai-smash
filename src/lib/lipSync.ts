@@ -104,19 +104,33 @@ class LipSyncManager {
    */
   public update(delta: number, _elapsed: number) {
     const now = performance.now();
-    const isActiveWindow = this.isSpeaking && now <= this.activeUntil;
+    const isExplicitActive = this.isSpeaking && now <= this.activeUntil;
+    const isActive = this.isSpeaking;
 
-    // During active word utterance, lerp smoothly. During pause or silence, decay fast to 0
-    const rate = isActiveWindow ? 12 : 24;
+    if (this.isSpeaking && !isExplicitActive) {
+      // Procedural speech cadence fallback: generate rhythmic vowel visemes matching human speech cadence (~3-4Hz)
+      const t = now * 0.012;
+      const mouthOpen = Math.max(0, 0.22 + 0.18 * Math.sin(t * 3.2));
+      this.targetVisemes.aa = Math.max(0, mouthOpen * (0.6 + 0.4 * Math.sin(t * 2.1)));
+      this.targetVisemes.ih = Math.max(0, mouthOpen * 0.35 * Math.cos(t * 1.8));
+      this.targetVisemes.oh = Math.max(0, mouthOpen * 0.45 * Math.sin(t * 1.4));
+      this.targetVisemes.ee = Math.max(0, mouthOpen * 0.3 * Math.cos(t * 2.6));
+      this.targetVisemes.ou = Math.max(0, mouthOpen * 0.25 * Math.sin(t * 2.9));
+    }
+
+    // During active utterance, lerp smoothly. During pause or silence, decay fast to 0
+    const rate = isActive ? 14 : 26;
 
     for (const key of ['aa', 'ih', 'ou', 'ee', 'oh'] as VisemeName[]) {
-      const target = isActiveWindow ? this.targetVisemes[key] : 0;
+      const target = isActive ? this.targetVisemes[key] : 0;
       this.currentVisemes[key] +=
         (target - this.currentVisemes[key]) * Math.min(1, delta * rate);
 
       // Definite silence deadzone threshold: snap completely to 0 to prevent lip quivering!
-      if (this.currentVisemes[key] < 0.02) {
-        this.currentVisemes[key] = 0;
+      if (!isActive || this.currentVisemes[key] < 0.02) {
+        if (!isActive) {
+          this.currentVisemes[key] = 0;
+        }
       }
     }
 

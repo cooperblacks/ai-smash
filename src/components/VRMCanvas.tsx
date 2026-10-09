@@ -18,6 +18,7 @@ interface VRMCanvasProps {
   modelFileName?: string;
   lastUserMessageAt?: number;
   emotion?: AvatarEmotion;
+  interactive?: boolean;
 }
 
 export const VRMCanvas: React.FC<VRMCanvasProps> = ({
@@ -29,9 +30,15 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   modelFileName = 'hana_v1.2_vrm1.vrm',
   lastUserMessageAt = 0,
   emotion = 'neutral',
+  interactive = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const interactiveRef = useRef(interactive);
+  useEffect(() => {
+    interactiveRef.current = interactive;
+  }, [interactive]);
 
   // Store emotion state in ref to avoid recreating Three.js scene while updating expressions smoothly
   const emotionRef = useRef<AvatarEmotion>(emotion);
@@ -260,10 +267,10 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
               if (rightLowerArm) rightLowerArm.rotation.set(0.0, 0.22, 0.1);
             }
 
-            // Initial preset expressions
+            // Initial preset expressions (strictly neutral)
             if (vrm.expressionManager) {
               try {
-                vrm.expressionManager.setValue('relaxed', 0.25);
+                vrm.expressionManager.setValue('relaxed', 0.0);
                 vrm.expressionManager.setValue('happy', 0.0);
                 vrm.expressionManager.setValue('surprised', 0.0);
                 vrm.expressionManager.setValue('sad', 0.0);
@@ -881,7 +888,9 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
             break;
           case 'neutral':
           default:
-            // "neutral" (the current default usual face emotion)
+            // "neutral" strictly neutral face - no smile or relaxed smirk
+            targetRelaxed = 0.0;
+            targetHappy = 0.0;
             break;
         }
 
@@ -1018,7 +1027,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     // 10. Pointer Down on 3D Model: Detect Body Region & initiate rotation drag
     const handlePointerDown = (e: PointerEvent) => {
-      if (!container || !cameraRef.current || !vrmRef.current) return;
+      if (!interactiveRef.current || !container || !cameraRef.current || !vrmRef.current) return;
       const rect = container.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);

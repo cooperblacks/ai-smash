@@ -2,5 +2,7 @@
   "name": "Hana",
   "description": "Talk with Hana. Decentralized and self-hosted LLM platform brought to you by MuxAI.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
