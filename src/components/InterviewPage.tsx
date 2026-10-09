@@ -33,6 +33,8 @@ import {
   Upload,
   FileUp,
   FileCheck,
+  Monitor,
+  RefreshCw,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { VRMCanvas } from './VRMCanvas';
@@ -84,6 +86,8 @@ interface UploadedResume {
   textContent?: string;
 }
 
+const STORAGE_KEY = 'hana_interview_session_data';
+
 function calculateAgreementMatch(spoken: string): number {
   const target = 'i am ready to start my interview and i agree to the rules';
   const cleanSpoken = spoken.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -123,6 +127,11 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   onNavigateHome,
   onNavigateToChat,
 }) => {
+  // Web Speech API browser compatibility check
+  const isWebSpeechSupported = typeof window !== 'undefined' && Boolean(
+    (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+  );
+
   // ----------------------------------------------------
   // Stage State
   // ----------------------------------------------------
@@ -169,6 +178,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const [hasDetectedMicOnce, setHasDetectedMicOnce] = useState<boolean>(false);
   const [isSpeakerTesting, setIsSpeakerTesting] = useState<boolean>(false);
 
+  // Active stream state so React renders video elements reliably
+  const [activeMediaStream, setActiveMediaStream] = useState<MediaStream | null>(null);
+
   // Refs for Media Streams & Recorders
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const lobbyVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -177,9 +189,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const micAnimFrameRef = useRef<number | null>(null);
 
-  // Video Recording System
+  // Screen & Audio Recording System (Canvas composite + Web Audio mix or displayMedia)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
   const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
   const [recordedDuration, setRecordedDuration] = useState<number>(0);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -243,12 +256,104 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const [reviewCurrentTime, setReviewCurrentTime] = useState<number>(0);
   const [selectedSnapshotModal, setSelectedSnapshotModal] = useState<string | null>(null);
 
+  // Page Refresh Recovery Modal state
+  const [hasSavedSession, setHasSavedSession] = useState<boolean>(false);
+  const [savedSessionData, setSavedSessionData] = useState<any>(null);
+
   // Helper for displaying candidate name gracefully
   const effectiveCandidateName = candidateName.trim() || 'Candidate';
   const effectiveDossierName = candidateName.trim() || 'Dewan Mukto';
 
   // ----------------------------------------------------
-  // Initialize Media Devices & Stream in Lobby
+  // Edge Case: Check for Saved Session on Refresh
+  // ----------------------------------------------------
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && (parsed.stage === 'meeting' || parsed.stage === 'recruiter_review')) {
+          setHasSavedSession(true);
+          setSavedSessionData(parsed);
+        }
+      }
+    } catch {
+      // ignore JSON parse errors
+    }
+  }, []);
+
+  const restoreSession = () => {
+    if (!savedSessionData) return;
+    try {
+      setCandidateName(savedSessionData.candidateName || '');
+      setMeetingPhase(savedSessionData.meetingPhase || 'question_1');
+      setWrittenText(savedSessionData.writtenText || '');
+      setWrittenSubmitted(Boolean(savedSessionData.writtenSubmitted));
+      setPressureRating(savedSessionData.pressureRating || '');
+      setPressureSubmitted(Boolean(savedSessionData.pressureSubmitted));
+      setSnapshots(savedSessionData.snapshots || []);
+      setRecordedResponses(savedSessionData.recordedResponses || []);
+      setQaHistory(savedSessionData.qaHistory || []);
+      if (savedSessionData.uploadedResume) {
+        setUploadedResume(savedSessionData.uploadedResume);
+        setResumeSubmitted(true);
+      }
+      setHanaEntered(true);
+      setIsHana3DReady(true);
+      setStage(savedSessionData.stage || 'meeting');
+      setHasSavedSession(false);
+      startCameraStream();
+    } catch (e) {
+      console.warn('Could not restore session', e);
+      setHasSavedSession(false);
+    }
+  };
+
+  const discardSavedSession = () => {
+    sessionStorage.removeItem(STORAGE_KEY);
+    setHasSavedSession(false);
+    setSavedSessionData(null);
+  };
+
+  // Persist session snapshot to sessionStorage whenever critical interview states change
+  useEffect(() => {
+    if (stage === 'meeting' || stage === 'recruiter_review') {
+      try {
+        const stateToSave = {
+          stage,
+          meetingPhase,
+          candidateName,
+          writtenText,
+          writtenSubmitted,
+          pressureRating,
+          pressureSubmitted,
+          snapshots,
+          recordedResponses,
+          qaHistory,
+          uploadedResume,
+          timestamp: Date.now(),
+        };
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
+      } catch {
+        // storage quota exceeded or disabled
+      }
+    }
+  }, [
+    stage,
+    meetingPhase,
+    candidateName,
+    writtenText,
+    writtenSubmitted,
+    pressureRating,
+    pressureSubmitted,
+    snapshots,
+    recordedResponses,
+    qaHistory,
+    uploadedResume,
+  ]);
+
+  // ----------------------------------------------------
+  // Initialize Media Devices & Stream
   // ----------------------------------------------------
   const startCameraStream = useCallback(async (vDeviceId?: string, aDeviceId?: string) => {
     try {
@@ -263,6 +368,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       mediaStreamRef.current = stream;
+      setActiveMediaStream(stream);
 
       if (lobbyVideoRef.current) {
         lobbyVideoRef.current.srcObject = stream;
@@ -293,45 +399,56 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   }, [selectedVideoId, selectedAudioId]);
 
+  // Make sure whenever activeMediaStream changes, video refs attach correctly
+  useEffect(() => {
+    if (activeMediaStream) {
+      if (lobbyVideoRef.current && lobbyVideoRef.current.srcObject !== activeMediaStream) {
+        lobbyVideoRef.current.srcObject = activeMediaStream;
+      }
+      if (localVideoRef.current && localVideoRef.current.srcObject !== activeMediaStream) {
+        localVideoRef.current.srcObject = activeMediaStream;
+      }
+    }
+  }, [activeMediaStream, stage, isCameraActive]);
+
   const setupAudioMeter = (stream: MediaStream) => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
 
-      const audioCtx = new AudioCtx();
+      if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        audioContextRef.current = new AudioCtx();
+      }
+
+      const audioCtx = audioContextRef.current;
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+
+      const source = audioCtx.createMediaStreamSource(stream);
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
-      const source = audioCtx.createMediaStreamSource(stream);
+      analyser.smoothingTimeConstant = 0.5;
       source.connect(analyser);
-
-      audioContextRef.current = audioCtx;
       analyserRef.current = analyser;
 
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
       const updateMeter = () => {
         if (!analyserRef.current) return;
         analyserRef.current.getByteFrequencyData(dataArray);
 
         let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
+        for (let i = 0; i < dataArray.length; i++) {
           sum += dataArray[i];
         }
-        const avg = sum / bufferLength;
+        const avg = sum / dataArray.length;
         const normalized = Math.min(100, Math.round((avg / 128) * 100));
         setMicVolume(normalized);
 
-        // Latch mic detection once per session so checkmark never flickers or blinks
-        if (normalized > 8) {
+        // Latch once detected so the checkmark stays green and does not glitch/flicker
+        if (normalized > 10) {
           setHasDetectedMicOnce(true);
-        }
-
-        // Track candidate speaking state for visual UI indicator
-        if (normalized > 18) {
-          setIsCandidateSpeaking(true);
-        } else {
-          setIsCandidateSpeaking(false);
         }
 
         micAnimFrameRef.current = requestAnimationFrame(updateMeter);
@@ -350,6 +467,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       if (mediaStreamRef.current) {
         mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       }
+      if (recordingStreamRef.current) {
+        recordingStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => {});
       }
@@ -362,7 +482,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
     const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRec) {
-      setLobbySpeechError('Web Speech API is not supported in this browser. You can click to agree manually.');
+      setLobbySpeechError('Web Speech API is not supported in this browser. Please use Chrome, Edge, or a compatible browser.');
       return;
     }
 
@@ -504,12 +624,17 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       utterance.pitch = 1.15;
       utterance.rate = 1.0;
 
-      utterance.onend = () => {
+      let hasFinished = false;
+      const finish = () => {
+        if (hasFinished) return;
+        hasFinished = true;
         hanaIsSpeakingRef.current = false;
         setHanaIsSpeaking(false);
         setHanaEmotion('neutral');
         onDone?.();
       };
+
+      utterance.onend = () => finish();
 
       utterance.onerror = (e) => {
         if (e.error !== 'interrupted' && e.error !== 'canceled') {
@@ -518,6 +643,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         hanaIsSpeakingRef.current = false;
         setHanaIsSpeaking(false);
       };
+
+      // Watchdog timeout to prevent getting stuck if onend doesn't fire
+      const wordCount = text.split(' ').length;
+      const estimatedDurationMs = Math.max(3000, (wordCount / 2.2) * 1000 + 1500);
+      setTimeout(() => {
+        if (hanaIsSpeakingRef.current && currentHanaLineRef.current === text) {
+          finish();
+        }
+      }, estimatedDurationMs);
 
       window.speechSynthesis.speak(utterance);
     },
@@ -641,19 +775,36 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   }, [stage, isListeningForTrigger, handleCandidateSpeechActivity]);
 
   // ----------------------------------------------------
-  // Video Recording Engine (MediaRecorder)
+  // Video Recording Engine (Full Screen / Meeting Capture)
+  // Records the interview session with audio & video
   // ----------------------------------------------------
-  const startRecordingSession = () => {
-    if (!mediaStreamRef.current) return;
+  const startRecordingSession = async () => {
     try {
       recordedChunksRef.current = [];
+
+      // Record media stream directly while keeping candidate live video feed intact
+      let recordStream = mediaStreamRef.current;
+
+      // If mediaStream is available, clone or use tracks
+      if (recordStream) {
+        const videoTrack = recordStream.getVideoTracks()[0];
+        const audioTrack = recordStream.getAudioTracks()[0];
+        const tracks: MediaStreamTrack[] = [];
+        if (videoTrack) tracks.push(videoTrack);
+        if (audioTrack) tracks.push(audioTrack);
+        recordingStreamRef.current = new MediaStream(tracks);
+      }
+
+      const streamToRecord = recordingStreamRef.current || mediaStreamRef.current;
+      if (!streamToRecord) return;
+
       const options = { mimeType: 'video/webm;codecs=vp8,opus' };
       let recorder: MediaRecorder;
 
       try {
-        recorder = new MediaRecorder(mediaStreamRef.current, options);
+        recorder = new MediaRecorder(streamToRecord, options);
       } catch {
-        recorder = new MediaRecorder(mediaStreamRef.current);
+        recorder = new MediaRecorder(streamToRecord);
       }
 
       recorder.ondataavailable = (event) => {
@@ -696,9 +847,21 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   // Enter Meeting & Start Phases
   // ----------------------------------------------------
   const handleJoinMeeting = () => {
+    // If Web Speech API is not supported, block proceeding with clear prompt
+    if (!isWebSpeechSupported) {
+      return;
+    }
+
     setStage('meeting');
     setActivePov('candidate');
     setMeetingPhase('joining');
+
+    // Ensure candidate video element is attached
+    setTimeout(() => {
+      if (localVideoRef.current && mediaStreamRef.current) {
+        localVideoRef.current.srcObject = mediaStreamRef.current;
+      }
+    }, 100);
 
     startRecordingSession();
     soundManager.playSend();
@@ -739,150 +902,111 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       const prompt = "Before we proceed to written tasks, let's review your credentials. Please upload your updated resume or CV document so we have the latest version on file for our recruiting team.";
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_written') {
-      const prompt = "Next is a short written assessment. Please take your time to write down 3 things you like about yourself and why.";
+      const prompt = "Next, we have a short written reflection task. In the spotlight panel on your right, please write down three things you like about yourself and why. Take your time, and submit when you have at least 100 characters.";
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_pressure') {
-      const prompt = "Next is a quick situational question regarding workload and delivery pressure. Please select the option that best reflects how you operate.";
+      const prompt = "Great. Now we have a quick situational question. In the spotlight panel, select the rating that most accurately reflects how you perform under intense project pressure.";
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_snapshot') {
-      const prompt = "For our verification check, we have a quick visual task. Please write down your phone number on a piece of paper and hold it up to the camera. We'll capture three angles: looking forward, looking left, and looking right while continuing to hold the paper up. When you are ready at each angle, say 'click', 'do it', 'okay', or 'ready'.";
       setSnapshotStep(1);
       setIsListeningForTrigger(true);
+      const prompt = "For fun and identity verification, please write down your phone number on a small piece of paper. First, hold it up and look directly forward, then say 'click', 'do it', 'okay', or 'ready' when you're set.";
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'candidate_qa') {
-      const prompt = "We are almost at the end of our session. Do you have any questions for me about MuxAI, the role, or the team?";
+      const prompt = "Thank you for completing all spotlight tasks. Now, do you have any questions for me or our recruiting team about the role or MuxAI?";
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'wrapup') {
-      const closing = `Thank you so much for your time today, ${effectiveCandidateName}. You did a great job across all assessments. The recruiting team will review your session recording, uploaded resume, and answers, and we'll follow up with you very soon. Have a wonderful rest of your day.`;
-      speakHanaLine(
-        closing,
-        () => {
-          setTimeout(() => {
-            handleEndMeetingAndReview();
-          }, 2000);
-        },
-        'neutral'
-      );
+      const wrapup = "Thank you so much for your time today. It was a pleasure speaking with you. Our recruiting team will review your session dossier and reach out with next steps soon. Have a wonderful day!";
+      speakHanaLine(wrapup, () => {
+        setTimeout(() => {
+          handleEndMeetingAndReview();
+        }, 1500);
+      }, 'neutral');
     }
   };
 
-  // Submit candidate answer for Question 1 & 2
-  const handleConfirmAnswer = (qKey: 'question_1' | 'question_2') => {
-    const text = candidateLiveTranscript || (qKey === 'question_1' ? 'General introduction provided.' : 'Technical challenge overview provided.');
-    const qTitle =
-      qKey === 'question_1'
-        ? 'Candidate Introduction & Motivation'
-        : 'Technical Challenge & Problem Solving';
-
+  // Submit Answer to Questions
+  const handleSaveResponse = (phase: string, question: string, answer: string, nextPhase: MeetingPhase) => {
     setRecordedResponses((prev) => [
       ...prev,
       {
-        phase: qKey,
-        question: qTitle,
-        answer: text,
+        phase,
+        question,
+        answer: answer.trim() || '[Spoken answer recorded via microphone stream]',
         timestamp: new Date().toLocaleTimeString(),
-        aiNotes: 'Clear articulation, strong self-confidence and domain relevance.',
       },
     ]);
-
-    soundManager.playSend();
-
-    if (qKey === 'question_1') {
-      const acknowledge = 'Thank you for sharing that. That gives helpful context into your experience.';
-      speakHanaLine(
-        acknowledge,
-        () => {
-          advanceToPhase('question_2');
-        },
-        'neutral'
-      );
-    } else {
-      const acknowledge = 'Understood. That was a structured and pragmatic approach to solving that challenge.';
-      speakHanaLine(
-        acknowledge,
-        () => {
-          advanceToPhase('task_resume');
-        },
-        'neutral'
-      );
-    }
+    advanceToPhase(nextPhase);
   };
 
-  // ----------------------------------------------------
-  // Task 1: Resume Upload Handlers
-  // ----------------------------------------------------
+  // Handle Resume File Upload
   const handleResumeFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploadingResume(true);
+    soundManager.playSend();
+
     const reader = new FileReader();
-    const isText = file.type.includes('text') || file.name.endsWith('.txt') || file.name.endsWith('.md');
-
-    reader.onload = (loadEvent) => {
-      const dataUrl = loadEvent.target?.result as string;
-      const sizeInKb = Math.round(file.size / 1024);
-      const sizeStr = sizeInKb > 1024 ? `${(sizeInKb / 1024).toFixed(1)} MB` : `${sizeInKb} KB`;
-
-      const resumeItem: UploadedResume = {
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const fileSizeKb = `${(file.size / 1024).toFixed(1)} KB`;
+      const uploaded: UploadedResume = {
         fileName: file.name,
-        fileSize: sizeStr,
+        fileSize: fileSizeKb,
         fileType: file.type || 'application/octet-stream',
         dataUrl,
         uploadedAt: new Date().toLocaleTimeString(),
       };
 
-      if (isText && typeof dataUrl === 'string') {
-        try {
-          const textReader = new FileReader();
-          textReader.onload = (txtEvt) => {
-            resumeItem.textContent = txtEvt.target?.result as string;
-            setUploadedResume(resumeItem);
-            setIsUploadingResume(false);
-            soundManager.playSend();
-          };
-          textReader.readAsText(file);
-          return;
-        } catch {}
+      if (file.type.includes('text') || file.name.endsWith('.txt')) {
+        const textReader = new FileReader();
+        textReader.onload = () => {
+          uploaded.textContent = textReader.result as string;
+          setUploadedResume(uploaded);
+          setIsUploadingResume(false);
+          soundManager.playReceive();
+        };
+        textReader.readAsText(file);
+      } else {
+        setUploadedResume(uploaded);
+        setIsUploadingResume(false);
+        soundManager.playReceive();
       }
-
-      setUploadedResume(resumeItem);
-      setIsUploadingResume(false);
-      soundManager.playSend();
     };
-
     reader.readAsDataURL(file);
   };
 
   const handleSubmitResumeTask = () => {
     if (!uploadedResume) return;
     setResumeSubmitted(true);
-    soundManager.playSend();
+    soundManager.playReceive();
 
     setRecordedResponses((prev) => [
       ...prev,
       {
         phase: 'task_resume',
-        question: 'Candidate Resume / CV Submission',
+        question: 'Credentials Document Verification',
         answer: `Uploaded: ${uploadedResume.fileName} (${uploadedResume.fileSize})`,
         timestamp: new Date().toLocaleTimeString(),
-        aiNotes: `Verified document attachment (${uploadedResume.fileName}). Credentials updated for recruiter evaluation.`,
+        aiNotes: 'Document uploaded and attached to candidate dossier for recruiter evaluation.',
       },
     ]);
 
-    const acknowledge = 'Thank you. Your resume document has been received and attached to your dossier. Next is a short written assessment.';
+    // Hana speaks transition verbal feedback
+    const transitionText = "Thank you! I've received your updated document. Now let's move forward to the written reflection task.";
     speakHanaLine(
-      acknowledge,
+      transitionText,
       () => {
-        advanceToPhase('task_written');
+        setTimeout(() => {
+          advanceToPhase('task_written');
+        }, 1000);
       },
       'neutral'
     );
   };
 
-  // ----------------------------------------------------
-  // Task 2: Written Task Handler (>= 100 characters)
-  // ----------------------------------------------------
+  // Submit Written Task
   const handleSubmitWrittenTask = () => {
     if (writtenText.trim().length < 100) return;
     setWrittenSubmitted(true);
@@ -893,25 +1017,26 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       {
         phase: 'task_written',
         question: 'Write down 3 things you like about yourself and why.',
-        answer: writtenText.trim(),
+        answer: writtenText,
         timestamp: new Date().toLocaleTimeString(),
-        aiNotes: `Written reflection evaluated (${writtenText.trim().length} chars). High self-awareness and structured delivery.`,
+        aiNotes: 'Exceeds length threshold. Structured answers showing self-awareness and confidence.',
       },
     ]);
 
-    const acknowledge = 'Thank you for completing that. Great reflections. Let us move to the next assessment.';
+    // Hana verbal feedback and advance
+    const feedback = "Excellent self-reflection. I've recorded your response. Let's move on to the situational pressure rating.";
     speakHanaLine(
-      acknowledge,
+      feedback,
       () => {
-        advanceToPhase('task_pressure');
+        setTimeout(() => {
+          advanceToPhase('task_pressure');
+        }, 1000);
       },
       'neutral'
     );
   };
 
-  // ----------------------------------------------------
-  // Task 3: Situational Pressure Choice
-  // ----------------------------------------------------
+  // Submit Pressure Rating Task
   const handleSubmitPressureRating = () => {
     if (!pressureRating) return;
     setPressureSubmitted(true);
@@ -924,67 +1049,110 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         question: 'How well do you perform under pressure?',
         answer: pressureRating,
         timestamp: new Date().toLocaleTimeString(),
-        aiNotes: `Selected style: "${pressureRating}". Demonstrates adaptability under deadline stress.`,
+        aiNotes: `Candidate selected: "${pressureRating}". Demonstrates high resilience and initiative.`,
       },
     ]);
 
-    let acknowledge = 'Noted on your performance preferences. Now for our visual verification task.';
-    if (pressureRating.includes('HELL YEAH')) {
-      acknowledge = 'Noted on your strong confidence under high pressure. Now let us proceed to the visual verification task.';
-    }
-
+    const feedback = "Noted! Next up, we will do a fast visual verification sequence.";
     speakHanaLine(
-      acknowledge,
+      feedback,
       () => {
-        advanceToPhase('task_snapshot');
+        setTimeout(() => {
+          advanceToPhase('task_snapshot');
+        }, 1000);
       },
       'neutral'
     );
   };
 
-  // ----------------------------------------------------
-  // Task 4: Snapshot Capture Station with Voice Trigger
-  // ----------------------------------------------------
+  // Capture Image From Camera Video Feed
+  const captureCameraFrame = (): string | null => {
+    try {
+      const videoEl = localVideoRef.current || lobbyVideoRef.current;
+      if (!videoEl) return null;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = videoEl.videoWidth || 640;
+      canvas.height = videoEl.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+
+      // Mirror horizontally to match self-view
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.85);
+    } catch {
+      return null;
+    }
+  };
+
+  // Snapshot Step Trigger Handler
   const handleTakeSnapshotTrigger = () => {
-    soundManager.playSend();
-
-    const video = localVideoRef.current || lobbyVideoRef.current;
-    if (!video) return;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-
-    const angles: Array<'forward' | 'left' | 'right'> = ['forward', 'left', 'right'];
-    const currentAngle = angles[snapshotStep - 1] || 'forward';
-
-    const newSnapshot: SnapshotItem = {
-      id: `snap_${Date.now()}`,
-      angle: currentAngle,
-      label: currentAngle === 'forward' ? 'Looking Forward' : currentAngle === 'left' ? 'Looking Left' : 'Looking Right',
-      dataUrl,
-      timestamp: new Date().toLocaleTimeString(),
-    };
-
-    setSnapshots((prev) => [...prev, newSnapshot]);
+    soundManager.playReceive();
+    const frame = captureCameraFrame();
+    if (!frame) return;
 
     if (snapshotStep === 1) {
+      setSnapshots((prev) => [
+        ...prev,
+        {
+          id: 'snap-1',
+          angle: 'forward',
+          label: 'Forward Pose + Phone on Paper',
+          dataUrl: frame,
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ]);
       setSnapshotStep(2);
-      speakHanaLine('Great. Now turn your head to look left while holding the paper up.', undefined, 'neutral');
+      const nextPrompt = "Awesome shot. Now, keep holding up the paper, turn your head slightly to the left, and say 'click' or 'ready'.";
+      speakHanaLine(nextPrompt, undefined, 'neutral');
     } else if (snapshotStep === 2) {
+      setSnapshots((prev) => [
+        ...prev,
+        {
+          id: 'snap-2',
+          angle: 'left',
+          label: 'Left Angle Pose',
+          dataUrl: frame,
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ]);
       setSnapshotStep(3);
-      speakHanaLine('Good. Now turn your head to look right while continuing to hold the paper.', undefined, 'neutral');
+      const nextPrompt = "Got it! Lastly, turn your head slightly to the right while holding the paper, and say 'click' or 'do it'.";
+      speakHanaLine(nextPrompt, undefined, 'neutral');
     } else if (snapshotStep === 3) {
+      setSnapshots((prev) => [
+        ...prev,
+        {
+          id: 'snap-3',
+          angle: 'right',
+          label: 'Right Angle Pose',
+          dataUrl: frame,
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ]);
+      setSnapshotStep(0);
       setIsListeningForTrigger(false);
+
+      setRecordedResponses((prev) => [
+        ...prev,
+        {
+          phase: 'task_snapshot',
+          question: 'Visual Identity & Multi-Angle Verification',
+          answer: '3 angles captured (Forward, Left, Right) via voice triggers with held note.',
+          timestamp: new Date().toLocaleTimeString(),
+          aiNotes: 'Identity verification images confirmed with clear orientation check.',
+        },
+      ]);
+
+      const finishedText = "Perfect! All three identity frames are captured and verified. Now let's open the floor for any questions you might have.";
       speakHanaLine(
-        'Visual identity verification capture completed. We are almost done with our session.',
+        finishedText,
         () => {
-          advanceToPhase('candidate_qa');
+          setTimeout(() => {
+            advanceToPhase('candidate_qa');
+          }, 1200);
         },
         'neutral'
       );
@@ -1058,32 +1226,58 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   };
 
   // ----------------------------------------------------
-  // STAGE 1: LOBBY & PRE-INTERVIEW SETUP
+  // STAGE 1: LOBBY & PRE-INTERVIEW SETUP (LIGHT THEME)
   // ----------------------------------------------------
   if (stage === 'lobby') {
     return (
-      <div className="min-h-screen bg-[#0e1017] text-white flex flex-col font-sans select-none">
+      <div className="min-h-screen bg-[#f8fafc] text-neutral-900 flex flex-col font-sans select-none">
+        {/* Refresh Recovery Modal Banner if found */}
+        {hasSavedSession && (
+          <div className="bg-gradient-to-r from-sky-500 to-blue-600 text-white px-4 py-3 shadow-md flex items-center justify-between z-40">
+            <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+              <RefreshCw className="w-4 h-4 animate-spin text-white" />
+              <span>We noticed you were in an active interview session. Would you like to resume where you left off?</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={restoreSession}
+                className="px-3 py-1 bg-white text-blue-700 rounded-lg text-xs font-bold hover:bg-neutral-100 shadow transition-colors cursor-pointer"
+              >
+                Resume Interview
+              </button>
+              <button
+                type="button"
+                onClick={discardSavedSession}
+                className="px-3 py-1 bg-black/20 text-white rounded-lg text-xs font-medium hover:bg-black/30 transition-colors cursor-pointer"
+              >
+                Start Fresh
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Top Navigation */}
-        <header className="h-16 border-b border-white/10 px-6 flex items-center justify-between bg-[#141622]/80 backdrop-blur-md sticky top-0 z-30">
+        <header className="h-16 border-b border-neutral-200 px-6 flex items-center justify-between bg-white/90 backdrop-blur-md sticky top-0 z-30 shadow-xs">
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={onNavigateHome}
-              className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-300 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
               title="Return to Home"
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <h1 className="font-bold text-sm sm:text-base font-heading tracking-tight text-white">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <h1 className="font-bold text-sm sm:text-base font-heading tracking-tight text-neutral-900">
                 Hana Interview
               </h1>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="px-3.5 py-1 rounded-full bg-white/10 text-neutral-300 font-mono text-xs font-semibold">
+            <span className="px-3.5 py-1 rounded-full bg-neutral-100 border border-neutral-200 text-neutral-700 font-mono text-xs font-semibold shadow-xs">
               ID: {interviewId}
             </span>
           </div>
@@ -1092,10 +1286,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         {/* Main Lobby Container */}
         <main className="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col justify-center">
           <div className="mb-8 text-center sm:text-left">
-            <h2 className="text-2xl sm:text-4xl font-bold font-heading text-white tracking-tight">
+            <h2 className="text-2xl sm:text-4xl font-bold font-heading text-neutral-900 tracking-tight">
               Get ready for your interview
             </h2>
-            <p className="text-neutral-400 text-sm sm:text-base mt-2 max-w-2xl">
+            <p className="text-neutral-600 text-sm sm:text-base mt-2 max-w-2xl">
               Let&apos;s check if your camera and microphone are working properly before joining the meeting room.
             </p>
           </div>
@@ -1103,7 +1297,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Left 7 cols: Live Camera Feed & Device Selectors */}
             <div className="lg:col-span-7 space-y-4">
-              <div className="relative aspect-video rounded-3xl overflow-hidden bg-black/60 border border-white/10 shadow-2xl flex items-center justify-center group">
+              <div className="relative aspect-video rounded-3xl overflow-hidden bg-neutral-900 border border-neutral-200 shadow-xl flex items-center justify-center group">
                 <video
                   ref={lobbyVideoRef}
                   autoPlay
@@ -1120,37 +1314,36 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 )}
 
                 {permissionError && (
-                  <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-6 text-center z-20">
-                    <AlertCircle className="w-10 h-10 text-red-400 mb-3" />
-                    <h4 className="text-base font-bold text-white">Camera Access Required</h4>
-                    <p className="text-xs text-neutral-300 max-w-md mt-1">{permissionError}</p>
+                  <div className="absolute inset-0 bg-neutral-900/90 backdrop-blur-sm p-6 flex flex-col items-center justify-center text-center">
+                    <AlertCircle className="w-10 h-10 text-amber-400 mb-3" />
+                    <h4 className="font-semibold text-white text-sm">Media Access Required</h4>
+                    <p className="text-xs text-neutral-300 max-w-sm mt-1 mb-4">{permissionError}</p>
                     <button
                       type="button"
                       onClick={() => startCameraStream()}
-                      className="mt-4 px-4 py-2 rounded-xl text-xs font-semibold bg-[#55d2f6] text-black hover:opacity-90 cursor-pointer"
+                      className="px-4 py-2 rounded-xl bg-white text-neutral-900 text-xs font-bold hover:bg-neutral-100 cursor-pointer shadow-sm"
                     >
-                      Grant Device Permissions
+                      Retry Camera &amp; Mic Access
                     </button>
                   </div>
                 )}
 
-                {/* Video Overlay Controls */}
-                <div className="absolute bottom-4 inset-x-4 flex items-center justify-between pointer-events-none z-10">
-                  <div className="px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/10 flex items-center gap-2 pointer-events-auto">
-                    <span className={`w-2 h-2 rounded-full ${isCameraActive ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                    <span className="text-xs text-white font-medium">{candidateName.trim() || 'You'}</span>
+                {/* Floating Quick Action Overlay */}
+                <div className="absolute bottom-4 inset-x-4 flex items-center justify-between z-10 pointer-events-auto">
+                  <div className="px-3.5 py-1.5 rounded-full bg-neutral-900/80 backdrop-blur-md border border-white/20 text-xs font-semibold text-white">
+                    {effectiveCandidateName} (Preview)
                   </div>
 
-                  <div className="flex items-center gap-2 pointer-events-auto">
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={toggleCamera}
                       className={`p-3 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
                         isCameraActive
-                          ? 'bg-white/10 border-white/15 text-white hover:bg-white/20'
-                          : 'bg-red-500/30 border-red-500 text-red-200 hover:bg-red-500/40'
+                          ? 'bg-neutral-900/80 border-white/20 text-white hover:bg-neutral-800'
+                          : 'bg-red-500 border-red-400 text-white'
                       }`}
-                      title={isCameraActive ? 'Turn Off Camera' : 'Turn On Camera'}
+                      title={isCameraActive ? 'Turn off camera' : 'Turn on camera'}
                     >
                       {isCameraActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
                     </button>
@@ -1159,10 +1352,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       onClick={toggleMic}
                       className={`p-3 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
                         isMicActive
-                          ? 'bg-white/10 border-white/15 text-white hover:bg-white/20'
-                          : 'bg-red-500/30 border-red-500 text-red-200 hover:bg-red-500/40'
+                          ? 'bg-neutral-900/80 border-white/20 text-white hover:bg-neutral-800'
+                          : 'bg-red-500 border-red-400 text-white'
                       }`}
-                      title={isMicActive ? 'Mute Microphone' : 'Unmute Microphone'}
+                      title={isMicActive ? 'Mute microphone' : 'Unmute microphone'}
                     >
                       {isMicActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
                     </button>
@@ -1170,38 +1363,38 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 </div>
               </div>
 
-              {/* Hardware Source Selectors */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10">
-                  <label className="text-xs text-neutral-400 font-medium block mb-1.5">Camera Source</label>
+              {/* Hardware Device Selection Selectors */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="p-3.5 rounded-2xl bg-white border border-neutral-200 shadow-xs space-y-1">
+                  <label className="text-xs font-semibold text-neutral-600 block">Camera Source</label>
                   <select
                     value={selectedVideoId}
                     onChange={(e) => {
                       setSelectedVideoId(e.target.value);
                       startCameraStream(e.target.value, selectedAudioId);
                     }}
-                    className="w-full text-xs bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#55d2f6]"
+                    className="w-full text-xs bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-neutral-800 focus:outline-none focus:border-sky-500"
                   >
                     {videoDevices.map((d, i) => (
-                      <option key={d.deviceId || i} value={d.deviceId} className="bg-neutral-900">
+                      <option key={d.deviceId || i} value={d.deviceId} className="bg-white text-neutral-900">
                         {d.label || `Camera ${i + 1}`}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10">
-                  <label className="text-xs text-neutral-400 font-medium block mb-1.5">Microphone Source</label>
+                <div className="p-3.5 rounded-2xl bg-white border border-neutral-200 shadow-xs space-y-1">
+                  <label className="text-xs font-semibold text-neutral-600 block">Microphone Source</label>
                   <select
                     value={selectedAudioId}
                     onChange={(e) => {
                       setSelectedAudioId(e.target.value);
                       startCameraStream(selectedVideoId, e.target.value);
                     }}
-                    className="w-full text-xs bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#55d2f6]"
+                    className="w-full text-xs bg-neutral-50 border border-neutral-300 rounded-xl px-3 py-2 text-neutral-800 focus:outline-none focus:border-sky-500"
                   >
                     {audioDevices.map((d, i) => (
-                      <option key={d.deviceId || i} value={d.deviceId} className="bg-neutral-900">
+                      <option key={d.deviceId || i} value={d.deviceId} className="bg-white text-neutral-900">
                         {d.label || `Microphone ${i + 1}`}
                       </option>
                     ))}
@@ -1210,20 +1403,20 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               </div>
 
               {/* Real-time Voice Agreement Prompt Row */}
-              <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2">
-                <p className="text-xs text-neutral-300 leading-relaxed">
+              <div className="p-4 rounded-2xl bg-white border border-neutral-200 shadow-xs space-y-2">
+                <p className="text-xs text-neutral-700 leading-relaxed">
                   To start the meeting, please say{' '}
-                  <strong className="text-white font-bold">I am ready to start my interview</strong> and I agree to the rules.
+                  <strong className="text-neutral-950 font-bold">I am ready to start my interview</strong> and I agree to the rules.
                 </p>
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-xs font-mono">
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className={`w-2 h-2 rounded-full shrink-0 ${
-                        isLobbyListening ? 'bg-emerald-400 animate-ping' : 'bg-neutral-500'
+                        isLobbyListening ? 'bg-emerald-500 animate-ping' : 'bg-neutral-400'
                       }`}
                     />
-                    <span className="text-neutral-400 truncate">
+                    <span className="text-neutral-600 truncate">
                       {lobbySpokenText ? `Heard: "${lobbySpokenText}"` : 'Listening for phrase...'}
                     </span>
                   </div>
@@ -1231,10 +1424,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                         hasAgreedToRules
-                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                           : lobbyMatchPercent > 0
-                          ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                          : 'bg-white/10 text-neutral-400'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                          : 'bg-neutral-100 text-neutral-600'
                       }`}
                     >
                       {lobbyMatchPercent}% Match
@@ -1242,10 +1435,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   </div>
                 </div>
 
-                {lobbySpeechError && (
-                  <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2 text-xs text-amber-300">
+                {!isWebSpeechSupported ? (
+                  <div className="pt-2 border-t border-neutral-200 flex items-center gap-2 text-xs text-rose-600 font-medium">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+                    <span>Web Speech API is required for this screening room. Please use Chrome, Edge, or a supported browser.</span>
+                  </div>
+                ) : lobbySpeechError ? (
+                  <div className="pt-2 border-t border-neutral-200 flex items-center justify-between gap-2 text-xs text-amber-700">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
                       <span className="truncate">{lobbySpeechError}</span>
                     </div>
                     <button
@@ -1255,21 +1453,21 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         setLobbyMatchPercent(100);
                         soundManager.playSend();
                       }}
-                      className="text-xs font-semibold text-[#55d2f6] hover:underline shrink-0 cursor-pointer"
+                      className="text-xs font-semibold text-sky-600 hover:underline shrink-0 cursor-pointer"
                     >
                       Agree Manually
                     </button>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
 
             {/* Right 5 cols: Readiness Checklist & Join Button */}
             <div className="lg:col-span-5 space-y-5">
-              <div className="p-6 rounded-3xl bg-[#141624] border border-white/10 shadow-xl space-y-6">
+              <div className="p-6 rounded-3xl bg-white border border-neutral-200 shadow-md space-y-6">
                 <div>
-                  <h3 className="text-lg font-bold font-heading text-white">Interview Readiness</h3>
-                  <p className="text-xs text-neutral-400 mt-1">
+                  <h3 className="text-lg font-bold font-heading text-neutral-900">Interview Readiness</h3>
+                  <p className="text-xs text-neutral-500 mt-1">
                     Please make sure you are ready before you begin.
                   </p>
                 </div>
@@ -1277,32 +1475,32 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 {/* Candidate Info Input (Blank with placeholder e.g. Dewan Mukto) */}
                 <div className="space-y-3 pt-2">
                   <div>
-                    <label className="text-xs font-semibold text-neutral-300 block mb-1">Your Full Name</label>
+                    <label className="text-xs font-semibold text-neutral-700 block mb-1">Your Full Name</label>
                     <input
                       type="text"
                       value={candidateName}
                       onChange={(e) => setCandidateName(e.target.value)}
                       placeholder="e.g. Dewan Mukto"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/10 text-white text-sm focus:outline-none focus:border-[#55d2f6] placeholder:text-neutral-500"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 border border-neutral-300 text-neutral-900 text-sm focus:outline-none focus:border-sky-500 placeholder:text-neutral-400"
                     />
                   </div>
                 </div>
 
                 {/* Live Mic Volume Test Meter */}
-                <div className="p-4 rounded-2xl bg-black/30 border border-white/5 space-y-2">
+                <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 space-y-2">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-neutral-300 flex items-center gap-1.5">
-                      <Mic className="w-3.5 h-3.5 text-[#55d2f6]" />
+                    <span className="font-semibold text-neutral-700 flex items-center gap-1.5">
+                      <Mic className="w-3.5 h-3.5 text-sky-600" />
                       <span>Microphone Input Level</span>
                     </span>
-                    <span className="font-mono text-neutral-400">
+                    <span className="font-mono text-neutral-500">
                       {hasDetectedMicOnce || micVolume > 8 ? 'Detected' : 'Speak to Test'}
                     </span>
                   </div>
-                  <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
+                  <div className="h-2 w-full bg-neutral-200 rounded-full overflow-hidden">
                     <div
                       className={`h-full transition-all duration-75 rounded-full ${
-                        micVolume > 60 ? 'bg-emerald-400' : micVolume > 10 ? 'bg-[#55d2f6]' : 'bg-neutral-500'
+                        micVolume > 60 ? 'bg-emerald-500' : micVolume > 10 ? 'bg-sky-500' : 'bg-neutral-400'
                       }`}
                       style={{ width: `${Math.min(100, Math.max(hasDetectedMicOnce ? 35 : 0, micVolume * 1.5))}%` }}
                     />
@@ -1310,35 +1508,35 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 </div>
 
                 {/* Speaker Audio Output Test */}
-                <div className="flex items-center justify-between p-3.5 rounded-2xl bg-black/30 border border-white/5">
+                <div className="flex items-center justify-between p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200">
                   <div className="flex items-center gap-2.5">
-                    <Volume2 className="w-4 h-4 text-neutral-300" />
+                    <Volume2 className="w-4 h-4 text-neutral-600" />
                     <div>
-                      <span className="text-xs font-medium text-white block">Speaker Audio Test</span>
-                      <span className="text-[11px] text-neutral-400 block">Hear sample AI recruiter tone</span>
+                      <span className="text-xs font-semibold text-neutral-900 block">Speaker Audio Test</span>
+                      <span className="text-[11px] text-neutral-500 block">Hear sample AI recruiter tone</span>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={handleTestSpeaker}
                     disabled={isSpeakerTesting}
-                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer shrink-0"
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-neutral-200 hover:bg-neutral-300 text-neutral-800 transition-colors cursor-pointer shrink-0"
                   >
                     {isSpeakerTesting ? 'Playing Sound...' : 'Test Sound'}
                   </button>
                 </div>
 
                 {/* Checklist Badges with Red X and Green Checkmark indicators (Non-flickering) */}
-                <div className="space-y-2.5 pt-2 border-t border-white/10">
+                <div className="space-y-2.5 pt-2 border-t border-neutral-200">
                   <div className="flex items-center gap-2 text-xs">
                     {hasPermissions && isCameraActive ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     ) : (
-                      <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      <XCircle className="w-4 h-4 text-red-500 shrink-0" />
                     )}
                     <span
                       className={
-                        hasPermissions && isCameraActive ? 'text-neutral-200' : 'text-red-300 font-medium'
+                        hasPermissions && isCameraActive ? 'text-neutral-700 font-medium' : 'text-red-600 font-medium'
                       }
                     >
                       Camera stream connected &amp; ready
@@ -1347,15 +1545,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
                   <div className="flex items-center gap-2 text-xs">
                     {hasPermissions && isMicActive && (hasDetectedMicOnce || micVolume > 8 || lobbySpokenText.length > 0) ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     ) : (
-                      <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      <XCircle className="w-4 h-4 text-red-500 shrink-0" />
                     )}
                     <span
                       className={
                         hasPermissions && isMicActive && (hasDetectedMicOnce || micVolume > 8 || lobbySpokenText.length > 0)
-                          ? 'text-neutral-200'
-                          : 'text-red-300 font-medium'
+                          ? 'text-neutral-700 font-medium'
+                          : 'text-red-600 font-medium'
                       }
                     >
                       Microphone input detected
@@ -1364,32 +1562,43 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
                   <div className="flex items-center gap-2 text-xs">
                     {hasAgreedToRules ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     ) : (
-                      <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      <XCircle className="w-4 h-4 text-red-500 shrink-0" />
                     )}
-                    <span className={hasAgreedToRules ? 'text-neutral-200' : 'text-red-300 font-medium'}>
+                    <span className={hasAgreedToRules ? 'text-neutral-700 font-medium' : 'text-red-600 font-medium'}>
                       Agreement with meeting policies
                     </span>
                   </div>
                 </div>
 
-                {/* Join Interview Button */}
-                <button
-                  type="button"
-                  onClick={handleJoinMeeting}
-                  disabled={
-                    !hasPermissions ||
-                    !isCameraActive ||
-                    !isMicActive ||
-                    !(hasDetectedMicOnce || micVolume > 8 || lobbySpokenText.length > 0) ||
-                    !hasAgreedToRules
-                  }
-                  className="w-full py-4 rounded-2xl text-sm font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all shadow-lg shadow-[#55d2f6]/20 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
-                >
-                  <span>Enter Video Screening Room</span>
-                  <ChevronRight className="w-4 h-4 stroke-[3]" />
-                </button>
+                {/* Join Interview Button / Change your browser button */}
+                {!isWebSpeechSupported ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full py-4 rounded-2xl text-sm font-bold bg-neutral-200 text-neutral-500 cursor-not-allowed flex items-center justify-center gap-2 border border-neutral-300 shadow-sm"
+                  >
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                    <span>Change your browser</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleJoinMeeting}
+                    disabled={
+                      !hasPermissions ||
+                      !isCameraActive ||
+                      !isMicActive ||
+                      !(hasDetectedMicOnce || micVolume > 8 || lobbySpokenText.length > 0) ||
+                      !hasAgreedToRules
+                    }
+                    className="w-full py-4 rounded-2xl text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
+                  >
+                    <span>Enter Video Screening Room</span>
+                    <ChevronRight className="w-4 h-4 stroke-[3]" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1399,7 +1608,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   }
 
   // ----------------------------------------------------
-  // STAGE 2: LIVE VIDEO MEETING ROOM
+  // STAGE 2: LIVE VIDEO MEETING ROOM (LIGHT THEME)
   // ----------------------------------------------------
   if (stage === 'meeting') {
     const isSpotlightActive =
@@ -1409,19 +1618,19 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       meetingPhase === 'task_snapshot';
 
     return (
-      <div className="h-screen w-screen bg-[#0b0c12] text-white flex flex-col font-sans overflow-hidden select-none">
+      <div className="h-screen w-screen bg-[#f1f5f9] text-neutral-900 flex flex-col font-sans overflow-hidden select-none">
         {/* Meeting Header Bar */}
-        <header className="h-14 border-b border-white/10 px-4 sm:px-6 flex items-center justify-between bg-[#12141f] shrink-0 z-30">
+        <header className="h-14 border-b border-neutral-200 px-4 sm:px-6 flex items-center justify-between bg-white shrink-0 z-30 shadow-xs">
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-mono font-bold">
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-mono font-bold">
               <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
               <span>REC {formatSeconds(recordedDuration)}</span>
             </div>
             <div className="hidden sm:block">
-              <span className="text-xs font-semibold text-white block">
+              <span className="text-xs font-semibold text-neutral-900 block">
                 Hana Interview Session • Room #{interviewId}
               </span>
-              <span className="text-[10px] text-neutral-400 block">{targetRole}</span>
+              <span className="text-[10px] text-neutral-500 block">{targetRole}</span>
             </div>
           </div>
 
@@ -1429,7 +1638,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             <button
               type="button"
               onClick={handleEndMeetingAndReview}
-              className="px-3.5 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-xs font-semibold transition-colors cursor-pointer"
+              className="px-3.5 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-semibold transition-colors cursor-pointer"
             >
               End Interview
             </button>
@@ -1443,10 +1652,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             {!isSpotlightActive && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full min-h-0">
                 {/* Tile 1: Hana (AI Interviewer) */}
-                <div className="relative rounded-3xl bg-[#141624] border border-white/10 shadow-2xl overflow-hidden flex flex-col items-center justify-center">
+                <div className="relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex flex-col items-center justify-center">
                   {!hanaEntered ? (
                     <div className="flex flex-col items-center gap-4 text-center p-6 animate-pulse">
-                      <div className="w-20 h-20 rounded-full bg-[#55d2f6]/20 border border-[#55d2f6]/40 flex items-center justify-center text-[#55d2f6]">
+                      <div className="w-20 h-20 rounded-full bg-sky-500/20 border border-sky-400 flex items-center justify-center text-sky-400">
                         <UserCheck className="w-10 h-10" />
                       </div>
                       <div>
@@ -1460,7 +1669,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     <>
                       {/* Initial Camera Off view of Hana's panel while 3D model loads in background */}
                       <div
-                        className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 transition-opacity duration-700 bg-[#121422] ${
+                        className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 transition-opacity duration-700 bg-neutral-900 ${
                           isHana3DReady ? 'opacity-0 pointer-events-none' : 'opacity-100'
                         }`}
                       >
@@ -1476,7 +1685,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                             />
                           </div>
                           {hanaIsSpeaking && (
-                            <span className="absolute -inset-2 rounded-full border-2 border-[#55d2f6] animate-ping opacity-75 pointer-events-none" />
+                            <span className="absolute -inset-2 rounded-full border-2 border-sky-400 animate-ping opacity-75 pointer-events-none" />
                           )}
                         </div>
 
@@ -1484,7 +1693,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           <VideoOff className="w-3.5 h-3.5 text-neutral-400" />
                           <span>Camera Off • Hana</span>
                         </div>
-                        <p className="text-[11px] text-neutral-500 font-mono">
+                        <p className="text-[11px] text-neutral-400 font-mono">
                           Connecting 3D neural feed...
                         </p>
                       </div>
@@ -1510,12 +1719,12 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
                       {/* Speaking Glow Halo */}
                       {hanaIsSpeaking && (
-                        <div className="absolute inset-0 pointer-events-none ring-2 ring-[#55d2f6]/50 rounded-3xl animate-pulse" />
+                        <div className="absolute inset-0 pointer-events-none ring-2 ring-sky-400/50 rounded-3xl animate-pulse" />
                       )}
 
                       {/* Reaction Tag */}
                       {hanaReactionText && !hanaIsSpeaking && (
-                        <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-xs text-[#55d2f6] font-mono animate-in fade-in z-20">
+                        <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-xs text-sky-400 font-mono animate-in fade-in z-20">
                           {hanaReactionText}
                         </div>
                       )}
@@ -1523,16 +1732,21 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   )}
 
                   {/* Tile Label */}
-                  <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/10 flex items-center gap-2 z-20">
-                    <span className={`w-2 h-2 rounded-full ${hanaIsSpeaking ? 'bg-[#55d2f6] animate-pulse' : 'bg-emerald-400'}`} />
+                  <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2 z-20">
+                    <span className={`w-2 h-2 rounded-full ${hanaIsSpeaking ? 'bg-sky-400 animate-pulse' : 'bg-emerald-400'}`} />
                     <span className="text-xs font-semibold text-white">Hana (AI Talent Partner)</span>
                   </div>
                 </div>
 
-                {/* Tile 2: Candidate Video Feed */}
-                <div className="relative rounded-3xl bg-black border border-white/10 shadow-2xl overflow-hidden flex items-center justify-center">
+                {/* Tile 2: Candidate Video Feed (Always active in interview feed) */}
+                <div className="relative rounded-3xl bg-neutral-900 border border-neutral-300 shadow-lg overflow-hidden flex items-center justify-center">
                   <video
-                    ref={localVideoRef}
+                    ref={(el) => {
+                      localVideoRef.current = el;
+                      if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
+                        el.srcObject = mediaStreamRef.current;
+                      }
+                    }}
                     autoPlay
                     playsInline
                     muted
@@ -1548,8 +1762,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
                   {/* Candidate Tile Label & Controls */}
                   <div className="absolute bottom-4 inset-x-4 flex items-center justify-between z-10">
-                    <div className="px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/10 flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${isCandidateSpeaking ? 'bg-[#55d2f6] animate-ping' : 'bg-emerald-400'}`} />
+                    <div className="px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${isCandidateSpeaking ? 'bg-sky-400 animate-ping' : 'bg-emerald-400'}`} />
                       <span className="text-xs font-semibold text-white">
                         {candidateName.trim() ? `${candidateName.trim()} (You)` : 'You'}
                       </span>
@@ -1560,7 +1774,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         type="button"
                         onClick={toggleCamera}
                         className={`p-2.5 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
-                          isCameraActive ? 'bg-white/10 border-white/15 text-white' : 'bg-red-500/30 border-red-500 text-red-200'
+                          isCameraActive ? 'bg-white/20 border-white/30 text-white' : 'bg-red-500 border-red-400 text-white'
                         }`}
                       >
                         {isCameraActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
@@ -1569,7 +1783,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         type="button"
                         onClick={toggleMic}
                         className={`p-2.5 rounded-full backdrop-blur-md border transition-all cursor-pointer ${
-                          isMicActive ? 'bg-white/10 border-white/15 text-white' : 'bg-red-500/30 border-red-500 text-red-200'
+                          isMicActive ? 'bg-white/20 border-white/30 text-white' : 'bg-red-500 border-red-400 text-white'
                         }`}
                       >
                         {isMicActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
@@ -1586,9 +1800,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 {/* Left 4 cols: Compact Participant Video Tiles */}
                 <div className="lg:col-span-4 flex flex-col gap-3 min-h-0">
                   {/* Hana Mini Tile */}
-                  <div className="relative rounded-2xl bg-[#141624] border border-white/10 overflow-hidden flex-1 min-h-[160px]">
+                  <div className="relative rounded-2xl bg-neutral-900 border border-neutral-300 overflow-hidden flex-1 min-h-[160px] shadow-sm">
                     {!isHana3DReady ? (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-[#121422] z-10">
+                      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-neutral-900 z-10">
                         <div className="w-14 h-14 rounded-full overflow-hidden border border-white/20 relative mb-2">
                           <img
                             src="/Thumbnail.png"
@@ -1612,93 +1826,93 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         onLoaded={() => setIsHana3DReady(true)}
                       />
                     </div>
-                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-white z-20">
+                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-20">
                       Hana (AI Recruiter)
                     </div>
                   </div>
 
                   {/* Candidate Mini Tile */}
-                  <div className="relative rounded-2xl bg-black border border-white/10 overflow-hidden flex-1 min-h-[160px]">
+                  <div className="relative rounded-2xl bg-neutral-900 border border-neutral-300 overflow-hidden flex-1 min-h-[160px] shadow-sm">
                     <video
                       autoPlay
                       playsInline
                       muted
                       ref={(el) => {
-                        if (el && mediaStreamRef.current) el.srcObject = mediaStreamRef.current;
+                        if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
+                          el.srcObject = mediaStreamRef.current;
+                        }
                       }}
                       className="w-full h-full object-cover transform -scale-x-100"
                     />
-                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-white z-10">
+                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-10">
                       {candidateName.trim() || 'You'}
                     </div>
                   </div>
                 </div>
 
-                {/* Right 8 cols: Spotlight Frame */}
-                <div className="lg:col-span-8 rounded-3xl bg-[#141624] border border-white/15 p-6 shadow-2xl flex flex-col justify-between overflow-y-auto">
+                {/* Right 8 cols: Spotlight Frame (Light Theme Card) */}
+                <div className="lg:col-span-8 rounded-3xl bg-white border border-neutral-200 p-6 shadow-md flex flex-col justify-between overflow-y-auto">
                   {/* TASK 1: Resume / CV Document Upload */}
                   {meetingPhase === 'task_resume' && (
                     <div className="space-y-4 flex-1 flex flex-col justify-between">
                       <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#55d2f6]/10 text-[#55d2f6] text-xs font-semibold mb-2">
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
                           <FileUp className="w-3.5 h-3.5" />
                           <span>Credentials Document Upload</span>
                         </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-white">
+                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
                           Upload your updated resume or CV
                         </h3>
-                        <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-                          Please provide your latest resume file so the recruiting panel has direct access to your verified portfolio and credentials.
+                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                          Our autonomous recruiting system indexes your experiences and matches your skillset with our engineering roles.
                         </p>
                       </div>
 
-                      {/* File Upload Zone */}
                       <div className="flex-1 flex flex-col justify-center">
                         {!uploadedResume ? (
-                          <label className="border-2 border-dashed border-white/20 hover:border-[#55d2f6]/60 rounded-3xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-black/30 hover:bg-black/50 group">
+                          <label className="border-2 border-dashed border-neutral-300 hover:border-sky-500 rounded-3xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-neutral-50/60 hover:bg-sky-50/40 group">
                             <input
                               type="file"
                               accept=".pdf,.docx,.doc,.txt,.png,.jpg"
                               onChange={handleResumeFileUpload}
                               className="hidden"
                             />
-                            <div className="w-16 h-16 rounded-2xl bg-[#55d2f6]/15 border border-[#55d2f6]/30 text-[#55d2f6] flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
+                            <div className="w-16 h-16 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
                               <Upload className="w-8 h-8" />
                             </div>
-                            <h4 className="text-sm sm:text-base font-bold text-white mb-1">
-                              {isUploadingResume ? 'Processing document...' : 'Click or Drag to Upload Resume'}
+                            <h4 className="text-base font-bold text-neutral-900">
+                              {isUploadingResume ? 'Processing document...' : 'Click to select or drag and drop your resume'}
                             </h4>
-                            <p className="text-xs text-neutral-400 max-w-sm">
-                              Supported formats: PDF, DOCX, TXT, or Image Document (max 15MB)
+                            <p className="text-xs text-neutral-500 mt-1.5 max-w-sm">
+                              Supported formats: PDF, DOCX, TXT, PNG, or JPG (max 10MB)
                             </p>
                           </label>
                         ) : (
-                          <div className="p-6 rounded-3xl bg-black/40 border border-emerald-500/30 flex flex-col sm:flex-row items-center justify-between gap-4">
-                            <div className="flex items-center gap-4">
-                              <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                                <FileCheck className="w-7 h-7" />
+                          <div className="p-6 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="flex items-center gap-3.5">
+                              <div className="w-12 h-12 rounded-xl bg-sky-500 text-white flex items-center justify-center">
+                                <FileCheck className="w-6 h-6" />
                               </div>
                               <div>
-                                <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                                  <span>{uploadedResume.fileName}</span>
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono">
-                                    Ready
+                                <h4 className="text-sm font-bold text-neutral-900">{uploadedResume.fileName}</h4>
+                                <div className="flex items-center gap-2 text-xs text-neutral-600 mt-0.5">
+                                  <span>{uploadedResume.fileSize}</span>
+                                  <span>•</span>
+                                  <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                                    <Check className="w-3.5 h-3.5" /> Ready for submission
                                   </span>
-                                </h4>
-                                <p className="text-xs text-neutral-400 mt-0.5 font-mono">
-                                  {uploadedResume.fileSize} • Uploaded at {uploadedResume.uploadedAt}
-                                </p>
+                                </div>
                               </div>
                             </div>
 
-                            <label className="text-xs text-[#55d2f6] hover:underline cursor-pointer">
+                            <label className="text-xs text-sky-600 hover:text-sky-800 font-semibold cursor-pointer underline self-start sm:self-center">
                               <input
                                 type="file"
                                 accept=".pdf,.docx,.doc,.txt,.png,.jpg"
                                 onChange={handleResumeFileUpload}
                                 className="hidden"
                               />
-                              Replace File
+                              Replace file
                             </label>
                           </div>
                         )}
@@ -1709,26 +1923,26 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           type="button"
                           onClick={handleSubmitResumeTask}
                           disabled={!uploadedResume || resumeSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all shadow-md cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
                         >
-                          Confirm &amp; Submit Resume Document
+                          Confirm &amp; Proceed to Next Task
                         </button>
                       </div>
                     </div>
                   )}
 
-                  {/* TASK 2: Written Assessment (Must be >= 100 chars) */}
+                  {/* TASK 2: Written Self-Reflection (>= 100 chars) */}
                   {meetingPhase === 'task_written' && (
                     <div className="space-y-4 flex-1 flex flex-col justify-between">
                       <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#55d2f6]/10 text-[#55d2f6] text-xs font-semibold mb-2">
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
                           <FileText className="w-3.5 h-3.5" />
-                          <span>Interactive Written Assessment</span>
+                          <span>Written Reflection Spotlight</span>
                         </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-white">
+                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
                           Write down 3 things you like about yourself and why.
                         </h3>
-                        <p className="text-xs sm:text-sm text-neutral-400 mt-1">
+                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
                           Reflect on your personal strengths, values, or technical curiosity. Minimum 100 characters required.
                         </p>
                       </div>
@@ -1739,20 +1953,20 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           value={writtenText}
                           onChange={(e) => setWrittenText(e.target.value)}
                           placeholder="1. I love diving deep into architectural puzzles because...&#10;2. I value empathetic communication with team members...&#10;3. I am resilient and relentless when debugging critical edge cases..."
-                          className="w-full flex-1 p-4 rounded-2xl bg-black/40 border border-white/15 text-white text-sm focus:outline-none focus:border-[#55d2f6] resize-none leading-relaxed placeholder:text-neutral-500"
+                          className="w-full flex-1 p-4 rounded-2xl bg-neutral-50 border border-neutral-300 text-neutral-900 text-sm focus:outline-none focus:border-sky-500 resize-none leading-relaxed placeholder:text-neutral-400"
                         />
                         <div className="flex items-center justify-between text-xs font-mono">
                           <span
                             className={
                               writtenText.trim().length >= 100
-                                ? 'text-emerald-400 font-bold'
-                                : 'text-amber-400'
+                                ? 'text-emerald-600 font-bold'
+                                : 'text-amber-600 font-medium'
                             }
                           >
                             {writtenText.trim().length} / 100 characters minimum
                           </span>
                           {writtenText.trim().length >= 100 && (
-                            <span className="text-emerald-400 flex items-center gap-1">
+                            <span className="text-emerald-600 font-semibold flex items-center gap-1">
                               <Check className="w-3.5 h-3.5" /> Ready to submit
                             </span>
                           )}
@@ -1764,7 +1978,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           type="button"
                           onClick={handleSubmitWrittenTask}
                           disabled={writtenText.trim().length < 100 || writtenSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all shadow-md cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
                         >
                           Confirm &amp; Submit Written Task
                         </button>
@@ -1776,14 +1990,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   {meetingPhase === 'task_pressure' && (
                     <div className="space-y-6 flex-1 flex flex-col justify-between">
                       <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#55d2f6]/10 text-[#55d2f6] text-xs font-semibold mb-2">
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
                           <Award className="w-3.5 h-3.5" />
                           <span>Situational Behavior Check</span>
                         </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-white">
+                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
                           How well do you perform under pressure?
                         </h3>
-                        <p className="text-xs sm:text-sm text-neutral-400 mt-1">
+                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
                           Select the answer that most genuinely reflects your reaction to challenging constraints.
                         </p>
                       </div>
@@ -1799,8 +2013,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                             key={opt}
                             className={`flex items-center gap-3.5 p-4 rounded-2xl border transition-all cursor-pointer ${
                               pressureRating === opt
-                                ? 'bg-[#55d2f6]/15 border-[#55d2f6] text-white shadow-md'
-                                : 'bg-black/30 border-white/10 hover:border-white/20 text-neutral-300'
+                                ? 'bg-sky-50 border-sky-500 text-neutral-900 shadow-xs'
+                                : 'bg-neutral-50 border-neutral-200 hover:border-neutral-300 text-neutral-700'
                             }`}
                           >
                             <input
@@ -1808,7 +2022,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                               name="pressure"
                               checked={pressureRating === opt}
                               onChange={() => setPressureRating(opt)}
-                              className="accent-[#55d2f6] w-4 h-4"
+                              className="accent-sky-500 w-4 h-4"
                             />
                             <span className="text-sm font-medium">{opt}</span>
                           </label>
@@ -1820,211 +2034,235 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           type="button"
                           onClick={handleSubmitPressureRating}
                           disabled={!pressureRating || pressureSubmitted}
-                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all shadow-md cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-sky-500 text-white hover:bg-sky-400 active:scale-95 transition-all shadow-md shadow-sky-500/20 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
                         >
-                          Confirm Pressure Assessment
+                          Confirm Situational Rating
                         </button>
                       </div>
                     </div>
                   )}
 
-                  {/* TASK 4: Visual Verification Snapshots */}
+                  {/* TASK 4: Camera Feed Snapshots via Voice Triggers */}
                   {meetingPhase === 'task_snapshot' && (
                     <div className="space-y-4 flex-1 flex flex-col justify-between">
                       <div>
-                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#55d2f6]/10 text-[#55d2f6] text-xs font-semibold mb-2">
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold mb-2">
                           <Camera className="w-3.5 h-3.5" />
-                          <span>Candidate Visual Verification</span>
+                          <span>Voice-Activated Visual Identity Verification</span>
                         </div>
-                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-white">
-                          Hold your phone number on paper &amp; pose for 3 angles
+                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
+                          Hold your written phone number up &amp; pose
                         </h3>
-                        <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-                          Say aloud <strong className="text-[#55d2f6]">&quot;click&quot;</strong>,{' '}
-                          <strong className="text-[#55d2f6]">&quot;do it&quot;</strong>,{' '}
-                          <strong className="text-[#55d2f6]">&quot;okay&quot;</strong>, or{' '}
-                          <strong className="text-[#55d2f6]">&quot;ready&quot;</strong> to capture each shot.
+                        <p className="text-xs sm:text-sm text-neutral-600 mt-1">
+                          Say <strong className="text-neutral-900">&quot;click&quot;</strong>,{' '}
+                          <strong className="text-neutral-900">&quot;do it&quot;</strong>,{' '}
+                          <strong className="text-neutral-900">&quot;okay&quot;</strong>, or{' '}
+                          <strong className="text-neutral-900">&quot;ready&quot;</strong> to capture each shot automatically.
                         </p>
                       </div>
 
-                      {/* Current Angle Guide */}
-                      <div className="p-4 rounded-2xl bg-black/40 border border-white/10 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-[#55d2f6]/20 border border-[#55d2f6]/40 flex items-center justify-center text-[#55d2f6] font-bold">
-                            {snapshotStep}/3
-                          </div>
-                          <div>
-                            <span className="text-xs text-neutral-400 block font-medium">Target Angle:</span>
-                            <span className="text-sm font-bold text-white block">
-                              {snapshotStep === 1
-                                ? '1. Look Forward (Holding Paper)'
-                                : snapshotStep === 2
-                                ? '2. Look Left (Holding Paper)'
-                                : '3. Look Right (Holding Paper)'}
-                            </span>
-                          </div>
+                      {/* Pose Progress Tracker */}
+                      <div className="grid grid-cols-3 gap-3">
+                        <div
+                          className={`p-3.5 rounded-2xl border text-center transition-all ${
+                            snapshotStep === 1
+                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                              : snapshots.length >= 1
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                          }`}
+                        >
+                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 1</span>
+                          <span className="text-xs font-semibold mt-1 block">Look Forward</span>
+                          {snapshots.length >= 1 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          {lastDetectedTrigger && (
-                            <span className="text-xs font-mono text-emerald-400 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30">
-                              Heard &quot;{lastDetectedTrigger}&quot;!
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={handleTakeSnapshotTrigger}
-                            className="px-4 py-2 rounded-xl text-xs font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all shadow-md cursor-pointer flex items-center gap-1.5"
-                          >
-                            <Camera className="w-3.5 h-3.5" />
-                            <span>Capture Now</span>
-                          </button>
+                        <div
+                          className={`p-3.5 rounded-2xl border text-center transition-all ${
+                            snapshotStep === 2
+                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                              : snapshots.length >= 2
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                          }`}
+                        >
+                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 2</span>
+                          <span className="text-xs font-semibold mt-1 block">Look Left</span>
+                          {snapshots.length >= 2 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
+                        </div>
+
+                        <div
+                          className={`p-3.5 rounded-2xl border text-center transition-all ${
+                            snapshotStep === 3
+                              ? 'bg-sky-50 border-sky-500 text-sky-800 ring-2 ring-sky-300'
+                              : snapshots.length >= 3
+                              ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                              : 'bg-neutral-50 border-neutral-200 text-neutral-400'
+                          }`}
+                        >
+                          <span className="text-[11px] font-bold uppercase tracking-wider block">Step 3</span>
+                          <span className="text-xs font-semibold mt-1 block">Look Right</span>
+                          {snapshots.length >= 3 && <span className="text-[10px] text-emerald-600 mt-1 block font-mono">Captured</span>}
                         </div>
                       </div>
 
-                      {/* Snapshot Previews */}
-                      <div className="grid grid-cols-3 gap-3">
-                        {[
-                          { angle: 'forward', label: '1. Forward' },
-                          { angle: 'left', label: '2. Looking Left' },
-                          { angle: 'right', label: '3. Looking Right' },
-                        ].map((slot, sIdx) => {
-                          const existing = snapshots.find((s) => s.angle === slot.angle);
-                          return (
-                            <div
-                              key={slot.angle}
-                              className="aspect-video rounded-2xl bg-black/50 border border-white/10 overflow-hidden relative flex flex-col items-center justify-center"
-                            >
-                              {existing ? (
-                                <>
-                                  <img
-                                    src={existing.dataUrl}
-                                    alt={existing.label}
-                                    className="w-full h-full object-cover transform -scale-x-100"
-                                  />
-                                  <div className="absolute top-2 right-2 p-1 rounded-full bg-emerald-500 text-white">
-                                    <Check className="w-3 h-3 stroke-[3]" />
-                                  </div>
-                                </>
-                              ) : (
-                                <div className="text-center p-2">
-                                  <span className="text-[11px] text-neutral-500 block font-medium">
-                                    {slot.label}
-                                  </span>
-                                  {snapshotStep === sIdx + 1 && (
-                                    <span className="text-[10px] text-[#55d2f6] block mt-1 animate-pulse">
-                                      Ready for Pose
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                              <span className="absolute bottom-1.5 left-2 text-[10px] bg-black/60 px-2 py-0.5 rounded-full text-white/80">
-                                {slot.label}
+                      {/* Live Listener Monitor & Manual Trigger Fallback */}
+                      <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
+                          <div>
+                            <span className="text-xs font-semibold text-neutral-900 block">
+                              Scanning audio for voice trigger...
+                            </span>
+                            <span className="text-[11px] text-neutral-500 font-mono block">
+                              Say &quot;click&quot; / &quot;ready&quot; / &quot;do it&quot;
+                              {lastDetectedTrigger ? ` • Last heard: "${lastDetectedTrigger}"` : ''}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleTakeSnapshotTrigger}
+                          className="px-4 py-2 rounded-xl bg-neutral-200 hover:bg-neutral-300 text-neutral-800 text-xs font-semibold transition-colors cursor-pointer shrink-0"
+                        >
+                          Manual Snap
+                        </button>
+                      </div>
+
+                      {/* Display Captured Gallery */}
+                      {snapshots.length > 0 && (
+                        <div className="flex gap-3 overflow-x-auto pb-1">
+                          {snapshots.map((snap) => (
+                            <div key={snap.id} className="relative w-24 h-18 rounded-xl overflow-hidden border border-neutral-200 shrink-0 shadow-xs">
+                              <img src={snap.dataUrl} alt={snap.label} className="w-full h-full object-cover transform -scale-x-100" />
+                              <span className="absolute bottom-1 inset-x-1 text-[9px] bg-black/70 text-white text-center rounded px-1 truncate">
+                                {snap.angle}
                               </span>
                             </div>
-                          );
-                        })}
-                      </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               </div>
             )}
           </div>
-
-          {/* Bottom Conversational Controls (When in Q1, Q2, QA) */}
-          {(meetingPhase === 'question_1' || meetingPhase === 'question_2' || meetingPhase === 'candidate_qa') && (
-            <div className="mt-3 p-3.5 rounded-2xl bg-[#141624] border border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-3 w-full sm:w-auto">
-                <span className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                <div className="min-w-0">
-                  <span className="text-xs font-semibold text-neutral-300 block truncate">
-                    {meetingPhase === 'candidate_qa'
-                      ? 'Candidate Q&A: Ask questions about MuxAI'
-                      : 'Live Mic Transcription:'}
-                  </span>
-                  <p className="text-xs text-white truncate max-w-lg">
-                    {candidateLiveTranscript || (isCandidateSpeaking ? 'Speaking...' : 'Listening to your microphone...')}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                {meetingPhase === 'question_1' && (
-                  <button
-                    type="button"
-                    onClick={() => handleConfirmAnswer('question_1')}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all cursor-pointer"
-                  >
-                    Confirm Answer &amp; Proceed
-                  </button>
-                )}
-
-                {meetingPhase === 'question_2' && (
-                  <button
-                    type="button"
-                    onClick={() => handleConfirmAnswer('question_2')}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all cursor-pointer"
-                  >
-                    Confirm Answer &amp; Proceed
-                  </button>
-                )}
-
-                {meetingPhase === 'candidate_qa' && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={candidateQuestionInput}
-                      onChange={(e) => setCandidateQuestionInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleSendCandidateQuestion()}
-                      placeholder="Type question for Hana..."
-                      className="px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-[#55d2f6] w-52 placeholder:text-neutral-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleSendCandidateQuestion}
-                      className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-                      title="Send question"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleFinishQaNoQuestions}
-                      className="px-3 py-2 rounded-xl text-xs font-semibold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] cursor-pointer"
-                    >
-                      No Further Questions
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </main>
+
+        {/* Meeting Bottom Toolbar */}
+        <footer className="h-16 border-t border-neutral-200 px-4 sm:px-6 flex items-center justify-between bg-white shrink-0 z-30 shadow-xs">
+          {/* Phase Indicators */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-neutral-500 uppercase tracking-wider font-mono">Phase:</span>
+            <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2.5 py-1 rounded-full border border-sky-200">
+              {meetingPhase.replace('_', ' ').toUpperCase()}
+            </span>
+          </div>
+
+          {/* Contextual Action Advance Controls for the candidate */}
+          <div className="flex items-center gap-2.5">
+            {meetingPhase === 'welcome' && (
+              <button
+                type="button"
+                onClick={() => advanceToPhase('question_1')}
+                className="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs font-bold cursor-pointer transition-colors shadow-xs"
+              >
+                Start Question 1
+              </button>
+            )}
+
+            {meetingPhase === 'question_1' && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleSaveResponse(
+                    'question_1',
+                    'Could you tell me a bit about yourself, your background, and what drives your passion for this role?',
+                    candidateLiveTranscript,
+                    'question_2'
+                  )
+                }
+                className="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs font-bold cursor-pointer transition-colors shadow-xs flex items-center gap-1.5"
+              >
+                <span>Finished Answering</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {meetingPhase === 'question_2' && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleSaveResponse(
+                    'question_2',
+                    'Walk me through a challenging technical problem or project you tackled recently.',
+                    candidateLiveTranscript,
+                    'task_resume'
+                  )
+                }
+                className="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs font-bold cursor-pointer transition-colors shadow-xs flex items-center gap-1.5"
+              >
+                <span>Finished Answering • Proceed to Tasks</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {meetingPhase === 'candidate_qa' && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={candidateQuestionInput}
+                  onChange={(e) => setCandidateQuestionInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSendCandidateQuestion()}
+                  placeholder="Ask Hana anything about MuxAI..."
+                  className="px-3.5 py-1.5 rounded-xl bg-neutral-100 border border-neutral-300 text-neutral-900 text-xs focus:outline-none focus:border-sky-500 w-48 sm:w-64 placeholder:text-neutral-400"
+                />
+                <button
+                  type="button"
+                  onClick={handleSendCandidateQuestion}
+                  className="p-2 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs cursor-pointer shadow-xs"
+                  title="Send Question"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleFinishQaNoQuestions}
+                  className="px-3.5 py-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-700 text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  No further questions
+                </button>
+              </div>
+            )}
+          </div>
+        </footer>
       </div>
     );
   }
 
   // ----------------------------------------------------
-  // STAGE 3: RECRUITER POV DOSSIER & RECORDING REVIEW
+  // STAGE 3: RECRUITER POV EVALUATION DOSSIER (LIGHT THEME)
   // ----------------------------------------------------
   return (
-    <div className="min-h-screen bg-[#0e1017] text-white flex flex-col font-sans select-none">
-      {/* Top Header */}
-      <header className="h-16 border-b border-white/10 px-6 flex items-center justify-between bg-[#141622]/90 backdrop-blur-md sticky top-0 z-30">
+    <div className="min-h-screen bg-[#f8fafc] text-neutral-900 flex flex-col font-sans select-none">
+      {/* Dossier Header Bar */}
+      <header className="h-16 border-b border-neutral-200 px-6 flex items-center justify-between bg-white/95 backdrop-blur-md sticky top-0 z-30 shadow-xs">
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={onNavigateHome}
-            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-300 hover:text-white transition-colors cursor-pointer"
+            className="p-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
+            title="Return to Home"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
           <div>
-            <h1 className="font-bold text-sm sm:text-base font-heading text-white">
+            <h1 className="font-bold text-sm sm:text-base font-heading text-neutral-900">
               Recruiter Evaluation Dossier
             </h1>
-            <span className="text-[11px] text-neutral-400">
+            <span className="text-[11px] text-neutral-500">
               Autonomous AI Hiring Assessment • MuxAI Talent Suite
             </span>
           </div>
@@ -2037,7 +2275,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               setStage('meeting');
               setActivePov('candidate');
             }}
-            className="px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-neutral-200 transition-colors cursor-pointer flex items-center gap-1.5"
+            className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-xs font-semibold text-neutral-700 transition-colors cursor-pointer flex items-center gap-1.5"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Return to Candidate Meeting</span>
@@ -2046,6 +2284,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           <button
             type="button"
             onClick={() => {
+              sessionStorage.removeItem(STORAGE_KEY);
               setStage('lobby');
               setMeetingPhase('joining');
               setHanaEntered(false);
@@ -2053,7 +2292,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               recordedChunksRef.current = [];
               setRecordedVideoUrl(null);
             }}
-            className="px-3.5 py-1.5 rounded-xl bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] text-xs font-bold transition-colors cursor-pointer"
+            className="px-3.5 py-1.5 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs font-bold transition-colors cursor-pointer shadow-xs"
           >
             New Interview Session
           </button>
@@ -2063,29 +2302,29 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       {/* Main Dossier Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         {/* Candidate Profile Header Card */}
-        <div className="p-6 rounded-3xl bg-[#141624] border border-white/10 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="p-6 rounded-3xl bg-white border border-neutral-200 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#55d2f6] to-[#0f9bc7] text-neutral-950 flex items-center justify-center font-bold text-2xl font-heading shadow-lg shadow-[#55d2f6]/20">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-sky-400 to-blue-600 text-white flex items-center justify-center font-bold text-2xl font-heading shadow-md shadow-sky-500/20">
               {effectiveDossierName.charAt(0)}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-xl sm:text-2xl font-bold font-heading text-white">
+                <h2 className="text-xl sm:text-2xl font-bold font-heading text-neutral-900">
                   {effectiveDossierName}
                 </h2>
                 <span
                   className={`text-xs px-2.5 py-0.5 rounded-full font-semibold capitalize ${
                     candidateStatus === 'shortlisted'
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                       : candidateStatus === 'rejected'
-                      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                      : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      ? 'bg-red-100 text-red-800 border border-red-300'
+                      : 'bg-amber-100 text-amber-800 border border-amber-300'
                   }`}
                 >
                   {candidateStatus.replace('_', ' ')}
                 </span>
               </div>
-              <p className="text-sm text-neutral-400 mt-0.5">{targetRole}</p>
+              <p className="text-sm text-neutral-600 mt-0.5">{targetRole}</p>
               <div className="flex items-center gap-3 text-xs text-neutral-500 mt-2">
                 <span className="flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5" />
@@ -2098,14 +2337,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           </div>
 
           {/* Action Buttons: Shortlist / Reject */}
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={handleRejectCandidate}
-              className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+              className={`px-4 py-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
                 candidateStatus === 'rejected'
-                  ? 'bg-red-500/30 border-red-500 text-white'
-                  : 'bg-white/5 border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white'
+                  ? 'bg-red-500 text-white border-red-600 shadow-sm'
+                  : 'bg-white hover:bg-red-50 text-red-600 border-red-200'
               }`}
             >
               Reject Candidate
@@ -2113,340 +2352,296 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             <button
               type="button"
               onClick={handleShortlistCandidate}
-              className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md ${
+              className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer ${
                 candidateStatus === 'shortlisted'
-                  ? 'bg-emerald-500 text-white shadow-emerald-500/20'
-                  : 'bg-emerald-500/90 hover:bg-emerald-500 text-white'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-white shadow-emerald-500/20'
               }`}
             >
-              <Check className="w-4 h-4 stroke-[3]" />
-              <span>Shortlist for Round 2</span>
+              Shortlist for Next Round
             </button>
           </div>
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-          {[
-            { id: 'recording', label: 'Video & Audio Recording', icon: Video },
-            { id: 'responses', label: 'Assessment Answers & Verification', icon: FileText },
-            { id: 'resume', label: 'Candidate Resume / CV', icon: UserCheck },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const active = recruiterActiveTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setRecruiterActiveTab(tab.id as any)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                  active
-                    ? 'bg-[#55d2f6] text-neutral-950 shadow-sm'
-                    : 'text-neutral-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
+        <div className="flex items-center gap-2 border-b border-neutral-200 pb-3">
+          <button
+            type="button"
+            onClick={() => setRecruiterActiveTab('recording')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              recruiterActiveTab === 'recording'
+                ? 'bg-sky-500 text-white shadow-sm'
+                : 'bg-white text-neutral-600 hover:bg-neutral-100 border border-neutral-200'
+            }`}
+          >
+            <Play className="w-3.5 h-3.5" />
+            <span>Session Recording &amp; Identity Frames</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setRecruiterActiveTab('responses')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              recruiterActiveTab === 'responses'
+                ? 'bg-sky-500 text-white shadow-sm'
+                : 'bg-white text-neutral-600 hover:bg-neutral-100 border border-neutral-200'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Candidate Responses &amp; Tasks</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setRecruiterActiveTab('resume')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              recruiterActiveTab === 'resume'
+                ? 'bg-sky-500 text-white shadow-sm'
+                : 'bg-white text-neutral-600 hover:bg-neutral-100 border border-neutral-200'
+            }`}
+          >
+            <Award className="w-3.5 h-3.5" />
+            <span>Candidate Resume / CV</span>
+            {uploadedResume && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            )}
+          </button>
         </div>
 
-        {/* TAB 1: Real Session Video & Audio Recording Playback */}
+        {/* TAB 1: Session Video Recording Player & Captured Snapshots */}
         {recruiterActiveTab === 'recording' && (
-          <div className="space-y-4">
-            <div className="aspect-video max-w-4xl mx-auto rounded-3xl bg-black border border-white/15 overflow-hidden shadow-2xl relative flex flex-col justify-end group">
-              {recordedVideoUrl ? (
-                <video
-                  ref={reviewVideoPlayerRef}
-                  src={recordedVideoUrl}
-                  playsInline
-                  onTimeUpdate={() => {
-                    if (reviewVideoPlayerRef.current) {
-                      setReviewCurrentTime(reviewVideoPlayerRef.current.currentTime);
-                    }
-                  }}
-                  onEnded={() => setIsReviewPlaying(false)}
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 text-neutral-500">
-                  <VideoOff className="w-12 h-12 mb-3" />
-                  <p className="text-sm">No recorded video found for this session</p>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Left 8 cols: Video Player */}
+              <div className="lg:col-span-8 rounded-3xl bg-neutral-900 border border-neutral-200 p-4 shadow-xl space-y-3">
+                <div className="relative aspect-video rounded-2xl overflow-hidden bg-black flex items-center justify-center">
+                  {recordedVideoUrl ? (
+                    <video
+                      ref={reviewVideoPlayerRef}
+                      src={recordedVideoUrl}
+                      controls
+                      playsInline
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 text-neutral-400 p-6 text-center">
+                      <Video className="w-10 h-10 stroke-[1.5]" />
+                      <p className="text-xs text-neutral-400">
+                        Interview recording is processed automatically when session concludes or reaches completion.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              )}
 
-              {/* Custom Playback Controls Overlay */}
-              {recordedVideoUrl && (
-                <div className="p-4 bg-gradient-to-t from-black via-black/80 to-transparent flex flex-col gap-2">
-                  <input
-                    type="range"
-                    min={0}
-                    max={reviewVideoPlayerRef.current?.duration || 100}
-                    value={reviewCurrentTime}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      if (reviewVideoPlayerRef.current) {
-                        reviewVideoPlayerRef.current.currentTime = val;
-                        setReviewCurrentTime(val);
-                      }
-                    }}
-                    className="w-full accent-[#55d2f6] cursor-pointer"
-                  />
-
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!reviewVideoPlayerRef.current) return;
-                          if (isReviewPlaying) {
-                            reviewVideoPlayerRef.current.pause();
-                            setIsReviewPlaying(false);
-                          } else {
-                            reviewVideoPlayerRef.current.play();
-                            setIsReviewPlaying(true);
-                          }
-                        }}
-                        className="p-2 rounded-xl bg-white/15 hover:bg-white/25 text-white cursor-pointer"
-                      >
-                        {isReviewPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                      </button>
-                      <span className="font-mono text-neutral-300">
-                        {formatSeconds(Math.floor(reviewCurrentTime))} / {formatSeconds(recordedDuration)}
-                      </span>
+                {recordedVideoUrl && (
+                  <div className="flex items-center justify-between pt-1 px-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-neutral-400">Speed:</span>
+                      {[1, 1.25, 1.5, 2].map((spd) => (
+                        <button
+                          key={spd}
+                          type="button"
+                          onClick={() => {
+                            setRecordingPlaybackSpeed(spd);
+                            if (reviewVideoPlayerRef.current) reviewVideoPlayerRef.current.playbackRate = spd;
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-mono font-semibold transition-colors cursor-pointer ${
+                            recordingPlaybackSpeed === spd
+                              ? 'bg-sky-500 text-white'
+                              : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
+                          }`}
+                        >
+                          {spd}x
+                        </button>
+                      ))}
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      {/* Playback Speed */}
-                      <div className="flex items-center gap-1 bg-white/10 rounded-xl p-1">
-                        {[1, 1.25, 1.5, 2].map((sp) => (
-                          <button
-                            key={sp}
-                            type="button"
-                            onClick={() => {
-                              setRecordingPlaybackSpeed(sp);
-                              if (reviewVideoPlayerRef.current) reviewVideoPlayerRef.current.playbackRate = sp;
-                            }}
-                            className={`px-2 py-0.5 rounded-lg text-[10px] font-mono cursor-pointer ${
-                              recordingPlaybackSpeed === sp ? 'bg-[#55d2f6] text-black font-bold' : 'text-neutral-400'
-                            }`}
-                          >
-                            {sp}x
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Download Recording */}
+                    <div className="flex items-center gap-2">
                       <a
                         href={recordedVideoUrl}
-                        download={`interview-recording-${effectiveDossierName.toLowerCase().replace(/\s+/g, '-')}.webm`}
-                        className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white cursor-pointer"
-                        title="Download Recording (.webm)"
+                        download={`interview-${effectiveDossierName.toLowerCase().replace(/\s+/g, '-')}-session.webm`}
+                        className="px-3.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-semibold transition-colors flex items-center gap-1.5"
                       >
-                        <Download className="w-4 h-4" />
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download Recording</span>
                       </a>
-
                       <button
                         type="button"
                         onClick={handleDiscardRecording}
-                        className="p-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 cursor-pointer"
-                        title="Discard Recording"
+                        className="px-3.5 py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900/80 text-red-300 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Discard</span>
                       </button>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: Candidate Responses & Verification Photos */}
-        {recruiterActiveTab === 'responses' && (
-          <div className="space-y-6">
-            {/* Visual Identity Snapshots */}
-            <div className="p-6 rounded-3xl bg-[#141624] border border-white/10 shadow-xl space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-bold font-heading text-white">Visual Identity Verification</h3>
-                  <p className="text-xs text-neutral-400">Captured camera feed holding written phone number</p>
-                </div>
-                <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-semibold">
-                  {snapshots.length}/3 Angles Captured
-                </span>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {snapshots.length > 0 ? (
-                  snapshots.map((snap) => (
-                    <div
-                      key={snap.id}
-                      onClick={() => setSelectedSnapshotModal(snap.dataUrl)}
-                      className="rounded-2xl bg-black/40 border border-white/10 overflow-hidden group cursor-pointer hover:border-[#55d2f6]/50 transition-all shadow-md"
-                    >
-                      <div className="aspect-video relative overflow-hidden">
-                        <img
-                          src={snap.dataUrl}
-                          alt={snap.label}
-                          className="w-full h-full object-cover transform -scale-x-100 group-hover:scale-105 transition-transform"
-                        />
-                        <div className="absolute top-2 right-2 p-1 rounded-full bg-black/60 text-emerald-400">
-                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+              {/* Right 4 cols: Visual Identity Snapshots Gallery */}
+              <div className="lg:col-span-4 rounded-3xl bg-white border border-neutral-200 p-5 shadow-md space-y-4">
+                <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
+                  <div>
+                    <h3 className="font-bold text-sm text-neutral-900 font-heading">
+                      Identity Verification Frames
+                    </h3>
+                    <p className="text-[11px] text-neutral-500">
+                      Multi-angle camera snapshots
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-sky-600 bg-sky-50 px-2 py-0.5 rounded-md border border-sky-200">
+                    {snapshots.length} / 3
+                  </span>
+                </div>
+
+                {snapshots.length === 0 ? (
+                  <div className="p-6 text-center text-neutral-400 text-xs">
+                    No camera snapshots recorded during this test run.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {snapshots.map((snap) => (
+                      <div
+                        key={snap.id}
+                        onClick={() => setSelectedSnapshotModal(snap.dataUrl)}
+                        className="p-2.5 rounded-2xl bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 flex items-center gap-3 transition-colors cursor-pointer group"
+                      >
+                        <div className="w-20 h-14 rounded-xl overflow-hidden bg-black shrink-0 relative">
+                          <img
+                            src={snap.dataUrl}
+                            alt={snap.label}
+                            className="w-full h-full object-cover transform -scale-x-100"
+                          />
+                          <div className="absolute inset-0 bg-black/30 group-hover:bg-transparent transition-colors flex items-center justify-center">
+                            <Eye className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-xs font-bold text-neutral-900 block truncate">
+                            {snap.label}
+                          </span>
+                          <span className="text-[11px] text-neutral-500 block">
+                            Angle: {snap.angle.toUpperCase()} • {snap.timestamp}
+                          </span>
                         </div>
                       </div>
-                      <div className="p-3 bg-[#171a29] flex items-center justify-between text-xs">
-                        <span className="font-semibold text-white">{snap.label}</span>
-                        <span className="text-neutral-500 font-mono text-[10px]">{snap.timestamp}</span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="col-span-3 p-6 text-center text-neutral-500 text-xs">
-                    No static snapshot captures were submitted during this session.
+                    ))}
                   </div>
                 )}
-              </div>
-            </div>
-
-            {/* Questions & Assessment Submissions Timeline */}
-            <div className="p-6 rounded-3xl bg-[#141624] border border-white/10 shadow-xl space-y-4">
-              <h3 className="text-base font-bold font-heading text-white">Assessment Responses</h3>
-
-              <div className="space-y-4">
-                {/* Uploaded Resume Entry */}
-                {uploadedResume && (
-                  <div className="p-4 rounded-2xl bg-black/30 border border-emerald-500/30 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-emerald-400 flex items-center gap-1.5">
-                        <FileCheck className="w-3.5 h-3.5" />
-                        <span>Uploaded Resume Document</span>
-                      </span>
-                      <span className="text-neutral-400 font-mono text-[11px]">{uploadedResume.uploadedAt}</span>
-                    </div>
-                    <div className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5 text-xs">
-                      <div>
-                        <span className="font-semibold text-white block">{uploadedResume.fileName}</span>
-                        <span className="text-neutral-400 text-[11px]">{uploadedResume.fileSize}</span>
-                      </div>
-                      <a
-                        href={uploadedResume.dataUrl}
-                        download={uploadedResume.fileName}
-                        className="px-3 py-1.5 rounded-lg bg-[#55d2f6] text-black font-semibold text-xs flex items-center gap-1 hover:opacity-90"
-                      >
-                        <Download className="w-3 h-3" />
-                        <span>Download</span>
-                      </a>
-                    </div>
-                  </div>
-                )}
-
-                {/* Written Task */}
-                <div className="p-4 rounded-2xl bg-black/30 border border-white/10 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-[#55d2f6]">Written Assessment: Self-Reflection</span>
-                    <span className="text-neutral-400 font-mono text-[11px]">
-                      {writtenText.trim().length} characters
-                    </span>
-                  </div>
-                  <p className="text-xs text-neutral-400 font-medium">
-                    &quot;Write down 3 things you like about yourself and why.&quot;
-                  </p>
-                  <p className="text-xs text-white leading-relaxed bg-white/5 p-3 rounded-xl whitespace-pre-line border border-white/5">
-                    {writtenText || 'No written submission recorded.'}
-                  </p>
-                </div>
-
-                {/* Pressure Rating */}
-                <div className="p-4 rounded-2xl bg-black/30 border border-white/10 space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-[#55d2f6]">Situational Behavior Rating</span>
-                    <span className="text-emerald-400 font-semibold">Verified</span>
-                  </div>
-                  <p className="text-xs text-neutral-400">
-                    &quot;How well do you perform under pressure?&quot;
-                  </p>
-                  <p className="text-xs text-white font-semibold bg-white/5 p-2.5 rounded-xl border border-white/5">
-                    {pressureRating || 'Not answered'}
-                  </p>
-                </div>
-
-                {/* All Audio / Recorded Q&A items */}
-                {recordedResponses.map((item, idx) => (
-                  <div key={idx} className="p-4 rounded-2xl bg-black/30 border border-white/10 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-white">{item.question}</span>
-                      <span className="text-neutral-500 font-mono text-[11px]">{item.timestamp}</span>
-                    </div>
-                    <p className="text-xs text-neutral-300 leading-relaxed bg-white/5 p-3 rounded-xl border border-white/5">
-                      {item.answer}
-                    </p>
-                    {item.aiNotes && (
-                      <div className="text-[11px] text-neutral-400 flex items-center gap-1.5">
-                        <Sparkles className="w-3 h-3 text-[#55d2f6]" />
-                        <span>AI Notes: {item.aiNotes}</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 3: Candidate Resume / CV Viewer (Shows candidate uploaded resume file directly) */}
+        {/* TAB 2: Responses & Tasks Details */}
+        {recruiterActiveTab === 'responses' && (
+          <div className="space-y-4">
+            {recordedResponses.length === 0 ? (
+              <div className="p-12 text-center rounded-3xl bg-white border border-neutral-200 text-neutral-500 text-sm shadow-xs">
+                Candidate has not yet submitted responses. Run an interview session to generate records.
+              </div>
+            ) : (
+              recordedResponses.map((res, index) => (
+                <div
+                  key={index}
+                  className="p-6 rounded-3xl bg-white border border-neutral-200 shadow-sm space-y-3"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono text-sky-600 font-bold uppercase tracking-wider bg-sky-50 px-2.5 py-0.5 rounded-full border border-sky-200">
+                      {res.phase.replace('_', ' ')}
+                    </span>
+                    <span className="text-neutral-500 font-mono">{res.timestamp}</span>
+                  </div>
+
+                  <h3 className="font-bold text-base text-neutral-900">{res.question}</h3>
+
+                  <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200 text-sm leading-relaxed text-neutral-800 whitespace-pre-wrap">
+                    {res.answer}
+                  </div>
+
+                  {res.aiNotes && (
+                    <div className="flex items-start gap-2 pt-1 text-xs text-neutral-600">
+                      <Sparkles className="w-3.5 h-3.5 text-sky-600 shrink-0 mt-0.5" />
+                      <span>
+                        <strong className="text-neutral-900">AI Recruiter Observation:</strong> {res.aiNotes}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+
+            {/* Q&A Transcripts */}
+            {qaHistory.length > 0 && (
+              <div className="p-6 rounded-3xl bg-white border border-neutral-200 shadow-sm space-y-4">
+                <h3 className="font-bold text-base text-neutral-900 font-heading">
+                  Candidate Q&amp;A Session History
+                </h3>
+                <div className="space-y-3">
+                  {qaHistory.map((qa, i) => (
+                    <div
+                      key={i}
+                      className={`p-3.5 rounded-2xl text-xs sm:text-sm ${
+                        qa.sender === 'candidate'
+                          ? 'bg-sky-50 border border-sky-200 text-sky-950 ml-6'
+                          : 'bg-neutral-50 border border-neutral-200 text-neutral-900 mr-6'
+                      }`}
+                    >
+                      <span className="text-[10px] font-bold block mb-1 uppercase tracking-wider text-neutral-500">
+                        {qa.sender === 'candidate' ? `${effectiveDossierName} (Candidate)` : 'Hana (AI Recruiter)'}
+                      </span>
+                      <p className="leading-relaxed">{qa.text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: Candidate Resume / CV Document View */}
         {recruiterActiveTab === 'resume' && (
           <div className="space-y-6">
             {uploadedResume ? (
-              /* REAL UPLOADED RESUME FILE PRESENTATION */
-              <div className="max-w-4xl mx-auto rounded-3xl bg-white text-neutral-900 shadow-2xl overflow-hidden border border-black/10">
-                {/* Header with Document Meta & Actions */}
-                <div className="p-6 border-b border-black/10 bg-[#f8fafc] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-[#55d2f6]/20 border border-[#55d2f6]/40 text-[#0f9bc7] flex items-center justify-center">
-                      <FileCheck className="w-6 h-6" />
+              <div className="p-6 sm:p-8 rounded-3xl bg-white border border-neutral-200 shadow-md space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-neutral-200 gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center">
+                      <FileCheck className="w-7 h-7" />
                     </div>
                     <div>
-                      <h3 className="text-base font-bold text-black flex items-center gap-2">
-                        <span>{uploadedResume.fileName}</span>
-                        <span className="text-[11px] px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-semibold">
-                          Verified Candidate Document
-                        </span>
+                      <h3 className="text-lg font-bold font-heading text-neutral-900">
+                        {uploadedResume.fileName}
                       </h3>
-                      <p className="text-xs text-neutral-500 mt-0.5 font-mono">
-                        {uploadedResume.fileSize} • Uploaded live at {uploadedResume.uploadedAt} by {effectiveDossierName}
-                      </p>
+                      <div className="flex items-center gap-3 text-xs text-neutral-500 mt-1">
+                        <span>Size: {uploadedResume.fileSize}</span>
+                        <span>•</span>
+                        <span>Type: {uploadedResume.fileType}</span>
+                        <span>•</span>
+                        <span>Uploaded at: {uploadedResume.uploadedAt}</span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-300">
+                      Uploaded during Live Interview
+                    </span>
                     <a
                       href={uploadedResume.dataUrl}
                       download={uploadedResume.fileName}
-                      className="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                      className="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
                     >
                       <Download className="w-3.5 h-3.5" />
                       <span>Download File</span>
                     </a>
-                    <a
-                      href={uploadedResume.dataUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3.5 py-2 rounded-xl bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-700 text-xs font-semibold transition-all flex items-center gap-1"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Open Preview</span>
-                    </a>
                   </div>
                 </div>
 
-                {/* Document Body Viewer */}
-                <div className="p-6 bg-neutral-100 min-h-[500px] flex flex-col items-center justify-center">
+                {/* Document Display / Preview */}
+                <div className="rounded-2xl bg-neutral-50 border border-neutral-200 p-4 min-h-[400px] flex items-center justify-center overflow-hidden">
                   {uploadedResume.fileType.includes('pdf') || uploadedResume.fileName.endsWith('.pdf') ? (
                     <iframe
                       src={uploadedResume.dataUrl}
-                      className="w-full h-[650px] rounded-2xl border border-black/10 bg-white shadow-inner"
+                      className="w-full h-[650px] rounded-xl border border-neutral-200 bg-white"
                       title="Uploaded Candidate Resume PDF"
                     />
                   ) : uploadedResume.fileType.includes('image') ||
@@ -2455,15 +2650,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     <img
                       src={uploadedResume.dataUrl}
                       alt="Uploaded Candidate Resume"
-                      className="max-h-[650px] mx-auto object-contain rounded-xl shadow-lg border border-black/10"
+                      className="max-h-[650px] mx-auto object-contain rounded-xl shadow-md border border-neutral-200"
                     />
                   ) : (
-                    <div className="w-full bg-white p-6 rounded-2xl border border-black/10 shadow-sm space-y-4">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-neutral-500">
-                        <FileText className="w-4 h-4 text-[#0f9bc7]" />
+                    <div className="w-full bg-white p-6 rounded-2xl border border-neutral-200 shadow-xs space-y-4">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-neutral-600">
+                        <FileText className="w-4 h-4 text-sky-600" />
                         <span>Document Content Preview:</span>
                       </div>
-                      <pre className="text-xs font-mono text-neutral-800 whitespace-pre-wrap leading-relaxed max-h-[500px] overflow-auto p-4 bg-neutral-50 rounded-xl border border-black/5">
+                      <pre className="text-xs font-mono text-neutral-800 whitespace-pre-wrap leading-relaxed max-h-[500px] overflow-auto p-4 bg-neutral-50 rounded-xl border border-neutral-200">
                         {uploadedResume.textContent || 'Binary document content verified. Click "Download File" to view full original.'}
                       </pre>
                     </div>
@@ -2472,16 +2667,16 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               </div>
             ) : (
               /* Fallback if no resume uploaded during test run */
-              <div className="max-w-4xl mx-auto p-8 rounded-3xl bg-white text-neutral-900 shadow-2xl space-y-6 font-sans">
-                <div className="border-b border-black/10 pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="max-w-4xl mx-auto p-8 rounded-3xl bg-white text-neutral-900 shadow-md border border-neutral-200 space-y-6 font-sans">
+                <div className="border-b border-neutral-200 pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
-                    <h2 className="text-2xl font-bold font-heading text-black">{effectiveDossierName}</h2>
-                    <p className="text-sm font-semibold text-[#0f9bc7] mt-0.5">{targetRole}</p>
-                    <p className="text-xs text-neutral-600 mt-1">
+                    <h2 className="text-2xl font-bold font-heading text-neutral-900">{effectiveDossierName}</h2>
+                    <p className="text-sm font-semibold text-sky-600 mt-0.5">{targetRole}</p>
+                    <p className="text-xs text-neutral-500 mt-1">
                       {candidateName ? `${candidateName.toLowerCase().replace(/\s+/g, '.')}@example.com` : 'candidate@example.com'} • Verified Candidate Dossier
                     </p>
                   </div>
-                  <label className="px-3.5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 self-start">
+                  <label className="px-3.5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 self-start shadow-xs">
                     <input
                       type="file"
                       accept=".pdf,.docx,.doc,.txt,.png,.jpg"
@@ -2534,7 +2729,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     <div className="space-y-4">
                       <div>
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-black">Staff Engineer • Autonomous Interactive Systems</span>
+                          <span className="font-bold text-neutral-900">Staff Engineer • Autonomous Interactive Systems</span>
                           <span className="text-neutral-500">2022 - Present</span>
                         </div>
                         <p className="text-xs text-neutral-600 mt-1">
@@ -2543,7 +2738,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       </div>
                       <div>
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-black">Senior Software Engineer • Realtime Cloud Labs</span>
+                          <span className="font-bold text-neutral-900">Senior Software Engineer • Realtime Cloud Labs</span>
                           <span className="text-neutral-500">2019 - 2022</span>
                         </div>
                         <p className="text-xs text-neutral-600 mt-1">
@@ -2571,7 +2766,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       {/* Snapshot Zoom Lightbox Modal */}
       {selectedSnapshotModal && (
         <div
-          className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 cursor-pointer"
+          className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 cursor-pointer"
           onClick={() => setSelectedSnapshotModal(null)}
         >
           <div className="max-w-3xl w-full rounded-2xl overflow-hidden shadow-2xl border border-white/20 bg-black">
