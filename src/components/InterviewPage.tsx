@@ -3142,7 +3142,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       }`}
                     />
                     <span className="text-neutral-600 truncate">
-                      {lobbySpokenText ? `Heard: "${lobbySpokenText}"` : 'Listening for phrase...'}
+                      {lobbySpokenText ? `Heard: "${lobbySpokenText}"` : 'Listening...'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -3356,7 +3356,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           <div className="flex items-center gap-2.5">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-100 border border-neutral-200 text-neutral-600 text-xs font-mono">
               <Mic className="w-3.5 h-3.5 text-sky-500 animate-pulse" />
-              <span>Hands-Free • Say &quot;End interview&quot; to conclude</span>
+              <span>End Interview</span>
             </div>
           </div>
         </header>
@@ -3433,7 +3433,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         <span>Camera Off • Interviewer</span>
                       </div>
                       <p className="text-[11px] text-neutral-400 font-mono">
-                        Connecting 3D neural feed...
+                        Connecting...
                       </p>
                     </div>
 
@@ -3648,7 +3648,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       <div className="flex items-center gap-2.5">
                         <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
                         <span className="text-xs font-semibold text-neutral-800">
-                          Voice-Guided: Say &quot;done&quot;, &quot;submit&quot;, or &quot;ready&quot; to continue
+                          Let the interviewer know when you're done
                         </span>
                       </div>
                       <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
@@ -3715,12 +3715,12 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         />
                         <span className="text-xs font-semibold text-neutral-800">
                           {writtenText.trim().length >= 100
-                            ? 'Voice-Guided: Say "I am done" or "submit" to proceed'
-                            : 'Reach 100 characters, then say "I am done"'}
+                            ? 'Let the interviewer know when you are done'
+                            : 'Reach 100 characters, then we can proceed'}
                         </span>
                       </div>
                       <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
-                        Hands-Free Voice Flow
+                        
                       </span>
                     </div>
                   </div>
@@ -3780,7 +3780,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       <div className="flex items-center gap-2.5">
                         <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
                         <span className="text-xs font-semibold text-neutral-800">
-                          Voice-Guided: Say your choice aloud or say &quot;ready&quot; / &quot;submit&quot;
+                          Let the interviewer know your choice or select on your own
                         </span>
                       </div>
                       <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
@@ -3802,11 +3802,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         Hold your written phone number up &amp; pose
                       </h3>
                       <p className="text-xs sm:text-sm text-neutral-600 mt-1">
-                        Say <strong className="text-neutral-900">&quot;click&quot;</strong>,{' '}
-                        <strong className="text-neutral-900">&quot;do it&quot;</strong>,{' '}
-                        <strong className="text-neutral-900">&quot;okay&quot;</strong>,{' '}
-                        <strong className="text-neutral-900">&quot;cheese&quot;</strong>, or{' '}
-                        <strong className="text-neutral-900">&quot;ready&quot;</strong>. Even keywords in live subtitles trigger the photo instantly.
+                        Or ask the interviewer for any clarifications.
                       </p>
                     </div>
 
@@ -3861,10 +3857,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
                         <div>
                           <span className="text-xs font-semibold text-neutral-900 block">
-                            Listening for voice trigger: &quot;click&quot;, &quot;ready&quot;, &quot;do it&quot;, or &quot;cheese&quot;
+                            Tell the interviewer when to take your photo
                           </span>
                           <span className="text-[11px] text-neutral-500 font-mono block">
-                            {lastDetectedTrigger ? `Detected: "${lastDetectedTrigger}" • Capturing pose` : 'Say keyword or "skip" to proceed'}
+                            {lastDetectedTrigger ? `Detected: "${lastDetectedTrigger}" • Captured pose` : 'Say keyword or "skip" to proceed'}
                           </span>
                         </div>
                       </div>
@@ -3925,7 +3921,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 ) : (
                   <div className="flex items-center gap-2 px-2.5 py-1 bg-neutral-100 border border-neutral-200 rounded-full text-xs font-mono text-neutral-600">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                    <span>Silence delay: {scenarioConfig.openQuestionSilenceSeconds}s</span>
                   </div>
                 )}
               </div>
@@ -3936,7 +3931,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-xs font-mono text-neutral-600">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Voice-Oriented Meeting Session</span>
+              <span>Connected</span>
             </div>
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-neutral-500 font-mono pl-3 border-l border-neutral-200">
               <Mic className={`w-3.5 h-3.5 ${isCandidateSpeaking ? 'text-emerald-500 animate-bounce' : 'text-neutral-400'}`} />
@@ -3969,7 +3964,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               Recruiter Evaluation Dossier
             </h1>
             <span className="text-[11px] text-neutral-500">
-              Autonomous AI Hiring Assessment • MuxAI Talent Suite
+              Autonomous AI Hiring Assessment • Hana Interview
             </span>
           </div>
         </div>
