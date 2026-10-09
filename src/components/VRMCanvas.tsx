@@ -698,15 +698,8 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
       const vrm = vrmRef.current;
 
       if (vrm) {
-        // 60-second message inactivity counter -> select random waiting animation & auto-reset
-        if (!isFallSequenceActiveRef.current) {
-          waitInactivityTimerRef.current += delta;
-          const waitIntervalSec = VRM_CONFIG.interaction.waitAnimationIntervalSec || 60.0;
-          if (waitInactivityTimerRef.current >= waitIntervalSec) {
-            waitInactivityTimerRef.current = 0;
-            triggerRandomWaitAnimation();
-          }
-        }
+        // No idle AFK animations: candidate stays in professional idle breathing loop
+        // (Idle AFK waiting animations are disabled as requested)
 
         // Continuous Mixamo Body Animation Mixer
         if (mixerRef.current) {
@@ -912,13 +905,13 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         currentSurprised = THREE.MathUtils.lerp(currentSurprised, targetSurprised, delta * 4.5);
         currentMouthOpen = THREE.MathUtils.lerp(currentMouthOpen, targetMouthOpen, delta * 4.0);
 
-        // Expression Manager Updates
+        // Expression Manager Updates with prominent, visible mouth articulation
         if (vrm.expressionManager) {
-          vrm.expressionManager.setValue('aa', Math.min(1.0, visemes.aa + currentMouthOpen));
-          vrm.expressionManager.setValue('ih', visemes.ih);
-          vrm.expressionManager.setValue('ou', visemes.ou);
-          vrm.expressionManager.setValue('ee', visemes.ee);
-          vrm.expressionManager.setValue('oh', visemes.oh);
+          vrm.expressionManager.setValue('aa', Math.min(1.0, visemes.aa * 1.15 + currentMouthOpen));
+          vrm.expressionManager.setValue('ih', Math.min(1.0, visemes.ih * 1.15));
+          vrm.expressionManager.setValue('ou', Math.min(1.0, visemes.ou * 1.15));
+          vrm.expressionManager.setValue('ee', Math.min(1.0, visemes.ee * 1.15));
+          vrm.expressionManager.setValue('oh', Math.min(1.0, visemes.oh * 1.15));
 
           // Suppress peaceful baseline expressions while angry/annoyed mood is active
           const moodSuppression = Math.max(0, 1.0 - currentAngry * 1.2);
@@ -959,36 +952,29 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           saccadeOffsetY = (Math.random() - 0.5) * 0.015;
         }
 
-        // Head & Neck Gaze Tracking (paused while full-body fall or wait animation is driving head/neck keyframes)
+        // Head & Neck: Pointer tracking is DISABLED as requested.
+        // Instead, maintains direct professional camera eye contact with subtle natural micro-saccades
+        // and gentle nodding when speaking or acknowledging.
         const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
         const neckNode = vrm.humanoid?.getNormalizedBoneNode('neck');
-        const isWaitPlaying = Boolean(activeWaitActionRef.current);
 
-        if (!isFalling && !isWaitPlaying && headNode && cameraRef.current) {
-          headNode.getWorldPosition(scratchHeadWorldPos);
-          scratchHeadWorldPos.y += 0.055;
+        if (!isFalling && headNode) {
+          // Slight natural nod rhythm when speaking
+          const speechNodX = speechFacingFactor * Math.sin(elapsed * 4.2) * 0.038;
+          // Gentle breathing sway in posture
+          const breathPitch = Math.sin(elapsed * 1.8) * 0.008;
 
-          const headScreenPos = scratchHeadWorldPos.project(cameraRef.current);
+          const targetRotY = saccadeOffsetX * 0.7;
+          const targetRotX = saccadeOffsetY * 0.7 + speechNodX + breathPitch;
 
-          const deltaX = mouseRef.current.x - headScreenPos.x;
-          const deltaY = mouseRef.current.y - headScreenPos.y;
-
-          const activeDeltaX = deltaX * (1.0 - speechFacingFactor);
-          const activeDeltaY = deltaY * (1.0 - speechFacingFactor);
-
-          const speechNodX = speechFacingFactor * Math.sin(elapsed * 4.5) * 0.02;
-
-          const targetRotY = THREE.MathUtils.clamp(activeDeltaX * 0.75, -0.85, 0.85) + saccadeOffsetX * (1.0 - speechFacingFactor * 0.6);
-          const targetRotX = THREE.MathUtils.clamp(-activeDeltaY * 0.6, -0.45, 0.45) + saccadeOffsetY * (1.0 - speechFacingFactor * 0.6) + speechNodX;
-
-          headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 7.5);
-          headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 7.5);
+          headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 6.0);
+          headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 6.0);
 
           if (neckNode) {
-            const targetNeckY = THREE.MathUtils.clamp(activeDeltaX * 0.35, -0.4, 0.4);
-            const targetNeckX = THREE.MathUtils.clamp(-activeDeltaY * 0.25, -0.25, 0.25) + speechNodX * 0.4;
-            neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 6.0);
-            neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 6.0);
+            const targetNeckY = saccadeOffsetX * 0.25;
+            const targetNeckX = speechNodX * 0.45 + breathPitch * 0.5;
+            neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 5.0);
+            neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 5.0);
           }
         }
       }
