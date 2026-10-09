@@ -39,6 +39,7 @@ interface LandingPageProps {
   onStartChat: () => void;
   onNavigateToDocs?: (path?: string) => void;
   onNavigateToHumanizer?: () => void;
+  onNavigateToInterview?: (path?: string) => void;
 }
 
 interface AccordionItem {
@@ -149,6 +150,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onStartChat,
   onNavigateToDocs,
   onNavigateToHumanizer,
+  onNavigateToInterview,
 }) => {
   const [activeAccordion, setActiveAccordion] = useState<number>(0);
   const [activeAutomationAccordion, setActiveAutomationAccordion] = useState<number | null>(0);
@@ -981,6 +983,31 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                               </li>
                             ))}
                           </ul>
+
+                          {item.id === 'ai-interviews' && (
+                            <div className="mt-5 pt-4 border-t border-black/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div>
+                                <span className="text-xs font-bold text-neutral-900 block">
+                                  Experience Hana&apos;s AI Interview
+                                </span>
+                                <span className="text-[11px] text-neutral-500 block">
+                                  Interactive candidate POV with webcam/mic check, live voice &amp; recruiter review
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onNavigateToInterview
+                                    ? onNavigateToInterview('/interview?id=demo')
+                                    : onStartChat()
+                                }
+                                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0f9bc7] hover:bg-[#117ba2] text-white shadow-xs hover:shadow transition-all active:scale-95 cursor-pointer shrink-0"
+                              >
+                                <span>Launch AI Interview</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

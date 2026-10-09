@@ -92,6 +92,7 @@ import { ActDirectorPage } from './components/ActDirectorPage';
 import { HumanizerPage } from './components/HumanizerPage';
 import { VoiceTesterPage } from './components/VoiceTesterPage';
 import { MMDStudioPage } from './components/MMDStudioPage';
+import { InterviewPage } from './components/InterviewPage';
 import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
 import { dispatchChatToWebhooks } from './lib/integrations';
@@ -134,6 +135,9 @@ export default function App() {
       if (path.startsWith('/voice')) {
         return '/voice';
       }
+      if (path.startsWith('/interview')) {
+        return path;
+      }
       return path.startsWith('/chat') ? '/chat' : '/';
     }
     return '/';
@@ -173,6 +177,10 @@ export default function App() {
         setCurrentRoute('/voice');
         return;
       }
+      if (path.startsWith('/interview')) {
+        setCurrentRoute(path);
+        return;
+      }
       setCurrentRoute(path.startsWith('/chat') ? '/chat' : '/');
     };
     window.addEventListener('popstate', handlePopState);
@@ -199,6 +207,8 @@ export default function App() {
         normalized = '/mmd';
       } else if (path.startsWith('/voice')) {
         normalized = '/voice';
+      } else if (path.startsWith('/interview')) {
+        normalized = path;
       }
       window.history.pushState(null, '', normalized);
       setCurrentRoute(normalized);
@@ -2120,6 +2130,19 @@ export default function App() {
     );
   }
 
+  // Render Autonomous AI Interview at '/interview'
+  if (currentRoute.startsWith('/interview')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <InterviewPage
+          onNavigateHome={() => navigateTo('/')}
+          onNavigateToChat={() => navigateTo('/chat')}
+        />
+      </>
+    );
+  }
+
   // Render MuxAI Humanizer & Turnitin-Reverse at '/humanizer' (and redirects)
   if (currentRoute.startsWith('/humanizer')) {
     return (
@@ -2144,6 +2167,7 @@ export default function App() {
           onStartChat={() => navigateTo('/chat')}
           onNavigateToDocs={(p) => navigateTo(p || '/docs')}
           onNavigateToHumanizer={() => navigateTo('/humanizer')}
+          onNavigateToInterview={(p) => navigateTo(p || '/interview?id=demo')}
         />
       </>
     );
