@@ -30,6 +30,9 @@ import {
   Settings2,
   ExternalLink,
   Info,
+  Upload,
+  FileUp,
+  FileCheck,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { VRMCanvas } from './VRMCanvas';
@@ -49,6 +52,7 @@ type MeetingPhase =
   | 'welcome'
   | 'question_1'
   | 'question_2'
+  | 'task_resume'
   | 'task_written'
   | 'task_pressure'
   | 'task_snapshot'
@@ -69,6 +73,15 @@ interface QuestionResponse {
   answer: string;
   timestamp: string;
   aiNotes?: string;
+}
+
+interface UploadedResume {
+  fileName: string;
+  fileSize: string;
+  fileType: string;
+  dataUrl: string;
+  uploadedAt: string;
+  textContent?: string;
 }
 
 function calculateAgreementMatch(spoken: string): number {
@@ -92,14 +105,13 @@ function calculateAgreementMatch(spoken: string): number {
 
   const wordRatio = Math.round((matchCount / targetWords.length) * 100);
 
-  // Core trigger phrase check: "i am ready to start my interview" (7 of 13 words = 54%)
+  // Core trigger phrase check: "i am ready to start my interview"
   if (cleanSpoken.includes('i am ready to start my interview')) {
     const extraWords = ['and', 'agree', 'to', 'the', 'rules'];
     let extraHits = 0;
     for (const w of extraWords) {
       if (cleanSpoken.includes(w)) extraHits++;
     }
-    // Base 60% + up to 40% for the agreement phrase
     const combined = Math.min(100, 60 + extraHits * 10);
     return Math.max(wordRatio, combined);
   }
@@ -126,9 +138,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     return 'demo';
   });
 
-  // Candidate Profile Information
-  const [candidateName, setCandidateName] = useState<string>('Alex Rivera');
-  const [targetRole, setTargetRole] = useState<string>('Senior Full Stack & AI Systems Engineer');
+  // Candidate Profile Information (blank by default with placeholder e.g. Dewan Mukto)
+  const [candidateName, setCandidateName] = useState<string>('');
+  const [targetRole] = useState<string>('Senior Full Stack & AI Systems Engineer');
+
+  // Candidate Resume Document
+  const [uploadedResume, setUploadedResume] = useState<UploadedResume | null>(null);
+  const [isUploadingResume, setIsUploadingResume] = useState<boolean>(false);
+  const [resumeSubmitted, setResumeSubmitted] = useState<boolean>(false);
 
   // Lobby Speech Agreement ("I am ready to start my interview and I agree to the rules")
   const [hasAgreedToRules, setHasAgreedToRules] = useState<boolean>(false);
@@ -147,8 +164,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const [hasPermissions, setHasPermissions] = useState<boolean>(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
-  // Audio Testing in Lobby
+  // Audio Testing in Lobby (Latching mic input checkmark once detected to prevent blinking/glitching)
   const [micVolume, setMicVolume] = useState<number>(0);
+  const [hasDetectedMicOnce, setHasDetectedMicOnce] = useState<boolean>(false);
   const [isSpeakerTesting, setIsSpeakerTesting] = useState<boolean>(false);
 
   // Refs for Media Streams & Recorders
@@ -169,15 +187,24 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   // Meeting Progression State
   const [meetingPhase, setMeetingPhase] = useState<MeetingPhase>('joining');
   const [hanaEntered, setHanaEntered] = useState<boolean>(false);
+  // Hana's default mood and expression is strictly neutral (no smiling or grinning)
   const [hanaEmotion, setHanaEmotion] = useState<AvatarEmotion>('neutral');
   const [hanaIsSpeaking, setHanaIsSpeaking] = useState<boolean>(false);
   const [hanaReactionText, setHanaReactionText] = useState<string>('');
+
+  // 3D Model Loading State: Show Camera Off avatar panel first, then fade in 3D
+  const [isHana3DReady, setIsHana3DReady] = useState<boolean>(false);
 
   // Edge case: User interruption detection & resume prefix
   const hanaIsSpeakingRef = useRef<boolean>(false);
   const currentHanaLineRef = useRef<string>('');
   const wasInterruptedRef = useRef<boolean>(false);
   const speechResumeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const meetingPhaseRef = useRef<MeetingPhase>('joining');
+
+  useEffect(() => {
+    meetingPhaseRef.current = meetingPhase;
+  }, [meetingPhase]);
 
   // Speech Recognition (Candidate speech to text)
   const [candidateLiveTranscript, setCandidateLiveTranscript] = useState<string>('');
@@ -185,15 +212,16 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const recognitionRef = useRef<any>(null);
 
   // Spotlight Tasks Data
-  // Task 1: Written assessment (>= 100 characters)
+  // Task 1: Resume Document Upload (handled via uploadedResume)
+  // Task 2: Written assessment (>= 100 characters)
   const [writtenText, setWrittenText] = useState<string>('');
   const [writtenSubmitted, setWrittenSubmitted] = useState<boolean>(false);
 
-  // Task 2: Situational assessment (Radio buttons)
+  // Task 3: Situational assessment (Radio buttons)
   const [pressureRating, setPressureRating] = useState<string>('');
   const [pressureSubmitted, setPressureSubmitted] = useState<boolean>(false);
 
-  // Task 3: Visual Identity Snapshots (Forward, Left, Right via trigger words "click", "do it", "okay", "ready")
+  // Task 4: Visual Identity Snapshots (Forward, Left, Right via trigger words "click", "do it", "okay", "ready")
   const [snapshotStep, setSnapshotStep] = useState<0 | 1 | 2 | 3>(0); // 0: not started, 1: forward, 2: left, 3: right
   const [snapshots, setSnapshots] = useState<SnapshotItem[]>([]);
   const [isListeningForTrigger, setIsListeningForTrigger] = useState<boolean>(false);
@@ -214,6 +242,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const [isReviewPlaying, setIsReviewPlaying] = useState<boolean>(false);
   const [reviewCurrentTime, setReviewCurrentTime] = useState<number>(0);
   const [selectedSnapshotModal, setSelectedSnapshotModal] = useState<string | null>(null);
+
+  // Helper for displaying candidate name gracefully
+  const effectiveCandidateName = candidateName.trim() || 'Candidate';
+  const effectiveDossierName = candidateName.trim() || 'Dewan Mukto';
 
   // ----------------------------------------------------
   // Initialize Media Devices & Stream in Lobby
@@ -290,10 +322,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         const normalized = Math.min(100, Math.round((avg / 128) * 100));
         setMicVolume(normalized);
 
-        // Track candidate speaking state
+        // Latch mic detection once per session so checkmark never flickers or blinks
+        if (normalized > 8) {
+          setHasDetectedMicOnce(true);
+        }
+
+        // Track candidate speaking state for visual UI indicator
         if (normalized > 18) {
           setIsCandidateSpeaking(true);
-          handleCandidateSpeechActivity();
         } else {
           setIsCandidateSpeaking(false);
         }
@@ -363,6 +399,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         const combined = (final || interim).trim();
         if (combined) {
           setLobbySpokenText(combined);
+          setHasDetectedMicOnce(true);
           const score = calculateAgreementMatch(combined);
           setLobbyMatchPercent(score);
 
@@ -410,9 +447,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     setIsSpeakerTesting(true);
     soundManager.playReceive();
     try {
-      const uttr = new SpeechSynthesisUtterance('Audio output test successful. Can you hear this clearly?');
-      uttr.rate = 1.05;
-      uttr.pitch = 1.25;
+      const uttr = new SpeechSynthesisUtterance('Audio output test successful. Welcome to your interview with Hana.');
+      uttr.rate = 1.0;
+      uttr.pitch = 1.15;
       const voice = getPersonaVoice();
       if (voice) uttr.voice = voice;
       uttr.onend = () => setIsSpeakerTesting(false);
@@ -446,6 +483,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
   // ----------------------------------------------------
   // Speech Synthesis & Interruption Logic (Hana Voice)
+  // Default mood is neutral (no smiling or grinning)
   // ----------------------------------------------------
   const speakHanaLine = useCallback(
     async (text: string, onDone?: () => void, emotion: AvatarEmotion = 'neutral') => {
@@ -463,8 +501,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       const voice = await waitForPersonaVoice(1500);
       const utterance = new SpeechSynthesisUtterance(text);
       if (voice) utterance.voice = voice;
-      utterance.pitch = 1.25;
-      utterance.rate = 1.05;
+      utterance.pitch = 1.15;
+      utterance.rate = 1.0;
 
       utterance.onend = () => {
         hanaIsSpeakingRef.current = false;
@@ -486,25 +524,34 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     []
   );
 
-  // Interruption handling: candidate speaks while Hana is explaining
+  // Interruption handling: candidate speaks while Hana is explaining during OPEN questions only
   const handleCandidateSpeechActivity = useCallback(() => {
+    const curPhase = meetingPhaseRef.current;
+    const isOpenDiscussion =
+      curPhase === 'question_1' || curPhase === 'question_2' || curPhase === 'candidate_qa';
+
+    if (!isOpenDiscussion) {
+      // Do NOT interrupt during tasks, welcome greeting, instructions or wrapup!
+      return;
+    }
+
     if (hanaIsSpeakingRef.current) {
-      // User is talking while Hana is speaking!
+      // Candidate speaks during an open discussion
       window.speechSynthesis.cancel();
       hanaIsSpeakingRef.current = false;
       setHanaIsSpeaking(false);
       wasInterruptedRef.current = true;
-      setHanaEmotion('surprised');
+      setHanaEmotion('neutral');
       setHanaReactionText('Listening to you...');
 
       if (speechResumeTimeoutRef.current) clearTimeout(speechResumeTimeoutRef.current);
 
-      // Wait until candidate stops talking for 1.8 seconds, then resume with prefix
+      // Wait until candidate finishes speaking (1.8s silence), then resume with prefix
       speechResumeTimeoutRef.current = setTimeout(() => {
         if (wasInterruptedRef.current && currentHanaLineRef.current) {
           wasInterruptedRef.current = false;
           const resumeText = `Oh, okay. As we were saying... ${currentHanaLineRef.current}`;
-          speakHanaLine(resumeText, undefined, 'happy');
+          speakHanaLine(resumeText, undefined, 'neutral');
         }
       }, 1800);
     }
@@ -541,6 +588,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         const combined = (final || interim).trim();
         setCandidateLiveTranscript(combined);
 
+        // Check for interruption only in open discussion when candidate speaks coherent words
+        const curPhase = meetingPhaseRef.current;
+        const isOpenDiscussion =
+          curPhase === 'question_1' || curPhase === 'question_2' || curPhase === 'candidate_qa';
+
+        if (isOpenDiscussion && hanaIsSpeakingRef.current && combined.length > 6) {
+          handleCandidateSpeechActivity();
+        }
+
         // Check for trigger words for snapshot verification: "click", "do it", "okay", "ready"
         if (isListeningForTrigger && combined) {
           const lower = combined.toLowerCase();
@@ -552,8 +608,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           }
         }
 
-        // Contextual reactions from Hana while candidate is answering
-        if (combined.length > 25 && !hanaIsSpeakingRef.current) {
+        // Contextual subtle reactions from Hana while candidate is answering
+        if (combined.length > 25 && !hanaIsSpeakingRef.current && isOpenDiscussion) {
           const reactions = ['Hmm...', 'I see', 'Got it', 'Understood'];
           const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
           setHanaReactionText(randomReaction);
@@ -566,7 +622,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       };
 
       recognition.onend = () => {
-        // Restart if still in meeting
         if (stage === 'meeting') {
           try {
             recognition.start();
@@ -583,7 +638,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         } catch {}
       };
     } catch {}
-  }, [stage, isListeningForTrigger]);
+  }, [stage, isListeningForTrigger, handleCandidateSpeechActivity]);
 
   // ----------------------------------------------------
   // Video Recording Engine (MediaRecorder)
@@ -653,18 +708,23 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       setHanaEntered(true);
       soundManager.playReceive();
 
-      // Hana welcomes the candidate
+      // Hana welcomes the candidate with neutral professional tone
       setMeetingPhase('welcome');
-      const welcomeText = `Hello! Welcome to your interview with MuxAI. I'm Hana, your AI screening partner today. It's wonderful to meet you, ${candidateName}! Can you hear and see me clearly?`;
-      speakHanaLine(welcomeText, () => {
-        // Transition to Question 1
-        setTimeout(() => {
-          advanceToPhase('question_1');
-        }, 1500);
-      }, 'happy');
+      const nameGreeting = candidateName.trim() ? `, ${candidateName.trim()}` : '';
+      const welcomeText = `Hello! Welcome to your interview with MuxAI. I'm Hana, your AI screening partner today. It's great to meet you${nameGreeting}. Can you hear and see me clearly?`;
+      speakHanaLine(
+        welcomeText,
+        () => {
+          setTimeout(() => {
+            advanceToPhase('question_1');
+          }, 1500);
+        },
+        'neutral'
+      );
     }, 2400);
   };
 
+  // Unified phase advance with vocal instructions before every task
   const advanceToPhase = (nextPhase: MeetingPhase) => {
     setMeetingPhase(nextPhase);
     setCandidateLiveTranscript('');
@@ -673,29 +733,36 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       const q1 = "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?";
       speakHanaLine(q1, undefined, 'neutral');
     } else if (nextPhase === 'question_2') {
-      const q2 = "Thank you! Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?";
+      const q2 = "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?";
       speakHanaLine(q2, undefined, 'neutral');
+    } else if (nextPhase === 'task_resume') {
+      const prompt = "Before we proceed to written tasks, let's review your credentials. Please upload your updated resume or CV document so we have the latest version on file for our recruiting team.";
+      speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_written') {
-      const prompt = "Before we continue, we have a short written assessment. Please take your time to write down 3 things you like about yourself and why.";
-      speakHanaLine(prompt, undefined, 'happy');
+      const prompt = "Next is a short written assessment. Please take your time to write down 3 things you like about yourself and why.";
+      speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_pressure') {
-      const prompt = "Next is a quick situational assessment regarding workload and pressure. Please select the option that best reflects your working style.";
+      const prompt = "Next is a quick situational question regarding workload and delivery pressure. Please select the option that best reflects how you operate.";
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_snapshot') {
-      const prompt = "For our verification check, we have a quick visual task! Please write down your phone number on a piece of paper and hold it up to the camera. We'll capture three angles: looking forward, looking left, and looking right while continuing to hold the paper up. When you are ready at each angle, say 'click', 'do it', 'okay', or 'ready'!";
+      const prompt = "For our verification check, we have a quick visual task. Please write down your phone number on a piece of paper and hold it up to the camera. We'll capture three angles: looking forward, looking left, and looking right while continuing to hold the paper up. When you are ready at each angle, say 'click', 'do it', 'okay', or 'ready'.";
       setSnapshotStep(1);
       setIsListeningForTrigger(true);
-      speakHanaLine(prompt, undefined, 'happy');
+      speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'candidate_qa') {
-      const prompt = "Awesome! We're almost at the end of our session. Do you have any questions for the recruiter or about the team and role?";
-      speakHanaLine(prompt, undefined, 'happy');
+      const prompt = "We are almost at the end of our session. Do you have any questions for me about MuxAI, the role, or the team?";
+      speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'wrapup') {
-      const closing = `Thank you so much for your time today, ${candidateName}! You did fantastic. The recruiting team will review your session, answers, and visual verification, and we'll follow up with you very soon. Have a wonderful rest of your day!`;
-      speakHanaLine(closing, () => {
-        setTimeout(() => {
-          handleEndMeetingAndReview();
-        }, 2000);
-      }, 'happy');
+      const closing = `Thank you so much for your time today, ${effectiveCandidateName}. You did a great job across all assessments. The recruiting team will review your session recording, uploaded resume, and answers, and we'll follow up with you very soon. Have a wonderful rest of your day.`;
+      speakHanaLine(
+        closing,
+        () => {
+          setTimeout(() => {
+            handleEndMeetingAndReview();
+          }, 2000);
+        },
+        'neutral'
+      );
     }
   };
 
@@ -721,19 +788,101 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     soundManager.playSend();
 
     if (qKey === 'question_1') {
-      const acknowledge = 'Thank you for sharing that! That gives great insight into your journey.';
-      speakHanaLine(acknowledge, () => {
-        advanceToPhase('question_2');
-      }, 'happy');
+      const acknowledge = 'Thank you for sharing that. That gives helpful context into your experience.';
+      speakHanaLine(
+        acknowledge,
+        () => {
+          advanceToPhase('question_2');
+        },
+        'neutral'
+      );
     } else {
-      const acknowledge = 'Understood! That was a very pragmatic approach to solving that challenge.';
-      speakHanaLine(acknowledge, () => {
-        advanceToPhase('task_written');
-      }, 'neutral');
+      const acknowledge = 'Understood. That was a structured and pragmatic approach to solving that challenge.';
+      speakHanaLine(
+        acknowledge,
+        () => {
+          advanceToPhase('task_resume');
+        },
+        'neutral'
+      );
     }
   };
 
-  // Submit written task (Must be >= 100 characters)
+  // ----------------------------------------------------
+  // Task 1: Resume Upload Handlers
+  // ----------------------------------------------------
+  const handleResumeFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingResume(true);
+    const reader = new FileReader();
+    const isText = file.type.includes('text') || file.name.endsWith('.txt') || file.name.endsWith('.md');
+
+    reader.onload = (loadEvent) => {
+      const dataUrl = loadEvent.target?.result as string;
+      const sizeInKb = Math.round(file.size / 1024);
+      const sizeStr = sizeInKb > 1024 ? `${(sizeInKb / 1024).toFixed(1)} MB` : `${sizeInKb} KB`;
+
+      const resumeItem: UploadedResume = {
+        fileName: file.name,
+        fileSize: sizeStr,
+        fileType: file.type || 'application/octet-stream',
+        dataUrl,
+        uploadedAt: new Date().toLocaleTimeString(),
+      };
+
+      if (isText && typeof dataUrl === 'string') {
+        try {
+          const textReader = new FileReader();
+          textReader.onload = (txtEvt) => {
+            resumeItem.textContent = txtEvt.target?.result as string;
+            setUploadedResume(resumeItem);
+            setIsUploadingResume(false);
+            soundManager.playSend();
+          };
+          textReader.readAsText(file);
+          return;
+        } catch {}
+      }
+
+      setUploadedResume(resumeItem);
+      setIsUploadingResume(false);
+      soundManager.playSend();
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmitResumeTask = () => {
+    if (!uploadedResume) return;
+    setResumeSubmitted(true);
+    soundManager.playSend();
+
+    setRecordedResponses((prev) => [
+      ...prev,
+      {
+        phase: 'task_resume',
+        question: 'Candidate Resume / CV Submission',
+        answer: `Uploaded: ${uploadedResume.fileName} (${uploadedResume.fileSize})`,
+        timestamp: new Date().toLocaleTimeString(),
+        aiNotes: `Verified document attachment (${uploadedResume.fileName}). Credentials updated for recruiter evaluation.`,
+      },
+    ]);
+
+    const acknowledge = 'Thank you. Your resume document has been received and attached to your dossier. Next is a short written assessment.';
+    speakHanaLine(
+      acknowledge,
+      () => {
+        advanceToPhase('task_written');
+      },
+      'neutral'
+    );
+  };
+
+  // ----------------------------------------------------
+  // Task 2: Written Task Handler (>= 100 characters)
+  // ----------------------------------------------------
   const handleSubmitWrittenTask = () => {
     if (writtenText.trim().length < 100) return;
     setWrittenSubmitted(true);
@@ -750,13 +899,19 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       },
     ]);
 
-    const acknowledge = 'Thank you for completing that! Great reflections. Let us move to the next item.';
-    speakHanaLine(acknowledge, () => {
-      advanceToPhase('task_pressure');
-    }, 'happy');
+    const acknowledge = 'Thank you for completing that. Great reflections. Let us move to the next assessment.';
+    speakHanaLine(
+      acknowledge,
+      () => {
+        advanceToPhase('task_pressure');
+      },
+      'neutral'
+    );
   };
 
-  // Submit situational pressure choice
+  // ----------------------------------------------------
+  // Task 3: Situational Pressure Choice
+  // ----------------------------------------------------
   const handleSubmitPressureRating = () => {
     if (!pressureRating) return;
     setPressureSubmitted(true);
@@ -769,27 +924,30 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         question: 'How well do you perform under pressure?',
         answer: pressureRating,
         timestamp: new Date().toLocaleTimeString(),
-        aiNotes: `Selected style: "${pressureRating}". Demonstrates dynamic adaptability under deadline stress.`,
+        aiNotes: `Selected style: "${pressureRating}". Demonstrates adaptability under deadline stress.`,
       },
     ]);
 
-    let acknowledge = 'Got it! Noted on your performance preferences.';
+    let acknowledge = 'Noted on your performance preferences. Now for our visual verification task.';
     if (pressureRating.includes('HELL YEAH')) {
-      acknowledge = "Haha, 'HELL YEAH'! I love that energy! Confidence under high-stakes deliveries is always valued.";
+      acknowledge = 'Noted on your strong confidence under high pressure. Now let us proceed to the visual verification task.';
     }
 
-    speakHanaLine(acknowledge, () => {
-      advanceToPhase('task_snapshot');
-    }, 'smug');
+    speakHanaLine(
+      acknowledge,
+      () => {
+        advanceToPhase('task_snapshot');
+      },
+      'neutral'
+    );
   };
 
   // ----------------------------------------------------
-  // Snapshot Capture Station with Voice Trigger ("click", "do it", "okay", "ready")
+  // Task 4: Snapshot Capture Station with Voice Trigger
   // ----------------------------------------------------
   const handleTakeSnapshotTrigger = () => {
     soundManager.playSend();
 
-    // Capture image from local video feed
     const video = localVideoRef.current || lobbyVideoRef.current;
     if (!video) return;
 
@@ -817,15 +975,19 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
     if (snapshotStep === 1) {
       setSnapshotStep(2);
-      speakHanaLine("Great! Now turn your head to look left while holding the paper up.", undefined, 'happy');
+      speakHanaLine('Great. Now turn your head to look left while holding the paper up.', undefined, 'neutral');
     } else if (snapshotStep === 2) {
       setSnapshotStep(3);
-      speakHanaLine("Perfect! Now turn your head to look right while continuing to hold the paper.", undefined, 'happy');
+      speakHanaLine('Good. Now turn your head to look right while continuing to hold the paper.', undefined, 'neutral');
     } else if (snapshotStep === 3) {
       setIsListeningForTrigger(false);
-      speakHanaLine("Awesome! Visual identity verification capture completed.", () => {
-        advanceToPhase('candidate_qa');
-      }, 'happy');
+      speakHanaLine(
+        'Visual identity verification capture completed. We are almost done with our session.',
+        () => {
+          advanceToPhase('candidate_qa');
+        },
+        'neutral'
+      );
     }
   };
 
@@ -838,17 +1000,16 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     setCandidateQuestionInput('');
     soundManager.playSend();
 
-    // Hana responds
     setTimeout(() => {
-      let answer = "That's a fantastic question! At MuxAI, our team focuses on pushing frontier autonomous AI agents while giving engineers autonomy to experiment and ship directly. Collaboration is open and high-velocity.";
+      let answer = "That's a good question. At MuxAI, our engineering team works directly on autonomous AI agent architectures with high shipping cadence. Collaboration is open and autonomy is prioritized.";
       if (qText.toLowerCase().includes('salary') || qText.toLowerCase().includes('compensation')) {
-        answer = "Compensation packages are highly competitive with full equity packages and top-tier benefits, discussed in detail at the offer stage.";
+        answer = 'Compensation packages are highly competitive and include equity options and comprehensive benefits, discussed directly at the offer stage.';
       } else if (qText.toLowerCase().includes('remote') || qText.toLowerCase().includes('location')) {
-        answer = "We are remote-first with flexible hubs globally, giving you freedom in your setup.";
+        answer = 'We are remote-first with flexible asynchronous setups globally.';
       }
 
       setQaHistory((prev) => [...prev, { sender: 'hana', text: answer }]);
-      speakHanaLine(answer, undefined, 'happy');
+      speakHanaLine(answer, undefined, 'neutral');
     }, 600);
   };
 
@@ -897,7 +1058,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   };
 
   // ----------------------------------------------------
-  // STAGE 1: LOBBY & PRE-INTERVIEW SETUP (Mercor Style)
+  // STAGE 1: LOBBY & PRE-INTERVIEW SETUP
   // ----------------------------------------------------
   if (stage === 'lobby') {
     return (
@@ -977,7 +1138,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 <div className="absolute bottom-4 inset-x-4 flex items-center justify-between pointer-events-none z-10">
                   <div className="px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/10 flex items-center gap-2 pointer-events-auto">
                     <span className={`w-2 h-2 rounded-full ${isCameraActive ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                    <span className="text-xs text-white font-medium">{candidateName}</span>
+                    <span className="text-xs text-white font-medium">{candidateName.trim() || 'You'}</span>
                   </div>
 
                   <div className="flex items-center gap-2 pointer-events-auto">
@@ -1113,7 +1274,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   </p>
                 </div>
 
-                {/* Candidate Info Input (Only Full Name) */}
+                {/* Candidate Info Input (Blank with placeholder e.g. Dewan Mukto) */}
                 <div className="space-y-3 pt-2">
                   <div>
                     <label className="text-xs font-semibold text-neutral-300 block mb-1">Your Full Name</label>
@@ -1121,8 +1282,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       type="text"
                       value={candidateName}
                       onChange={(e) => setCandidateName(e.target.value)}
-                      placeholder="e.g. Alex Rivera"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/10 text-white text-sm focus:outline-none focus:border-[#55d2f6]"
+                      placeholder="e.g. Dewan Mukto"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-black/30 border border-white/10 text-white text-sm focus:outline-none focus:border-[#55d2f6] placeholder:text-neutral-500"
                     />
                   </div>
                 </div>
@@ -1135,15 +1296,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       <span>Microphone Input Level</span>
                     </span>
                     <span className="font-mono text-neutral-400">
-                      {micVolume > 10 ? 'Detecting Voice' : 'Quiet'}
+                      {hasDetectedMicOnce || micVolume > 8 ? 'Detected' : 'Speak to Test'}
                     </span>
                   </div>
                   <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
                     <div
                       className={`h-full transition-all duration-75 rounded-full ${
-                        micVolume > 60 ? 'bg-emerald-400' : micVolume > 15 ? 'bg-[#55d2f6]' : 'bg-neutral-500'
+                        micVolume > 60 ? 'bg-emerald-400' : micVolume > 10 ? 'bg-[#55d2f6]' : 'bg-neutral-500'
                       }`}
-                      style={{ width: `${Math.min(100, micVolume * 1.5)}%` }}
+                      style={{ width: `${Math.min(100, Math.max(hasDetectedMicOnce ? 35 : 0, micVolume * 1.5))}%` }}
                     />
                   </div>
                 </div>
@@ -1167,7 +1328,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   </button>
                 </div>
 
-                {/* Checklist Badges with Red X and Green Checkmark indicators */}
+                {/* Checklist Badges with Red X and Green Checkmark indicators (Non-flickering) */}
                 <div className="space-y-2.5 pt-2 border-t border-white/10">
                   <div className="flex items-center gap-2 text-xs">
                     {hasPermissions && isCameraActive ? (
@@ -1185,14 +1346,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 text-xs">
-                    {hasPermissions && isMicActive && (micVolume > 5 || lobbySpokenText.length > 0) ? (
+                    {hasPermissions && isMicActive && (hasDetectedMicOnce || micVolume > 8 || lobbySpokenText.length > 0) ? (
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                     ) : (
                       <XCircle className="w-4 h-4 text-red-400 shrink-0" />
                     )}
                     <span
                       className={
-                        hasPermissions && isMicActive && (micVolume > 5 || lobbySpokenText.length > 0)
+                        hasPermissions && isMicActive && (hasDetectedMicOnce || micVolume > 8 || lobbySpokenText.length > 0)
                           ? 'text-neutral-200'
                           : 'text-red-300 font-medium'
                       }
@@ -1217,7 +1378,13 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 <button
                   type="button"
                   onClick={handleJoinMeeting}
-                  disabled={!hasPermissions || !isCameraActive || !isMicActive || !hasAgreedToRules}
+                  disabled={
+                    !hasPermissions ||
+                    !isCameraActive ||
+                    !isMicActive ||
+                    !(hasDetectedMicOnce || micVolume > 8 || lobbySpokenText.length > 0) ||
+                    !hasAgreedToRules
+                  }
                   className="w-full py-4 rounded-2xl text-sm font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all shadow-lg shadow-[#55d2f6]/20 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <span>Enter Video Screening Room</span>
@@ -1232,10 +1399,11 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   }
 
   // ----------------------------------------------------
-  // STAGE 2: LIVE VIDEO MEETING ROOM (Mercor style)
+  // STAGE 2: LIVE VIDEO MEETING ROOM
   // ----------------------------------------------------
   if (stage === 'meeting') {
     const isSpotlightActive =
+      meetingPhase === 'task_resume' ||
       meetingPhase === 'task_written' ||
       meetingPhase === 'task_pressure' ||
       meetingPhase === 'task_snapshot';
@@ -1285,17 +1453,58 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         <h3 className="font-bold text-lg text-white font-heading">
                           Hana is entering the meeting...
                         </h3>
-                        <p className="text-xs text-neutral-400 mt-1">Connecting 3D neural stream</p>
+                        <p className="text-xs text-neutral-400 mt-1">Connecting AI interviewer</p>
                       </div>
                     </div>
                   ) : (
                     <>
-                      {/* Live 3D VRM Canvas (Subtitles disabled as requested) */}
-                      <div className="w-full h-full relative">
+                      {/* Initial Camera Off view of Hana's panel while 3D model loads in background */}
+                      <div
+                        className={`absolute inset-0 flex flex-col items-center justify-center p-6 text-center z-10 transition-opacity duration-700 bg-[#121422] ${
+                          isHana3DReady ? 'opacity-0 pointer-events-none' : 'opacity-100'
+                        }`}
+                      >
+                        <div className="relative mb-4">
+                          <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-white/20 shadow-2xl relative">
+                            <img
+                              src="/Thumbnail.png"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).src = 'https://muxai.vercel.app/logo_Hana.png';
+                              }}
+                              alt="Hana"
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          {hanaIsSpeaking && (
+                            <span className="absolute -inset-2 rounded-full border-2 border-[#55d2f6] animate-ping opacity-75 pointer-events-none" />
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-xs text-neutral-300 font-medium mb-1">
+                          <VideoOff className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Camera Off • Hana</span>
+                        </div>
+                        <p className="text-[11px] text-neutral-500 font-mono">
+                          Connecting 3D neural feed...
+                        </p>
+                      </div>
+
+                      {/* Live 3D VRM Canvas (Avatar interaction touching disabled, neutral emotion default) */}
+                      <div
+                        className={`w-full h-full relative pointer-events-none select-none transition-opacity duration-700 ${
+                          isHana3DReady ? 'opacity-100' : 'opacity-0'
+                        }`}
+                      >
                         <VRMCanvas
+                          interactive={false}
                           isSpeaking={hanaIsSpeaking}
                           emotion={hanaEmotion}
-                          modelFileName="hana_v1.2_vrm1.vrm"
+                          modelFileName="hana_v1.0_moderncasual_vrm1.vrm"
+                          onLoaded={() => {
+                            setTimeout(() => {
+                              setIsHana3DReady(true);
+                            }, 1200);
+                          }}
                         />
                       </div>
 
@@ -1304,9 +1513,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         <div className="absolute inset-0 pointer-events-none ring-2 ring-[#55d2f6]/50 rounded-3xl animate-pulse" />
                       )}
 
-                      {/* Reaction Tag (Nods, "hmm", "I see", etc.) */}
+                      {/* Reaction Tag */}
                       {hanaReactionText && !hanaIsSpeaking && (
-                        <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-xs text-[#55d2f6] font-mono animate-in fade-in">
+                        <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-xs text-[#55d2f6] font-mono animate-in fade-in z-20">
                           {hanaReactionText}
                         </div>
                       )}
@@ -1314,7 +1523,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   )}
 
                   {/* Tile Label */}
-                  <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/10 flex items-center gap-2 z-10">
+                  <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/10 flex items-center gap-2 z-20">
                     <span className={`w-2 h-2 rounded-full ${hanaIsSpeaking ? 'bg-[#55d2f6] animate-pulse' : 'bg-emerald-400'}`} />
                     <span className="text-xs font-semibold text-white">Hana (AI Talent Partner)</span>
                   </div>
@@ -1341,7 +1550,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   <div className="absolute bottom-4 inset-x-4 flex items-center justify-between z-10">
                     <div className="px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/10 flex items-center gap-2">
                       <span className={`w-2 h-2 rounded-full ${isCandidateSpeaking ? 'bg-[#55d2f6] animate-ping' : 'bg-emerald-400'}`} />
-                      <span className="text-xs font-semibold text-white">{candidateName} (You)</span>
+                      <span className="text-xs font-semibold text-white">
+                        {candidateName.trim() ? `${candidateName.trim()} (You)` : 'You'}
+                      </span>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -1369,21 +1580,39 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               </div>
             )}
 
-            {/* Spotlight Dynamic Layout (Tasks: Written, Pressure, Snapshots) */}
+            {/* Spotlight Dynamic Layout (Tasks: Resume Upload, Written, Pressure, Snapshots) */}
             {isSpotlightActive && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0">
                 {/* Left 4 cols: Compact Participant Video Tiles */}
                 <div className="lg:col-span-4 flex flex-col gap-3 min-h-0">
                   {/* Hana Mini Tile */}
                   <div className="relative rounded-2xl bg-[#141624] border border-white/10 overflow-hidden flex-1 min-h-[160px]">
-                    <div className="w-full h-full relative">
+                    {!isHana3DReady ? (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-[#121422] z-10">
+                        <div className="w-14 h-14 rounded-full overflow-hidden border border-white/20 relative mb-2">
+                          <img
+                            src="/Thumbnail.png"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).src = 'https://muxai.vercel.app/logo_Hana.png';
+                            }}
+                            alt="Hana"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <span className="text-[11px] text-neutral-400">Camera Off</span>
+                      </div>
+                    ) : null}
+
+                    <div className="w-full h-full relative pointer-events-none select-none">
                       <VRMCanvas
+                        interactive={false}
                         isSpeaking={hanaIsSpeaking}
                         emotion={hanaEmotion}
-                        modelFileName="hana_v1.2_vrm1.vrm"
+                        modelFileName="hana_v1.0_moderncasual_vrm1.vrm"
+                        onLoaded={() => setIsHana3DReady(true)}
                       />
                     </div>
-                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-white z-10">
+                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-white z-20">
                       Hana (AI Recruiter)
                     </div>
                   </div>
@@ -1400,14 +1629,95 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       className="w-full h-full object-cover transform -scale-x-100"
                     />
                     <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/10 text-[11px] font-semibold text-white z-10">
-                      {candidateName}
+                      {candidateName.trim() || 'You'}
                     </div>
                   </div>
                 </div>
 
                 {/* Right 8 cols: Spotlight Frame */}
                 <div className="lg:col-span-8 rounded-3xl bg-[#141624] border border-white/15 p-6 shadow-2xl flex flex-col justify-between overflow-y-auto">
-                  {/* 1. SPOTLIGHT: Written Assessment (Must be >= 100 chars) */}
+                  {/* TASK 1: Resume / CV Document Upload */}
+                  {meetingPhase === 'task_resume' && (
+                    <div className="space-y-4 flex-1 flex flex-col justify-between">
+                      <div>
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#55d2f6]/10 text-[#55d2f6] text-xs font-semibold mb-2">
+                          <FileUp className="w-3.5 h-3.5" />
+                          <span>Credentials Document Upload</span>
+                        </div>
+                        <h3 className="text-xl sm:text-2xl font-bold font-heading text-white">
+                          Upload your updated resume or CV
+                        </h3>
+                        <p className="text-xs sm:text-sm text-neutral-400 mt-1">
+                          Please provide your latest resume file so the recruiting panel has direct access to your verified portfolio and credentials.
+                        </p>
+                      </div>
+
+                      {/* File Upload Zone */}
+                      <div className="flex-1 flex flex-col justify-center">
+                        {!uploadedResume ? (
+                          <label className="border-2 border-dashed border-white/20 hover:border-[#55d2f6]/60 rounded-3xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-all bg-black/30 hover:bg-black/50 group">
+                            <input
+                              type="file"
+                              accept=".pdf,.docx,.doc,.txt,.png,.jpg"
+                              onChange={handleResumeFileUpload}
+                              className="hidden"
+                            />
+                            <div className="w-16 h-16 rounded-2xl bg-[#55d2f6]/15 border border-[#55d2f6]/30 text-[#55d2f6] flex items-center justify-center mb-4 group-hover:scale-105 transition-transform">
+                              <Upload className="w-8 h-8" />
+                            </div>
+                            <h4 className="text-sm sm:text-base font-bold text-white mb-1">
+                              {isUploadingResume ? 'Processing document...' : 'Click or Drag to Upload Resume'}
+                            </h4>
+                            <p className="text-xs text-neutral-400 max-w-sm">
+                              Supported formats: PDF, DOCX, TXT, or Image Document (max 15MB)
+                            </p>
+                          </label>
+                        ) : (
+                          <div className="p-6 rounded-3xl bg-black/40 border border-emerald-500/30 flex flex-col sm:flex-row items-center justify-between gap-4">
+                            <div className="flex items-center gap-4">
+                              <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                                <FileCheck className="w-7 h-7" />
+                              </div>
+                              <div>
+                                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                                  <span>{uploadedResume.fileName}</span>
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-mono">
+                                    Ready
+                                  </span>
+                                </h4>
+                                <p className="text-xs text-neutral-400 mt-0.5 font-mono">
+                                  {uploadedResume.fileSize} • Uploaded at {uploadedResume.uploadedAt}
+                                </p>
+                              </div>
+                            </div>
+
+                            <label className="text-xs text-[#55d2f6] hover:underline cursor-pointer">
+                              <input
+                                type="file"
+                                accept=".pdf,.docx,.doc,.txt,.png,.jpg"
+                                onChange={handleResumeFileUpload}
+                                className="hidden"
+                              />
+                              Replace File
+                            </label>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleSubmitResumeTask}
+                          disabled={!uploadedResume || resumeSubmitted}
+                          className="px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold bg-[#55d2f6] text-neutral-950 hover:bg-[#8ce0fa] active:scale-95 transition-all shadow-md cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                        >
+                          Confirm &amp; Submit Resume Document
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TASK 2: Written Assessment (Must be >= 100 chars) */}
                   {meetingPhase === 'task_written' && (
                     <div className="space-y-4 flex-1 flex flex-col justify-between">
                       <div>
@@ -1429,7 +1739,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           value={writtenText}
                           onChange={(e) => setWrittenText(e.target.value)}
                           placeholder="1. I love diving deep into architectural puzzles because...&#10;2. I value empathetic communication with team members...&#10;3. I am resilient and relentless when debugging critical edge cases..."
-                          className="w-full flex-1 p-4 rounded-2xl bg-black/40 border border-white/15 text-white text-sm focus:outline-none focus:border-[#55d2f6] resize-none leading-relaxed"
+                          className="w-full flex-1 p-4 rounded-2xl bg-black/40 border border-white/15 text-white text-sm focus:outline-none focus:border-[#55d2f6] resize-none leading-relaxed placeholder:text-neutral-500"
                         />
                         <div className="flex items-center justify-between text-xs font-mono">
                           <span
@@ -1462,7 +1772,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     </div>
                   )}
 
-                  {/* 2. SPOTLIGHT: Situational Pressure Rating */}
+                  {/* TASK 3: Situational Pressure Rating */}
                   {meetingPhase === 'task_pressure' && (
                     <div className="space-y-6 flex-1 flex flex-col justify-between">
                       <div>
@@ -1518,7 +1828,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     </div>
                   )}
 
-                  {/* 3. SPOTLIGHT: Visual Verification Snapshots (Voice Trigger: "click", "do it", "okay", "ready") */}
+                  {/* TASK 4: Visual Verification Snapshots */}
                   {meetingPhase === 'task_snapshot' && (
                     <div className="space-y-4 flex-1 flex flex-col justify-between">
                       <div>
@@ -1533,7 +1843,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           Say aloud <strong className="text-[#55d2f6]">&quot;click&quot;</strong>,{' '}
                           <strong className="text-[#55d2f6]">&quot;do it&quot;</strong>,{' '}
                           <strong className="text-[#55d2f6]">&quot;okay&quot;</strong>, or{' '}
-                          <strong className="text-[#55d2f6]">&quot;ready&quot;</strong> to capture each shot!
+                          <strong className="text-[#55d2f6]">&quot;ready&quot;</strong> to capture each shot.
                         </p>
                       </div>
 
@@ -1668,7 +1978,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       onChange={(e) => setCandidateQuestionInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleSendCandidateQuestion()}
                       placeholder="Type question for Hana..."
-                      className="px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-[#55d2f6] w-52"
+                      className="px-3 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-[#55d2f6] w-52 placeholder:text-neutral-500"
                     />
                     <button
                       type="button"
@@ -1739,6 +2049,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               setStage('lobby');
               setMeetingPhase('joining');
               setHanaEntered(false);
+              setIsHana3DReady(false);
               recordedChunksRef.current = [];
               setRecordedVideoUrl(null);
             }}
@@ -1755,12 +2066,12 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         <div className="p-6 rounded-3xl bg-[#141624] border border-white/10 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#55d2f6] to-[#0f9bc7] text-neutral-950 flex items-center justify-center font-bold text-2xl font-heading shadow-lg shadow-[#55d2f6]/20">
-              {candidateName.charAt(0)}
+              {effectiveDossierName.charAt(0)}
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl sm:text-2xl font-bold font-heading text-white">
-                  {candidateName}
+                  {effectiveDossierName}
                 </h2>
                 <span
                   className={`text-xs px-2.5 py-0.5 rounded-full font-semibold capitalize ${
@@ -1929,7 +2240,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       {/* Download Recording */}
                       <a
                         href={recordedVideoUrl}
-                        download={`interview-recording-${candidateName.toLowerCase().replace(/\s+/g, '-')}.webm`}
+                        download={`interview-recording-${effectiveDossierName.toLowerCase().replace(/\s+/g, '-')}.webm`}
                         className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white cursor-pointer"
                         title="Download Recording (.webm)"
                       >
@@ -1963,7 +2274,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   <p className="text-xs text-neutral-400">Captured camera feed holding written phone number</p>
                 </div>
                 <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-semibold">
-                  3/3 Angles Approved
+                  {snapshots.length}/3 Angles Captured
                 </span>
               </div>
 
@@ -2004,6 +2315,33 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               <h3 className="text-base font-bold font-heading text-white">Assessment Responses</h3>
 
               <div className="space-y-4">
+                {/* Uploaded Resume Entry */}
+                {uploadedResume && (
+                  <div className="p-4 rounded-2xl bg-black/30 border border-emerald-500/30 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+                        <FileCheck className="w-3.5 h-3.5" />
+                        <span>Uploaded Resume Document</span>
+                      </span>
+                      <span className="text-neutral-400 font-mono text-[11px]">{uploadedResume.uploadedAt}</span>
+                    </div>
+                    <div className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/5 text-xs">
+                      <div>
+                        <span className="font-semibold text-white block">{uploadedResume.fileName}</span>
+                        <span className="text-neutral-400 text-[11px]">{uploadedResume.fileSize}</span>
+                      </div>
+                      <a
+                        href={uploadedResume.dataUrl}
+                        download={uploadedResume.fileName}
+                        className="px-3 py-1.5 rounded-lg bg-[#55d2f6] text-black font-semibold text-xs flex items-center gap-1 hover:opacity-90"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>Download</span>
+                      </a>
+                    </div>
+                  </div>
+                )}
+
                 {/* Written Task */}
                 <div className="p-4 rounded-2xl bg-black/30 border border-white/10 space-y-2">
                   <div className="flex items-center justify-between text-xs">
@@ -2057,89 +2395,175 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           </div>
         )}
 
-        {/* TAB 3: Candidate Resume & CV Viewer */}
+        {/* TAB 3: Candidate Resume / CV Viewer (Shows candidate uploaded resume file directly) */}
         {recruiterActiveTab === 'resume' && (
-          <div className="max-w-4xl mx-auto p-8 rounded-3xl bg-white text-neutral-900 shadow-2xl space-y-6 font-sans">
-            <div className="border-b border-black/10 pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-bold font-heading text-black">{candidateName}</h2>
-                <p className="text-sm font-semibold text-[#0f9bc7] mt-0.5">{targetRole}</p>
-                <p className="text-xs text-neutral-600 mt-1">
-                  alex.rivera@example.com • +1 (555) 234-5678 • San Francisco, CA
-                </p>
-              </div>
-              <div className="text-xs text-neutral-500 font-mono">Verified Candidate Dossier</div>
-            </div>
+          <div className="space-y-6">
+            {uploadedResume ? (
+              /* REAL UPLOADED RESUME FILE PRESENTATION */
+              <div className="max-w-4xl mx-auto rounded-3xl bg-white text-neutral-900 shadow-2xl overflow-hidden border border-black/10">
+                {/* Header with Document Meta & Actions */}
+                <div className="p-6 border-b border-black/10 bg-[#f8fafc] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-[#55d2f6]/20 border border-[#55d2f6]/40 text-[#0f9bc7] flex items-center justify-center">
+                      <FileCheck className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-black flex items-center gap-2">
+                        <span>{uploadedResume.fileName}</span>
+                        <span className="text-[11px] px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-semibold">
+                          Verified Candidate Document
+                        </span>
+                      </h3>
+                      <p className="text-xs text-neutral-500 mt-0.5 font-mono">
+                        {uploadedResume.fileSize} • Uploaded live at {uploadedResume.uploadedAt} by {effectiveDossierName}
+                      </p>
+                    </div>
+                  </div>
 
-            <div className="space-y-4">
-              <div>
-                <h4 className="text-xs font-bold font-heading uppercase tracking-wider text-neutral-500 mb-1.5">
-                  Professional Summary
-                </h4>
-                <p className="text-xs leading-relaxed text-neutral-700">
-                  Full Stack Engineer with 6+ years specializing in distributed systems, real-time WebSockets, WebGL / Three.js 3D pipelines, and multi-agent AI architectures. Passionate about autonomous workflows and intuitive interactive experiences.
-                </p>
-              </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a
+                      href={uploadedResume.dataUrl}
+                      download={uploadedResume.fileName}
+                      className="px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download File</span>
+                    </a>
+                    <a
+                      href={uploadedResume.dataUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3.5 py-2 rounded-xl bg-white border border-neutral-300 hover:bg-neutral-50 text-neutral-700 text-xs font-semibold transition-all flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Open Preview</span>
+                    </a>
+                  </div>
+                </div>
 
-              <div>
-                <h4 className="text-xs font-bold font-heading uppercase tracking-wider text-neutral-500 mb-2">
-                  Core Technical Skills
-                </h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    'TypeScript',
-                    'React 19',
-                    'Node.js & Express',
-                    'Three.js / WebGL',
-                    'Web Speech API',
-                    'MediaRecorder API',
-                    'PostgreSQL / NeonDB',
-                    'Gemini API & LLMs',
-                    'WebSockets / WebRTC',
-                    'Tailwind CSS',
-                  ].map((s) => (
-                    <span key={s} className="px-2.5 py-1 rounded-md bg-neutral-100 text-neutral-800 text-xs font-medium">
-                      {s}
-                    </span>
-                  ))}
+                {/* Document Body Viewer */}
+                <div className="p-6 bg-neutral-100 min-h-[500px] flex flex-col items-center justify-center">
+                  {uploadedResume.fileType.includes('pdf') || uploadedResume.fileName.endsWith('.pdf') ? (
+                    <iframe
+                      src={uploadedResume.dataUrl}
+                      className="w-full h-[650px] rounded-2xl border border-black/10 bg-white shadow-inner"
+                      title="Uploaded Candidate Resume PDF"
+                    />
+                  ) : uploadedResume.fileType.includes('image') ||
+                    uploadedResume.fileName.endsWith('.png') ||
+                    uploadedResume.fileName.endsWith('.jpg') ? (
+                    <img
+                      src={uploadedResume.dataUrl}
+                      alt="Uploaded Candidate Resume"
+                      className="max-h-[650px] mx-auto object-contain rounded-xl shadow-lg border border-black/10"
+                    />
+                  ) : (
+                    <div className="w-full bg-white p-6 rounded-2xl border border-black/10 shadow-sm space-y-4">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-neutral-500">
+                        <FileText className="w-4 h-4 text-[#0f9bc7]" />
+                        <span>Document Content Preview:</span>
+                      </div>
+                      <pre className="text-xs font-mono text-neutral-800 whitespace-pre-wrap leading-relaxed max-h-[500px] overflow-auto p-4 bg-neutral-50 rounded-xl border border-black/5">
+                        {uploadedResume.textContent || 'Binary document content verified. Click "Download File" to view full original.'}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               </div>
+            ) : (
+              /* Fallback if no resume uploaded during test run */
+              <div className="max-w-4xl mx-auto p-8 rounded-3xl bg-white text-neutral-900 shadow-2xl space-y-6 font-sans">
+                <div className="border-b border-black/10 pb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold font-heading text-black">{effectiveDossierName}</h2>
+                    <p className="text-sm font-semibold text-[#0f9bc7] mt-0.5">{targetRole}</p>
+                    <p className="text-xs text-neutral-600 mt-1">
+                      {candidateName ? `${candidateName.toLowerCase().replace(/\s+/g, '.')}@example.com` : 'candidate@example.com'} • Verified Candidate Dossier
+                    </p>
+                  </div>
+                  <label className="px-3.5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 self-start">
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.doc,.txt,.png,.jpg"
+                      onChange={handleResumeFileUpload}
+                      className="hidden"
+                    />
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload Resume Now</span>
+                  </label>
+                </div>
 
-              <div>
-                <h4 className="text-xs font-bold font-heading uppercase tracking-wider text-neutral-500 mb-3">
-                  Experience History
-                </h4>
                 <div className="space-y-4">
                   <div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-black">Staff Engineer • Autonomous Interactive Systems</span>
-                      <span className="text-neutral-500">2022 - Present</span>
-                    </div>
-                    <p className="text-xs text-neutral-600 mt-1">
-                      Architected high-throughput AI companion runtime with sub-200ms latency, handling multimodal vision, voice synthesis, and low-latency browser streaming.
+                    <h4 className="text-xs font-bold font-heading uppercase tracking-wider text-neutral-500 mb-1.5">
+                      Professional Summary
+                    </h4>
+                    <p className="text-xs leading-relaxed text-neutral-700">
+                      Full Stack Engineer with 6+ years specializing in distributed systems, real-time WebSockets, WebGL / Three.js 3D pipelines, and multi-agent AI architectures. Passionate about autonomous workflows and intuitive interactive experiences.
                     </p>
                   </div>
+
                   <div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-black">Senior Software Engineer • Realtime Cloud Labs</span>
-                      <span className="text-neutral-500">2019 - 2022</span>
+                    <h4 className="text-xs font-bold font-heading uppercase tracking-wider text-neutral-500 mb-2">
+                      Core Technical Skills
+                    </h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        'TypeScript',
+                        'React 19',
+                        'Node.js & Express',
+                        'Three.js / WebGL',
+                        'Web Speech API',
+                        'MediaRecorder API',
+                        'PostgreSQL / NeonDB',
+                        'Gemini API & LLMs',
+                        'WebSockets / WebRTC',
+                        'Tailwind CSS',
+                      ].map((s) => (
+                        <span key={s} className="px-2.5 py-1 rounded-md bg-neutral-100 text-neutral-800 text-xs font-medium">
+                          {s}
+                        </span>
+                      ))}
                     </div>
-                    <p className="text-xs text-neutral-600 mt-1">
-                      Built video conferencing infrastructure, client media recording pipelines, and reactive canvas interaction systems.
+                  </div>
+
+                  <div>
+                    <h4 className="text-xs font-bold font-heading uppercase tracking-wider text-neutral-500 mb-3">
+                      Experience History
+                    </h4>
+                    <div className="space-y-4">
+                      <div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-black">Staff Engineer • Autonomous Interactive Systems</span>
+                          <span className="text-neutral-500">2022 - Present</span>
+                        </div>
+                        <p className="text-xs text-neutral-600 mt-1">
+                          Architected high-throughput AI companion runtime with sub-200ms latency, handling multimodal vision, voice synthesis, and low-latency browser streaming.
+                        </p>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-black">Senior Software Engineer • Realtime Cloud Labs</span>
+                          <span className="text-neutral-500">2019 - 2022</span>
+                        </div>
+                        <p className="text-xs text-neutral-600 mt-1">
+                          Built video conferencing infrastructure, client media recording pipelines, and reactive canvas interaction systems.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-xs font-bold font-heading uppercase tracking-wider text-neutral-500 mb-1.5">
+                      Education &amp; Credentials
+                    </h4>
+                    <p className="text-xs text-neutral-700">
+                      B.S. in Computer Science • University of California, Berkeley
                     </p>
                   </div>
                 </div>
               </div>
-
-              <div>
-                <h4 className="text-xs font-bold font-heading uppercase tracking-wider text-neutral-500 mb-1.5">
-                  Education &amp; Credentials
-                </h4>
-                <p className="text-xs text-neutral-700">
-                  B.S. in Computer Science • University of California, Berkeley (2019)
-                </p>
-              </div>
-            </div>
+            )}
           </div>
         )}
       </main>
