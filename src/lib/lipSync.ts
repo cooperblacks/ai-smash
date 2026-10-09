@@ -47,53 +47,47 @@ class LipSyncManager {
   public onBoundary(word: string) {
     if (!this.isSpeaking) return;
 
+    // Activate speaking window for this word
+    this.activeUntil = performance.now() + 260;
+
     const lower = word.toLowerCase().trim();
-
-    // Natural silence/closure on punctuation, empty gaps, or pauses between phrases
-    if (!lower || lower.length === 0 || /[.,!?;:\-—"']/.test(lower)) {
-      this.targetVisemes = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
-      this.activeUntil = performance.now() + 60;
-      return;
-    }
-
-    // Activate subtle speaking window for this word
-    this.activeUntil = performance.now() + 150;
+    if (!lower || lower.length === 0) return;
 
     const visemes: VisemeWeights = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
 
-    // Analyze phonemes with subtle, natural amplitude (never excessive)
+    // Analyze phonemes and dominant vowels with natural, moderate amplitude
     if (/[ao]/.test(lower)) {
       if (lower.includes('o') || lower.includes('aw')) {
-        visemes.oh = 0.22;
+        visemes.oh = 0.32;
       }
       if (lower.includes('a') || lower.includes('ah')) {
-        visemes.aa = 0.26;
+        visemes.aa = 0.35;
       }
     }
     if (/[iuwy]/.test(lower)) {
       if (lower.includes('u') || lower.includes('oo') || lower.includes('w')) {
-        visemes.ou = 0.16;
+        visemes.ou = 0.25;
       }
       if (lower.includes('i') || lower.includes('y')) {
-        visemes.ih = 0.18;
+        visemes.ih = 0.22;
       }
     }
     if (/[e]/.test(lower)) {
-      visemes.ee = 0.18;
+      visemes.ee = 0.25;
     }
 
     // Default gentle opening if standard word with no primary vowel match
     if (visemes.aa === 0 && visemes.ih === 0 && visemes.ou === 0 && visemes.ee === 0 && visemes.oh === 0) {
-      visemes.aa = 0.16;
+      visemes.aa = 0.18;
     }
 
     this.targetVisemes = visemes;
 
-    // Decay mouth opening cleanly when syllable finishes so lips close tightly between words
+    // Decay mouth opening cleanly when syllable finishes
     if (this.decayTimeout) clearTimeout(this.decayTimeout);
     this.decayTimeout = setTimeout(() => {
       this.targetVisemes = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
-    }, 95);
+    }, 180);
   }
 
   public endSpeech() {
@@ -110,7 +104,7 @@ class LipSyncManager {
    */
   public update(delta: number, _elapsed: number) {
     const now = performance.now();
-    const isExplicitActive = this.isSpeaking && now <= this.activeUntil;
+const isExplicitActive = this.isSpeaking && now <= this.activeUntil;
     const isActive = this.isSpeaking;
 
     if (this.isSpeaking && !isExplicitActive) {
@@ -126,19 +120,20 @@ class LipSyncManager {
       this.targetVisemes.ou = Math.max(0, mouthOpen * 0.16);
     }
 
-    // Fast responsive interpolation to allow sharp, clean closing of lips in between words
-    const rate = isActive ? 22 : 36;
+
+    const isActiveWindow = this.isSpeaking && now <= this.activeUntil;
+
+    // During active word utterance, lerp smoothly. During pause or silence, decay fast to 0
+    const rate = isActiveWindow ? 12 : 24;
 
     for (const key of ['aa', 'ih', 'ou', 'ee', 'oh'] as VisemeName[]) {
-      const target = isActive ? this.targetVisemes[key] : 0;
+      const target = isActiveWindow ? this.targetVisemes[key] : 0;
       this.currentVisemes[key] +=
         (target - this.currentVisemes[key]) * Math.min(1, delta * rate);
 
-      // Definite silence deadzone threshold: snap completely to 0 to prevent lip hovering
-      if (!isActive || this.currentVisemes[key] < 0.015) {
-        if (!isActive || target === 0) {
-          this.currentVisemes[key] = 0;
-        }
+      // Definite silence deadzone threshold: snap completely to 0 to prevent lip quivering!
+      if (this.currentVisemes[key] < 0.02) {
+        this.currentVisemes[key] = 0;
       }
     }
 
