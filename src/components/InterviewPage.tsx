@@ -704,54 +704,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   };
 
-  const lastMuteNoticeTimeRef = useRef<number>(0);
-
-  const notifyCandidateIfMuted = useCallback(() => {
-    const now = Date.now();
-    if (now - lastMuteNoticeTimeRef.current < 20000) return;
-    if (stageRef.current !== 'meeting' || hanaIsSpeakingRef.current) return;
-    lastMuteNoticeTimeRef.current = now;
-    speakHanaLine(
-      "It looks like your microphone is currently muted. Please unmute yourself whenever you are ready so I can hear your response.",
-      undefined,
-      'neutral'
-    );
-  }, [speakHanaLine]);
-
-  // Periodic active check during meeting to notify user if they remain muted
-  useEffect(() => {
-    if (stage !== 'meeting') return;
-    const interval = setInterval(() => {
-      if (
-        !isMicActive &&
-        stageRef.current === 'meeting' &&
-        !hanaIsSpeakingRef.current &&
-        meetingPhaseRef.current !== 'joining' &&
-        meetingPhaseRef.current !== 'wrapup'
-      ) {
-        notifyCandidateIfMuted();
-      }
-    }, 7000);
-    return () => clearInterval(interval);
-  }, [isMicActive, notifyCandidateIfMuted, stage]);
-
-  const toggleMic = () => {
-    if (mediaStreamRef.current) {
-      const audioTrack = mediaStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMicActive(audioTrack.enabled);
-        if (!audioTrack.enabled && stageRef.current === 'meeting') {
-          setTimeout(() => {
-            if (!audioTrack.enabled) {
-              notifyCandidateIfMuted();
-            }
-          }, 800);
-        }
-      }
-    }
-  };
-
   // ----------------------------------------------------
   // Speech Synthesis & Interruption Logic (Hana Voice)
   // Default mood is neutral (no smiling or grinning)
@@ -864,6 +816,54 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     },
     []
   );
+
+  const lastMuteNoticeTimeRef = useRef<number>(0);
+
+  const notifyCandidateIfMuted = useCallback(() => {
+    const now = Date.now();
+    if (now - lastMuteNoticeTimeRef.current < 20000) return;
+    if (stageRef.current !== 'meeting' || hanaIsSpeakingRef.current) return;
+    lastMuteNoticeTimeRef.current = now;
+    speakHanaLine(
+      "It looks like your microphone is currently muted. Please unmute yourself whenever you are ready so I can hear your response.",
+      undefined,
+      'neutral'
+    );
+  }, [speakHanaLine]);
+
+  // Periodic active check during meeting to notify user if they remain muted
+  useEffect(() => {
+    if (stage !== 'meeting') return;
+    const interval = setInterval(() => {
+      if (
+        !isMicActive &&
+        stageRef.current === 'meeting' &&
+        !hanaIsSpeakingRef.current &&
+        meetingPhaseRef.current !== 'joining' &&
+        meetingPhaseRef.current !== 'wrapup'
+      ) {
+        notifyCandidateIfMuted();
+      }
+    }, 7000);
+    return () => clearInterval(interval);
+  }, [isMicActive, notifyCandidateIfMuted, stage]);
+
+  const toggleMic = () => {
+    if (mediaStreamRef.current) {
+      const audioTrack = mediaStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsMicActive(audioTrack.enabled);
+        if (!audioTrack.enabled && stageRef.current === 'meeting') {
+          setTimeout(() => {
+            if (!audioTrack.enabled) {
+              notifyCandidateIfMuted();
+            }
+          }, 800);
+        }
+      }
+    }
+  };
 
   // Active question prompt text for candidate reclarification / repeat requests
   const getCurrentQuestionText = useCallback((phase: MeetingPhase): string => {
