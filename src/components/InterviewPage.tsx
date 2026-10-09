@@ -96,6 +96,7 @@ export interface InterviewScenarioConfig {
   activeSilenceVoiceline: string;
   silenceVoicelineOptions: string[];
   minCharsForOpenQuestionAdvance: number;
+  showHana3DModel: boolean; // Recruiter toggle for 3D model
 }
 
 const DEFAULT_SCENARIO_CONFIG: InterviewScenarioConfig = {
@@ -108,7 +109,8 @@ const DEFAULT_SCENARIO_CONFIG: InterviewScenarioConfig = {
     "Got it, that gives me good context. Let's continue forward.",
     "Understood. That covers this part well, let's proceed to the next step.",
   ],
-  minCharsForOpenQuestionAdvance: 20,
+  minCharsForOpenQuestionAdvance: 10,
+  showHana3DModel: true,
 };
 
 // Lenient fuzzy matching so candidate can naturally say ready/agree phrases
@@ -267,6 +269,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
   // Candidate Q&A Voice-First State
   const qaSilenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const resetSilenceTimerRef = useRef<() => void>(() => {});
   const [qaStageState, setQaStageState] = useState<
     'listening' | 'answering' | 'waiting_5s' | 'asking_that_is_all' | 'waiting_final_5s'
   >('listening');
@@ -282,6 +285,18 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   useEffect(() => {
     meetingPhaseRef.current = meetingPhase;
   }, [meetingPhase]);
+
+  // Recruiter Keyboard Shortcut (Ctrl+Shift+S / Cmd+Shift+S) to open scenario settings
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+        e.preventDefault();
+        setIsConfigModalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Speech Recognition (Candidate speech to text with silence detection auto-send)
   const [candidateLiveTranscript, setCandidateLiveTranscript] = useState<string>('');
@@ -689,12 +704,50 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   };
 
+  const lastMuteNoticeTimeRef = useRef<number>(0);
+
+  const notifyCandidateIfMuted = useCallback(() => {
+    const now = Date.now();
+    if (now - lastMuteNoticeTimeRef.current < 20000) return;
+    if (stageRef.current !== 'meeting' || hanaIsSpeakingRef.current) return;
+    lastMuteNoticeTimeRef.current = now;
+    speakHanaLine(
+      "It looks like your microphone is currently muted. Please unmute yourself whenever you are ready so I can hear your response.",
+      undefined,
+      'neutral'
+    );
+  }, [speakHanaLine]);
+
+  // Periodic active check during meeting to notify user if they remain muted
+  useEffect(() => {
+    if (stage !== 'meeting') return;
+    const interval = setInterval(() => {
+      if (
+        !isMicActive &&
+        stageRef.current === 'meeting' &&
+        !hanaIsSpeakingRef.current &&
+        meetingPhaseRef.current !== 'joining' &&
+        meetingPhaseRef.current !== 'wrapup'
+      ) {
+        notifyCandidateIfMuted();
+      }
+    }, 7000);
+    return () => clearInterval(interval);
+  }, [isMicActive, notifyCandidateIfMuted, stage]);
+
   const toggleMic = () => {
     if (mediaStreamRef.current) {
       const audioTrack = mediaStreamRef.current.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsMicActive(audioTrack.enabled);
+        if (!audioTrack.enabled && stageRef.current === 'meeting') {
+          setTimeout(() => {
+            if (!audioTrack.enabled) {
+              notifyCandidateIfMuted();
+            }
+          }, 800);
+        }
       }
     }
   };
@@ -812,10 +865,58 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     []
   );
 
+  // Active question prompt text for candidate reclarification / repeat requests
+  const getCurrentQuestionText = useCallback((phase: MeetingPhase): string => {
+    switch (phase) {
+      case 'welcome':
+        return "Can you hear and see me clearly?";
+      case 'question_1':
+        return "Could you tell me a bit about yourself, your background, and what drives your passion for this role?";
+      case 'question_2':
+        return "Could you walk me through a challenging technical problem or project you tackled recently, and how you approached resolving it?";
+      case 'task_resume':
+        return "Please upload your updated resume or CV document so our recruiting team has your latest credentials on file.";
+      case 'task_written':
+        return "In the reflection panel, please write down three things you like about yourself and why, reaching at least 100 characters.";
+      case 'task_pressure':
+        return "Please select the situational option that most accurately reflects how you perform under intense project pressure.";
+      case 'task_snapshot':
+        return "Please hold up your paper with your phone number or test digits, look directly forward, and say 'click' when you're set.";
+      case 'candidate_qa':
+        return "Do you have any questions for me or our recruiting team about the role or MuxAI?";
+      default:
+        return "Please proceed with the current interview question.";
+    }
+  }, []);
+
   // Situational query capturing across interview phases
   const handleSituationalQuery = useCallback(
     (lower: string, phase: MeetingPhase): boolean => {
       if (hanaIsSpeakingRef.current) return false;
+
+      // 0. Global Question Repeat Request (candidate asks Hana to repeat the question anytime)
+      const isRepeatRequest =
+        /\b(repeat the question|repeat question|can you repeat the question|could you repeat the question|what was the question|what is the question|say that again|can you say that again|could you say that again|pardon|pardon me|repeat that|what did you ask|ask again|could you repeat please|can you repeat please|say again|what is the task|what was the task|can you rephrase|could you rephrase|rephrase the question|rephrase|what did you say|what was that)\b/i.test(
+          lower
+        ) ||
+        /^(repeat|repeat please|what was the question\??|can you repeat\??|say again|pardon\??|what\??)$/i.test(lower);
+
+      if (isRepeatRequest) {
+        setNodCount((c) => c + 1);
+        const questionPrompt = getCurrentQuestionText(phase);
+        speakHanaLine(
+          `Certainly! Here is the question again: ${questionPrompt}`,
+          () => {
+            setCandidateLiveTranscript('');
+            candidateTranscriptRef.current = '';
+            if (phase === 'question_1' || phase === 'question_2') {
+              resetSilenceTimerRef.current?.();
+            }
+          },
+          'neutral'
+        );
+        return true;
+      }
 
       // 1. Snapshot Task: Question about phone number on paper or photo taking
       if (phase === 'task_snapshot') {
@@ -1133,7 +1234,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       const text = candidateTranscriptRef.current.trim();
       const phaseNow = meetingPhaseRef.current;
 
-      if (text.length >= scenarioConfig.minCharsForOpenQuestionAdvance && !hanaIsSpeakingRef.current) {
+      if (!hanaIsSpeakingRef.current && (phaseNow === 'question_1' || phaseNow === 'question_2')) {
         soundManager.playSend();
         setIsCandidateSpeaking(false);
         setNodCount((c) => c + 1);
@@ -1151,7 +1252,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 handleSaveResponse(
                   'question_1',
                   'Could you tell me a bit about yourself, your background, and what drives your passion for this role?',
-                  text,
+                  text || '[No verbal response provided]',
                   'question_2'
                 );
               }, 450);
@@ -1166,7 +1267,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 handleSaveResponse(
                   'question_2',
                   'Walk me through a challenging technical problem or project you tackled recently.',
-                  text,
+                  text || '[No verbal response provided]',
                   'task_resume'
                 );
               }, 450);
@@ -1177,7 +1278,11 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       }
       silenceTimerRef.current = null;
     }, waitDurationMs);
-  }, [handleSaveResponse, scenarioConfig.activeSilenceVoiceline, scenarioConfig.minCharsForOpenQuestionAdvance, scenarioConfig.openQuestionSilenceSeconds, speakHanaLine]);
+  }, [handleSaveResponse, scenarioConfig.activeSilenceVoiceline, scenarioConfig.openQuestionSilenceSeconds, speakHanaLine]);
+
+  useEffect(() => {
+    resetSilenceTimerRef.current = resetSilenceTimer;
+  }, [resetSilenceTimer]);
 
   // ----------------------------------------------------
   // Candidate Speech Recognition during Live Meeting
@@ -1230,11 +1335,62 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           const curPhase = meetingPhaseRef.current;
           const lower = currentUtterance.toLowerCase().trim();
 
+          // 0. Situational questions and repeat request interception across ALL phases
+          if (handleSituationalQuery(lower, curPhase)) {
+            setCandidateLiveTranscript('');
+            candidateTranscriptRef.current = '';
+            return;
+          }
+
+          // Welcome phase affirmation
+          if (curPhase === 'welcome') {
+            setCandidateLiveTranscript(currentUtterance);
+            const isAffirmative = /\b(yes|yeah|yep|i can|hear you|loud and clear|see you|hello|hi)\b/i.test(lower);
+            if (isAffirmative && !hanaIsSpeakingRef.current) {
+              setNodCount((c) => c + 1);
+              setTimeout(() => {
+                advanceToPhase('question_1');
+              }, 400);
+            }
+            return;
+          }
+
           // 1. OPEN QUESTIONS (question_1, question_2)
           if (curPhase === 'question_1' || curPhase === 'question_2') {
             candidateTranscriptRef.current = (candidateTranscriptRef.current ? candidateTranscriptRef.current + ' ' : '') + currentUtterance;
             setCandidateLiveTranscript(candidateTranscriptRef.current);
             setIsCandidateSpeaking(true);
+
+            // Early completion phrase check (e.g. "That's all for this question")
+            const isDoneEarly =
+              /\b(that'?s all|that is all|i'?m done|i am done|that covers it|that'?s my answer|finished answering|nothing more to say)\b/i.test(
+                lower
+              );
+            if (isDoneEarly && candidateTranscriptRef.current.length >= 10 && !hanaIsSpeakingRef.current) {
+              if (silenceTimerRef.current) {
+                clearTimeout(silenceTimerRef.current);
+                silenceTimerRef.current = null;
+              }
+              soundManager.playSend();
+              setIsCandidateSpeaking(false);
+              setNodCount((c) => c + 1);
+              const voiceline = scenarioConfig.activeSilenceVoiceline || "I am assuming you have nothing else to say for now so let's move on to the next step.";
+              const text = candidateTranscriptRef.current.trim();
+              if (curPhase === 'question_1') {
+                speakHanaLine(voiceline, () => {
+                  setTimeout(() => {
+                    handleSaveResponse('question_1', 'Introduction and background', text, 'question_2');
+                  }, 450);
+                }, 'neutral');
+              } else {
+                speakHanaLine(voiceline, () => {
+                  setTimeout(() => {
+                    handleSaveResponse('question_2', 'Challenging technical problem', text, 'task_resume');
+                  }, 450);
+                }, 'neutral');
+              }
+              return;
+            }
 
             // Contextual subtle reactions from Hana while candidate is answering
             if (candidateTranscriptRef.current.length > 25 && !hanaIsSpeakingRef.current) {
@@ -1244,7 +1400,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               setHanaEmotion('neutral');
             }
 
-            // Start silence detection timer (default 3.0 seconds configurable)
+            // Start silence detection timer (auto-proceeds when no new words detected for duration)
             resetSilenceTimer();
           }
 
@@ -1578,8 +1734,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         welcomeText,
         () => {
           setTimeout(() => {
-            advanceToPhase('question_1');
-          }, 1500);
+            if (meetingPhaseRef.current === 'welcome' && !hanaIsSpeakingRef.current) {
+              advanceToPhase('question_1');
+            }
+          }, 4500);
         },
         'neutral'
       );
@@ -1594,10 +1752,22 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
     if (nextPhase === 'question_1') {
       const q1 = "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?";
-      speakHanaLine(q1, undefined, 'neutral');
+      speakHanaLine(
+        q1,
+        () => {
+          resetSilenceTimer();
+        },
+        'neutral'
+      );
     } else if (nextPhase === 'question_2') {
       const q2 = "Thank you. Now, could you walk me through a challenging technical problem or project you tackled recently? How did you approach resolving it?";
-      speakHanaLine(q2, undefined, 'neutral');
+      speakHanaLine(
+        q2,
+        () => {
+          resetSilenceTimer();
+        },
+        'neutral'
+      );
     } else if (nextPhase === 'task_resume') {
       const prompt = "Before we proceed to written tasks, let's review your credentials. Please upload your updated resume or CV document so we have the latest version on file for our recruiting team.";
       speakHanaLine(prompt, undefined, 'neutral');
@@ -2070,6 +2240,18 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   </label>
                 ))}
               </div>
+              <div className="mt-3 pt-2.5 border-t border-neutral-200">
+                <label className="text-[11px] font-semibold text-neutral-700 block mb-1">
+                  Or enter custom voiceline:
+                </label>
+                <input
+                  type="text"
+                  value={scenarioConfig.activeSilenceVoiceline}
+                  onChange={(e) => updateScenarioConfig({ activeSilenceVoiceline: e.target.value })}
+                  placeholder="e.g. Thank you for your answer, let us proceed..."
+                  className="w-full px-3 py-1.5 rounded-xl border border-neutral-200 bg-white text-neutral-900 text-xs focus:outline-none focus:ring-1 focus:ring-sky-500"
+                />
+              </div>
             </div>
 
             {/* Setting 3: Q&A Silence Timeout */}
@@ -2102,6 +2284,32 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 <span>5.0s (default)</span>
                 <span>8.0s</span>
               </div>
+            </div>
+
+            {/* Setting 4: 3D Model in Meeting Room Toggle */}
+            <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="font-bold text-neutral-900 flex items-center gap-1.5">
+                  <UserCheck className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Show 3D Model in Meeting</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateScenarioConfig({ showHana3DModel: !scenarioConfig.showHana3DModel })
+                  }
+                  className={`px-3 py-1 rounded-full text-xs font-bold transition-colors cursor-pointer border ${
+                    scenarioConfig.showHana3DModel
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-neutral-200 text-neutral-600 border-neutral-300'
+                  }`}
+                >
+                  {scenarioConfig.showHana3DModel ? 'Enabled (Yes)' : 'Disabled (No)'}
+                </button>
+              </div>
+              <p className="text-[11px] text-neutral-500">
+                Choose whether to display the 3D VRM Hana model or a clean static avatar image in the interview room.
+              </p>
             </div>
 
             {/* Candidate Voice Strictness Notice */}
@@ -2187,24 +2395,12 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
               <h1 className="font-bold text-sm sm:text-base font-heading tracking-tight text-neutral-900">
-                Hana Interview
+                Hana Interview Session • ID: demo
               </h1>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setIsConfigModalOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Configure Recruiter Flow & Scenario Settings"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-              <span>Scenario Settings</span>
-            </button>
-            <span className="px-3.5 py-1 rounded-full bg-neutral-100 border border-neutral-200 text-neutral-700 font-mono text-xs font-semibold shadow-xs">
-              ID: {interviewId}
-            </span>
           </div>
         </header>
 
@@ -2366,36 +2562,17 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     <span>Web Speech API is required for this screening room. Please use Chrome, Edge, or a supported browser.</span>
                   </div>
                 ) : lobbySpeechError ? (
-                  <div className="pt-2 border-t border-neutral-200 flex items-center justify-between gap-2 text-xs text-amber-700">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
-                      <span className="truncate">{lobbySpeechError}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHasAgreedToRules(true);
-                        setLobbyMatchPercent(100);
-                        soundManager.playSend();
-                      }}
-                      className="text-xs font-semibold text-sky-600 hover:underline shrink-0 cursor-pointer"
-                    >
-                      Agree Manually
-                    </button>
+                  <div className="pt-2 border-t border-neutral-200 flex items-center gap-1.5 text-xs text-amber-700">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+                    <span>{lobbySpeechError}</span>
                   </div>
                 ) : (
-                  <div className="pt-2 border-t border-neutral-200 flex items-center justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHasAgreedToRules(true);
-                        setLobbyMatchPercent(100);
-                        soundManager.playSend();
-                      }}
-                      className="text-[11px] text-neutral-500 hover:text-sky-600 hover:underline cursor-pointer"
-                    >
-                      Or click here to agree manually
-                    </button>
+                  <div className="pt-2 border-t border-neutral-200 flex items-center justify-between text-xs text-neutral-500">
+                    <span className="flex items-center gap-1.5">
+                      <Mic className="w-3.5 h-3.5 text-sky-600 animate-pulse" />
+                      <span>Speak &ldquo;I am ready to start&rdquo; to proceed</span>
+                    </span>
+                    <span className="font-mono text-[11px] text-neutral-400">Voice required</span>
                   </div>
                 )}
               </div>
@@ -2567,22 +2744,12 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             </div>
             <div className="hidden sm:block">
               <span className="text-xs font-semibold text-neutral-900 block">
-                Hana Interview Session • Room #{interviewId}
+                Hana Interview Session • ID: demo
               </span>
-              <span className="text-[10px] text-neutral-500 block">{targetRole}</span>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5">
-            <button
-              type="button"
-              onClick={() => setIsConfigModalOpen(true)}
-              className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200 text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5"
-              title="Recruiter Flow & Scenario Settings"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Scenario Config</span>
-            </button>
             <button
               type="button"
               onClick={handleEndMeetingAndReview}
@@ -2595,64 +2762,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
         {/* Video Conference Layout */}
         <main className="flex-1 p-3 sm:p-4 overflow-hidden flex flex-col min-h-0 relative">
-          {/* Voice-First Q&A Interactive HUD Overlay */}
-          {meetingPhase === 'candidate_qa' && (
-            <div className="absolute top-4 inset-x-4 z-30 pointer-events-none flex justify-center">
-              <div className="bg-white/95 backdrop-blur-md border border-neutral-200 shadow-xl rounded-2xl p-4 max-w-lg w-full text-center space-y-2 pointer-events-auto animate-in fade-in slide-in-from-top-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="font-bold text-xs text-neutral-900 font-heading">
-                      Voice-First Candidate Q&amp;A
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-sky-700 font-mono font-semibold bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
-                    {hanaIsSpeaking
-                      ? 'Hana speaking'
-                      : qaStageState === 'waiting_5s'
-                      ? 'Waiting 5s for questions...'
-                      : qaStageState === 'asking_that_is_all'
-                      ? 'Asking if that is all...'
-                      : qaStageState === 'waiting_final_5s'
-                      ? 'Waiting 5s before wrapup...'
-                      : 'Listening for candidate...'}
-                  </span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-neutral-50 border border-neutral-200 text-xs text-neutral-700">
-                  {qaHistory.length > 0 ? (
-                    <div className="text-left space-y-1.5">
-                      <p className="text-[11px] font-semibold text-neutral-900 line-clamp-1">
-                        You asked: &ldquo;{qaHistory[qaHistory.length - 1].sender === 'candidate' ? qaHistory[qaHistory.length - 1].text : qaHistory[qaHistory.length - 2]?.text}&rdquo;
-                      </p>
-                      <p className="text-[11px] text-neutral-600 line-clamp-2">
-                        Hana: &ldquo;{qaHistory[qaHistory.length - 1].sender === 'hana' ? qaHistory[qaHistory.length - 1].text : 'Answering...'}&rdquo;
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="text-neutral-600">
-                      Speak into your microphone to ask Hana anything about MuxAI, our tech stack, team culture, or next steps.
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex items-center justify-between text-[11px] pt-0.5">
-                  <span className="text-neutral-500 flex items-center gap-1.5">
-                    <Mic className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
-                    <span>Microphone active • Voice-only discussion</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={concludeQaSession}
-                    className="text-sky-600 hover:text-sky-800 font-semibold cursor-pointer underline text-[11px]"
-                  >
-                    No further questions / Wrap up
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
           <div className="flex-1 grid gap-4 min-h-0 h-full overflow-hidden">
             {/* Standard Conversational Layout (Two large tiles) */}
             {!isSpotlightActive && (

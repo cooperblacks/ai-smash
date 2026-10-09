@@ -939,16 +939,18 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
         if (vrm.expressionManager) {
           const speakingNow = isSpeakingRef.current || lipSyncManager.getIsSpeaking();
           let dynamicMouth = 0;
-          if (speakingNow) {
-            const t = elapsed * 8.5;
-            dynamicMouth = Math.max(0, 0.42 + 0.35 * Math.sin(t) * Math.cos(t * 0.7));
+          if (speakingNow && visemes.aa === 0 && visemes.ih === 0 && visemes.oh === 0) {
+            const t = elapsed * 7.5;
+            const cycle = Math.sin(t);
+            dynamicMouth = cycle > 0.30 ? (cycle - 0.30) * 0.20 : 0;
           }
 
-          const aaVal = Math.min(1.0, Math.max(visemes.aa, speakingNow ? dynamicMouth * 0.85 : 0) + currentMouthOpen);
-          const ihVal = Math.min(1.0, Math.max(visemes.ih, speakingNow ? dynamicMouth * 0.5 : 0));
-          const ouVal = Math.min(1.0, Math.max(visemes.ou, speakingNow ? dynamicMouth * 0.4 : 0));
-          const eeVal = Math.min(1.0, Math.max(visemes.ee, speakingNow ? dynamicMouth * 0.45 : 0));
-          const ohVal = Math.min(1.0, Math.max(visemes.oh, speakingNow ? dynamicMouth * 0.6 : 0));
+          // Subtle, natural mouth movements (capped at gentle amplitudes)
+          const aaVal = speakingNow ? Math.min(0.28, Math.max(visemes.aa, dynamicMouth) + currentMouthOpen * 0.5) : 0;
+          const ihVal = speakingNow ? Math.min(0.20, Math.max(visemes.ih, dynamicMouth * 0.35)) : 0;
+          const ouVal = speakingNow ? Math.min(0.18, Math.max(visemes.ou, dynamicMouth * 0.25)) : 0;
+          const eeVal = speakingNow ? Math.min(0.20, Math.max(visemes.ee, dynamicMouth * 0.30)) : 0;
+          const ohVal = speakingNow ? Math.min(0.22, Math.max(visemes.oh, dynamicMouth * 0.35)) : 0;
 
           vrm.expressionManager.setValue('aa', aaVal);
           vrm.expressionManager.setValue('ih', ihVal);
@@ -971,22 +973,20 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           vrm.expressionManager.setValue('sad', currentSad);
           vrm.expressionManager.setValue('angry', currentAngry);
 
-          // Direct mesh morph target fallback for VRoid and GLTF meshes
-          if (speakingNow) {
-            vrm.scene.traverse((obj) => {
-              const mesh = obj as THREE.SkinnedMesh;
-              if (mesh.isMesh && mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
-                const dict = mesh.morphTargetDictionary;
-                if (typeof dict['Fcl_MTH_A'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_A']] = aaVal;
-                if (typeof dict['Fcl_MTH_I'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_I']] = ihVal;
-                if (typeof dict['Fcl_MTH_U'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_U']] = ouVal;
-                if (typeof dict['Fcl_MTH_E'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_E']] = eeVal;
-                if (typeof dict['Fcl_MTH_O'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_O']] = ohVal;
-                if (typeof dict['jawOpen'] === 'number') mesh.morphTargetInfluences[dict['jawOpen']] = aaVal;
-                if (typeof dict['mouthOpen'] === 'number') mesh.morphTargetInfluences[dict['mouthOpen']] = aaVal;
-              }
-            });
-          }
+          // Direct mesh morph target fallback for VRoid and GLTF meshes (cleanly reset to 0 when not speaking)
+          vrm.scene.traverse((obj) => {
+            const mesh = obj as THREE.SkinnedMesh;
+            if (mesh.isMesh && mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
+              const dict = mesh.morphTargetDictionary;
+              if (typeof dict['Fcl_MTH_A'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_A']] = aaVal;
+              if (typeof dict['Fcl_MTH_I'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_I']] = ihVal;
+              if (typeof dict['Fcl_MTH_U'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_U']] = ouVal;
+              if (typeof dict['Fcl_MTH_E'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_E']] = eeVal;
+              if (typeof dict['Fcl_MTH_O'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_O']] = ohVal;
+              if (typeof dict['jawOpen'] === 'number') mesh.morphTargetInfluences[dict['jawOpen']] = aaVal;
+              if (typeof dict['mouthOpen'] === 'number') mesh.morphTargetInfluences[dict['mouthOpen']] = aaVal;
+            }
+          });
         }
 
         // Blinking
