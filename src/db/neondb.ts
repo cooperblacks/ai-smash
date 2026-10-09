@@ -309,33 +309,40 @@ export async function signUpAccount(params: {
 
   const pool = await ensureNeonSchema();
   if (pool) {
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [cleanEmail]);
-    if (existing.rows.length > 0) {
-      throw new Error('An account with this email address already exists.');
+    try {
+      const existing = await pool.query('SELECT id FROM users WHERE email = $1', [cleanEmail]);
+      if (existing.rows.length > 0) {
+        throw new Error('An account with this email address already exists.');
+      }
+
+      const insertRes = await pool.query(
+        `INSERT INTO users (
+          email,
+          password_hash,
+          username,
+          display_name,
+          avatar_url,
+          account_type,
+          last_payment,
+          last_login_time,
+          last_login_device,
+          device_fingerprints,
+          equipped_outfit_id,
+          unlocked_outfits,
+          active_theme_id
+        ) VALUES ($1, $2, $3, $4, $5, 'free', NULL, $6, $7, $8, 'mint-maid-apron', '{}', 'classic-light')
+        RETURNING *`,
+        [cleanEmail, passwordHash, username, displayName, defaultAvatar, nowIso, deviceLabel, fingerprints]
+      );
+
+      const user = sanitizeUser(insertRes.rows[0]);
+      return { user, conversations: [], customThemes: [] };
+    } catch (err: any) {
+      if (err.message && err.message.includes('already exists')) {
+        throw err;
+      }
+      console.warn('NeonDB query error, falling back to in-memory storage:', err?.message);
     }
-
-    const insertRes = await pool.query(
-      `INSERT INTO users (
-        email,
-        password_hash,
-        username,
-        display_name,
-        avatar_url,
-        account_type,
-        last_payment,
-        last_login_time,
-        last_login_device,
-        device_fingerprints,
-        equipped_outfit_id,
-        unlocked_outfits,
-        active_theme_id
-      ) VALUES ($1, $2, $3, $4, $5, 'free', NULL, $6, $7, $8, 'mint-maid-apron', '{}', 'classic-light')
-      RETURNING *`,
-      [cleanEmail, passwordHash, username, displayName, defaultAvatar, nowIso, deviceLabel, fingerprints]
-    );
-
-    const user = sanitizeUser(insertRes.rows[0]);
-    return { user, conversations: [], customThemes: [] };
   }
 
   // Fallback when NeonDB env vars are not configured yet

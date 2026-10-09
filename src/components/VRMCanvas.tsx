@@ -19,6 +19,9 @@ interface VRMCanvasProps {
   lastUserMessageAt?: number;
   emotion?: AvatarEmotion;
   interactive?: boolean;
+  enablePointerTracking?: boolean;
+  disableIdleWaitingAnimations?: boolean;
+  nodTrigger?: number;
 }
 
 export const VRMCanvas: React.FC<VRMCanvasProps> = ({
@@ -31,6 +34,9 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   lastUserMessageAt = 0,
   emotion = 'neutral',
   interactive = true,
+  enablePointerTracking = true,
+  disableIdleWaitingAnimations = false,
+  nodTrigger = 0,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -39,6 +45,23 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
   useEffect(() => {
     interactiveRef.current = interactive;
   }, [interactive]);
+
+  const enablePointerTrackingRef = useRef(enablePointerTracking);
+  useEffect(() => {
+    enablePointerTrackingRef.current = enablePointerTracking;
+  }, [enablePointerTracking]);
+
+  const disableIdleWaitingAnimationsRef = useRef(disableIdleWaitingAnimations);
+  useEffect(() => {
+    disableIdleWaitingAnimationsRef.current = disableIdleWaitingAnimations;
+  }, [disableIdleWaitingAnimations]);
+
+  const nodProgressRef = useRef(0);
+  useEffect(() => {
+    if (nodTrigger && nodTrigger > 0) {
+      nodProgressRef.current = 1.0;
+    }
+  }, [nodTrigger]);
 
   // Store emotion state in ref to avoid recreating Three.js scene while updating expressions smoothly
   const emotionRef = useRef<AvatarEmotion>(emotion);
@@ -699,7 +722,7 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
       if (vrm) {
         // 60-second message inactivity counter -> select random waiting animation & auto-reset
-        if (!isFallSequenceActiveRef.current) {
+        if (!isFallSequenceActiveRef.current && !disableIdleWaitingAnimationsRef.current) {
           waitInactivityTimerRef.current += delta;
           const waitIntervalSec = VRM_CONFIG.interaction.waitAnimationIntervalSec || 60.0;
           if (waitInactivityTimerRef.current >= waitIntervalSec) {
@@ -914,11 +937,31 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
         // Expression Manager Updates
         if (vrm.expressionManager) {
-          vrm.expressionManager.setValue('aa', Math.min(1.0, visemes.aa + currentMouthOpen));
-          vrm.expressionManager.setValue('ih', visemes.ih);
-          vrm.expressionManager.setValue('ou', visemes.ou);
-          vrm.expressionManager.setValue('ee', visemes.ee);
-          vrm.expressionManager.setValue('oh', visemes.oh);
+          const speakingNow = isSpeakingRef.current || lipSyncManager.getIsSpeaking();
+          let dynamicMouth = 0;
+          if (speakingNow) {
+            const t = elapsed * 8.5;
+            dynamicMouth = Math.max(0, 0.42 + 0.35 * Math.sin(t) * Math.cos(t * 0.7));
+          }
+
+          const aaVal = Math.min(1.0, Math.max(visemes.aa, speakingNow ? dynamicMouth * 0.85 : 0) + currentMouthOpen);
+          const ihVal = Math.min(1.0, Math.max(visemes.ih, speakingNow ? dynamicMouth * 0.5 : 0));
+          const ouVal = Math.min(1.0, Math.max(visemes.ou, speakingNow ? dynamicMouth * 0.4 : 0));
+          const eeVal = Math.min(1.0, Math.max(visemes.ee, speakingNow ? dynamicMouth * 0.45 : 0));
+          const ohVal = Math.min(1.0, Math.max(visemes.oh, speakingNow ? dynamicMouth * 0.6 : 0));
+
+          vrm.expressionManager.setValue('aa', aaVal);
+          vrm.expressionManager.setValue('ih', ihVal);
+          vrm.expressionManager.setValue('ou', ouVal);
+          vrm.expressionManager.setValue('ee', eeVal);
+          vrm.expressionManager.setValue('oh', ohVal);
+
+          // Support VRM 0.0 blendshape fallback keys
+          try { vrm.expressionManager.setValue('a' as any, aaVal); } catch {}
+          try { vrm.expressionManager.setValue('i' as any, ihVal); } catch {}
+          try { vrm.expressionManager.setValue('u' as any, ouVal); } catch {}
+          try { vrm.expressionManager.setValue('e' as any, eeVal); } catch {}
+          try { vrm.expressionManager.setValue('o' as any, ohVal); } catch {}
 
           // Suppress peaceful baseline expressions while angry/annoyed mood is active
           const moodSuppression = Math.max(0, 1.0 - currentAngry * 1.2);
@@ -927,6 +970,23 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
           vrm.expressionManager.setValue('surprised', Math.min(1.0, currentSurprised + hitExpressionSurprised));
           vrm.expressionManager.setValue('sad', currentSad);
           vrm.expressionManager.setValue('angry', currentAngry);
+
+          // Direct mesh morph target fallback for VRoid and GLTF meshes
+          if (speakingNow) {
+            vrm.scene.traverse((obj) => {
+              const mesh = obj as THREE.SkinnedMesh;
+              if (mesh.isMesh && mesh.morphTargetDictionary && mesh.morphTargetInfluences) {
+                const dict = mesh.morphTargetDictionary;
+                if (typeof dict['Fcl_MTH_A'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_A']] = aaVal;
+                if (typeof dict['Fcl_MTH_I'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_I']] = ihVal;
+                if (typeof dict['Fcl_MTH_U'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_U']] = ouVal;
+                if (typeof dict['Fcl_MTH_E'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_E']] = eeVal;
+                if (typeof dict['Fcl_MTH_O'] === 'number') mesh.morphTargetInfluences[dict['Fcl_MTH_O']] = ohVal;
+                if (typeof dict['jawOpen'] === 'number') mesh.morphTargetInfluences[dict['jawOpen']] = aaVal;
+                if (typeof dict['mouthOpen'] === 'number') mesh.morphTargetInfluences[dict['mouthOpen']] = aaVal;
+              }
+            });
+          }
         }
 
         // Blinking
@@ -948,6 +1008,9 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
               isBlinking = false;
             }
           }
+
+          // Evaluate and apply all expressions immediately to character meshes
+          vrm.expressionManager.update();
         }
 
         // Eye Saccades
@@ -970,23 +1033,32 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
           const headScreenPos = scratchHeadWorldPos.project(cameraRef.current);
 
-          const deltaX = mouseRef.current.x - headScreenPos.x;
-          const deltaY = mouseRef.current.y - headScreenPos.y;
+          // Manual affirmative nod progress calculation
+          let manualNodX = 0;
+          if (nodProgressRef.current > 0) {
+            nodProgressRef.current = Math.max(0, nodProgressRef.current - delta * 2.2);
+            manualNodX = Math.sin((1.0 - nodProgressRef.current) * Math.PI) * 0.16;
+          }
+
+          // If pointer tracking is disabled (e.g. in /interview), do not follow mouse cursor!
+          const hasPointer = enablePointerTrackingRef.current;
+          const deltaX = hasPointer ? mouseRef.current.x - headScreenPos.x : 0;
+          const deltaY = hasPointer ? mouseRef.current.y - headScreenPos.y : 0;
 
           const activeDeltaX = deltaX * (1.0 - speechFacingFactor);
           const activeDeltaY = deltaY * (1.0 - speechFacingFactor);
 
           const speechNodX = speechFacingFactor * Math.sin(elapsed * 4.5) * 0.02;
 
-          const targetRotY = THREE.MathUtils.clamp(activeDeltaX * 0.75, -0.85, 0.85) + saccadeOffsetX * (1.0 - speechFacingFactor * 0.6);
-          const targetRotX = THREE.MathUtils.clamp(-activeDeltaY * 0.6, -0.45, 0.45) + saccadeOffsetY * (1.0 - speechFacingFactor * 0.6) + speechNodX;
+          const targetRotY = THREE.MathUtils.clamp(activeDeltaX * 0.75, -0.85, 0.85) + (hasPointer ? saccadeOffsetX * (1.0 - speechFacingFactor * 0.6) : saccadeOffsetX * 0.4);
+          const targetRotX = THREE.MathUtils.clamp(-activeDeltaY * 0.6, -0.45, 0.45) + (hasPointer ? saccadeOffsetY * (1.0 - speechFacingFactor * 0.6) : saccadeOffsetY * 0.4) + speechNodX + manualNodX;
 
           headNode.rotation.y = THREE.MathUtils.lerp(headNode.rotation.y, targetRotY, delta * 7.5);
           headNode.rotation.x = THREE.MathUtils.lerp(headNode.rotation.x, targetRotX, delta * 7.5);
 
           if (neckNode) {
             const targetNeckY = THREE.MathUtils.clamp(activeDeltaX * 0.35, -0.4, 0.4);
-            const targetNeckX = THREE.MathUtils.clamp(-activeDeltaY * 0.25, -0.25, 0.25) + speechNodX * 0.4;
+            const targetNeckX = THREE.MathUtils.clamp(-activeDeltaY * 0.25, -0.25, 0.25) + speechNodX * 0.4 + manualNodX * 0.5;
             neckNode.rotation.y = THREE.MathUtils.lerp(neckNode.rotation.y, targetNeckY, delta * 6.0);
             neckNode.rotation.x = THREE.MathUtils.lerp(neckNode.rotation.x, targetNeckX, delta * 6.0);
           }
@@ -1013,6 +1085,11 @@ export const VRMCanvas: React.FC<VRMCanvasProps> = ({
 
     // 9. Pointer movement for gaze tracking & drag rotation (v1 rotational multiplier)
     const handlePointerMove = (e: PointerEvent) => {
+      if (!enablePointerTrackingRef.current) {
+        mouseRef.current = { x: 0, y: 0 };
+        return;
+      }
+
       const rect = container.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const y = -(((e.clientY - rect.top) / rect.height) * 2 - 1);

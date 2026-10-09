@@ -55,30 +55,30 @@ class LipSyncManager {
 
     const visemes: VisemeWeights = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
 
-    // Analyze phonemes and dominant vowels with natural, moderate amplitude
+    // Analyze phonemes and dominant vowels with natural, expressive amplitude
     if (/[ao]/.test(lower)) {
       if (lower.includes('o') || lower.includes('aw')) {
-        visemes.oh = 0.32;
+        visemes.oh = 0.75;
       }
       if (lower.includes('a') || lower.includes('ah')) {
-        visemes.aa = 0.35;
+        visemes.aa = 0.82;
       }
     }
     if (/[iuwy]/.test(lower)) {
       if (lower.includes('u') || lower.includes('oo') || lower.includes('w')) {
-        visemes.ou = 0.25;
+        visemes.ou = 0.65;
       }
       if (lower.includes('i') || lower.includes('y')) {
-        visemes.ih = 0.22;
+        visemes.ih = 0.60;
       }
     }
     if (/[e]/.test(lower)) {
-      visemes.ee = 0.25;
+      visemes.ee = 0.65;
     }
 
     // Default gentle opening if standard word with no primary vowel match
     if (visemes.aa === 0 && visemes.ih === 0 && visemes.ou === 0 && visemes.ee === 0 && visemes.oh === 0) {
-      visemes.aa = 0.18;
+      visemes.aa = 0.55;
     }
 
     this.targetVisemes = visemes;
@@ -87,7 +87,7 @@ class LipSyncManager {
     if (this.decayTimeout) clearTimeout(this.decayTimeout);
     this.decayTimeout = setTimeout(() => {
       this.targetVisemes = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0 };
-    }, 180);
+    }, 220);
   }
 
   public endSpeech() {
@@ -104,19 +104,33 @@ class LipSyncManager {
    */
   public update(delta: number, _elapsed: number) {
     const now = performance.now();
-    const isActiveWindow = this.isSpeaking && now <= this.activeUntil;
+    const isExplicitActive = this.isSpeaking && now <= this.activeUntil;
+    const isActive = this.isSpeaking;
 
-    // During active word utterance, lerp smoothly. During pause or silence, decay fast to 0
-    const rate = isActiveWindow ? 12 : 24;
+    if (this.isSpeaking && !isExplicitActive) {
+      // Procedural speech cadence fallback: generate rhythmic vowel visemes matching human speech cadence (~3-4Hz)
+      const t = now * 0.012;
+      const mouthOpen = Math.max(0, 0.42 + 0.36 * Math.sin(t * 3.2));
+      this.targetVisemes.aa = Math.max(0, mouthOpen * (0.7 + 0.3 * Math.sin(t * 2.1)));
+      this.targetVisemes.ih = Math.max(0, mouthOpen * 0.45 * Math.cos(t * 1.8));
+      this.targetVisemes.oh = Math.max(0, mouthOpen * 0.55 * Math.sin(t * 1.4));
+      this.targetVisemes.ee = Math.max(0, mouthOpen * 0.4 * Math.cos(t * 2.6));
+      this.targetVisemes.ou = Math.max(0, mouthOpen * 0.35 * Math.sin(t * 2.9));
+    }
+
+    // During active utterance, lerp smoothly. During pause or silence, decay fast to 0
+    const rate = isActive ? 14 : 26;
 
     for (const key of ['aa', 'ih', 'ou', 'ee', 'oh'] as VisemeName[]) {
-      const target = isActiveWindow ? this.targetVisemes[key] : 0;
+      const target = isActive ? this.targetVisemes[key] : 0;
       this.currentVisemes[key] +=
         (target - this.currentVisemes[key]) * Math.min(1, delta * rate);
 
       // Definite silence deadzone threshold: snap completely to 0 to prevent lip quivering!
-      if (this.currentVisemes[key] < 0.02) {
-        this.currentVisemes[key] = 0;
+      if (!isActive || this.currentVisemes[key] < 0.02) {
+        if (!isActive) {
+          this.currentVisemes[key] = 0;
+        }
       }
     }
 
