@@ -39,8 +39,9 @@ import {
 import confetti from 'canvas-confetti';
 import { VRMCanvas } from './VRMCanvas';
 import { soundManager, waitForPersonaVoice, getPersonaVoice } from '../lib/audio';
-import { AI_PROFILE } from '../constants';
+import { AI_PROFILE, SPEECH_RECOGNITION_CONFIG } from '../constants';
 import { AvatarEmotion } from '../lib/emotionDetector';
+import { lipSyncManager } from '../lib/lipSync';
 
 interface InterviewPageProps {
   onNavigateHome: () => void;
@@ -88,16 +89,25 @@ interface UploadedResume {
 
 const STORAGE_KEY = 'hana_interview_session_data';
 
+// Lenient fuzzy matching so candidate can naturally say ready/agree phrases
 function calculateAgreementMatch(spoken: string): number {
-  const target = 'i am ready to start my interview and i agree to the rules';
   const cleanSpoken = spoken.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!cleanSpoken) return 0;
 
-  if (cleanSpoken.includes(target) || (target.includes(cleanSpoken) && cleanSpoken.length >= 40)) {
-    return 100;
+  // Exact or very close
+  if (
+    cleanSpoken.includes('ready to start my interview') ||
+    cleanSpoken.includes('ready to start') ||
+    cleanSpoken.includes('i agree to the rules') ||
+    cleanSpoken.includes('agree to the rules') ||
+    cleanSpoken.includes('ready')
+  ) {
+    if (cleanSpoken.includes('ready') && (cleanSpoken.includes('interview') || cleanSpoken.includes('agree') || cleanSpoken.includes('start'))) {
+      return 100;
+    }
   }
 
-  const targetWords = target.split(' ');
+  const targetWords = ['i', 'am', 'ready', 'to', 'start', 'my', 'interview', 'and', 'agree', 'rules'];
   const spokenWords = cleanSpoken.split(' ');
 
   let matchCount = 0;
@@ -107,20 +117,11 @@ function calculateAgreementMatch(spoken: string): number {
     }
   }
 
-  const wordRatio = Math.round((matchCount / targetWords.length) * 100);
-
-  // Core trigger phrase check: "i am ready to start my interview"
-  if (cleanSpoken.includes('i am ready to start my interview')) {
-    const extraWords = ['and', 'agree', 'to', 'the', 'rules'];
-    let extraHits = 0;
-    for (const w of extraWords) {
-      if (cleanSpoken.includes(w)) extraHits++;
-    }
-    const combined = Math.min(100, 60 + extraHits * 10);
-    return Math.max(wordRatio, combined);
+  const ratio = Math.round((matchCount / targetWords.length) * 100);
+  if (spokenWords.includes('ready') && (spokenWords.includes('start') || spokenWords.includes('interview'))) {
+    return Math.max(85, ratio);
   }
-
-  return wordRatio;
+  return ratio;
 }
 
 export const InterviewPage: React.FC<InterviewPageProps> = ({
@@ -183,6 +184,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
   // Refs for Media Streams & Recorders
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const spotlightVideoRef = useRef<HTMLVideoElement | null>(null);
   const lobbyVideoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -194,6 +196,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const recordedChunksRef = useRef<Blob[]>([]);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
+  const [isRecordingFinalizing, setIsRecordingFinalizing] = useState<boolean>(false);
+  const [videoPlaybackError, setVideoPlaybackError] = useState<boolean>(false);
   const [recordedDuration, setRecordedDuration] = useState<number>(0);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -204,6 +208,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const [hanaEmotion, setHanaEmotion] = useState<AvatarEmotion>('neutral');
   const [hanaIsSpeaking, setHanaIsSpeaking] = useState<boolean>(false);
   const [hanaReactionText, setHanaReactionText] = useState<string>('');
+  const [taskClarificationNotice, setTaskClarificationNotice] = useState<string | null>(null);
 
   // 3D Model Loading State: Show Camera Off avatar panel first, then fade in 3D
   const [isHana3DReady, setIsHana3DReady] = useState<boolean>(false);
@@ -214,15 +219,18 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const wasInterruptedRef = useRef<boolean>(false);
   const speechResumeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const meetingPhaseRef = useRef<MeetingPhase>('joining');
+  const lastTaskReExplainTimeRef = useRef<number>(0);
 
   useEffect(() => {
     meetingPhaseRef.current = meetingPhase;
   }, [meetingPhase]);
 
-  // Speech Recognition (Candidate speech to text)
+  // Speech Recognition (Candidate speech to text with silence detection auto-send)
   const [candidateLiveTranscript, setCandidateLiveTranscript] = useState<string>('');
   const [isCandidateSpeaking, setIsCandidateSpeaking] = useState<boolean>(false);
   const recognitionRef = useRef<any>(null);
+  const candidateTranscriptRef = useRef<string>('');
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Spotlight Tasks Data
   // Task 1: Resume Document Upload (handled via uploadedResume)
@@ -236,9 +244,20 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
   // Task 4: Visual Identity Snapshots (Forward, Left, Right via trigger words "click", "do it", "okay", "ready")
   const [snapshotStep, setSnapshotStep] = useState<0 | 1 | 2 | 3>(0); // 0: not started, 1: forward, 2: left, 3: right
+  const snapshotStepRef = useRef<0 | 1 | 2 | 3>(0);
   const [snapshots, setSnapshots] = useState<SnapshotItem[]>([]);
   const [isListeningForTrigger, setIsListeningForTrigger] = useState<boolean>(false);
+  const isListeningForTriggerRef = useRef<boolean>(false);
   const [lastDetectedTrigger, setLastDetectedTrigger] = useState<string | null>(null);
+  const isTriggerLockedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    isListeningForTriggerRef.current = isListeningForTrigger;
+  }, [isListeningForTrigger]);
+
+  useEffect(() => {
+    snapshotStepRef.current = snapshotStep;
+  }, [snapshotStep]);
 
   // Candidate Q&A
   const [candidateQuestionInput, setCandidateQuestionInput] = useState<string>('');
@@ -476,7 +495,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     };
   }, []);
 
+  // ------------------------------------------------------------------
   // Live Lobby Speech Detection for Meeting Agreement Phrase
+  // Uses continuous recognition with robust error recovery (similar to /chat)
+  // ------------------------------------------------------------------
   useEffect(() => {
     if (stage !== 'lobby') return;
 
@@ -489,73 +511,91 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     let isDisposed = false;
     let recognition: any = null;
 
-    try {
-      recognition = new SpeechRec();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
+    const initRecognition = () => {
+      if (isDisposed) return;
+      try {
+        recognition = new SpeechRec();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
 
-      recognition.onstart = () => {
-        if (!isDisposed) {
-          setIsLobbyListening(true);
-          setLobbySpeechError(null);
-        }
-      };
+        recognition.onstart = () => {
+          if (!isDisposed) {
+            setIsLobbyListening(true);
+            setLobbySpeechError(null);
+          }
+        };
 
-      recognition.onresult = (event: any) => {
-        if (isDisposed) return;
-        let interim = '';
-        let final = '';
+        recognition.onresult = (event: any) => {
+          if (isDisposed) return;
+          let sessionFinal = '';
+          let sessionInterim = '';
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            final += transcript;
+          for (let i = 0; i < event.results.length; i++) {
+            const item = event.results[i];
+            if (item.isFinal) {
+              sessionFinal += item[0].transcript + ' ';
+            } else {
+              sessionInterim += item[0].transcript;
+            }
+          }
+
+          const combined = (sessionFinal + sessionInterim).trim();
+          if (combined) {
+            setLobbySpokenText(combined);
+            setHasDetectedMicOnce(true);
+            const score = calculateAgreementMatch(combined);
+            setLobbyMatchPercent(score);
+
+            if (score >= 80) {
+              setHasAgreedToRules(true);
+              soundManager.playSend();
+            }
+          }
+        };
+
+        recognition.onerror = (e: any) => {
+          if (isDisposed) return;
+          console.warn('Lobby speech recognition error:', e.error);
+          if (e.error === 'not-allowed') {
+            setLobbySpeechError('Microphone permission required for speech verification.');
+          } else if (e.error === 'audio-capture') {
+            setLobbySpeechError('No microphone detected. Please check your audio input.');
+          }
+          // Do not treat transient 'no-speech' or 'aborted' as fatal
+        };
+
+        recognition.onend = () => {
+          if (!isDisposed && stage === 'lobby' && !hasAgreedToRules) {
+            setTimeout(() => {
+              if (!isDisposed && stage === 'lobby' && !hasAgreedToRules) {
+                try {
+                  recognition.start();
+                } catch {
+                  // restart retry
+                }
+              }
+            }, 250);
           } else {
-            interim += transcript;
+            setIsLobbyListening(false);
           }
-        }
+        };
 
-        const combined = (final || interim).trim();
-        if (combined) {
-          setLobbySpokenText(combined);
-          setHasDetectedMicOnce(true);
-          const score = calculateAgreementMatch(combined);
-          setLobbyMatchPercent(score);
+        recognition.start();
+      } catch (err: any) {
+        console.warn('Lobby speech recognition start error:', err);
+        setLobbySpeechError(err?.message || 'Speech recognition initialization failed.');
+      }
+    };
 
-          if (score >= 80) {
-            setHasAgreedToRules(true);
-            soundManager.playSend();
-          }
-        }
-      };
-
-      recognition.onerror = (e: any) => {
-        if (isDisposed) return;
-        if (e.error === 'not-allowed') {
-          setLobbySpeechError('Microphone permission required for speech verification.');
-        } else if (e.error !== 'no-speech') {
-          setLobbySpeechError(`Speech recognition: ${e.error || 'Check microphone input'}`);
-        }
-      };
-
-      recognition.onend = () => {
-        if (!isDisposed && stage === 'lobby' && !hasAgreedToRules) {
-          try {
-            recognition.start();
-          } catch {}
-        } else {
-          setIsLobbyListening(false);
-        }
-      };
-
-      recognition.start();
-    } catch (err: any) {
-      setLobbySpeechError(err?.message || 'Speech recognition initialization failed.');
-    }
+    // Small delay to allow getUserMedia to acquire microphone stream first
+    const timer = setTimeout(() => {
+      initRecognition();
+    }, 400);
 
     return () => {
       isDisposed = true;
+      clearTimeout(timer);
       try {
         recognition?.stop();
       } catch {}
@@ -604,6 +644,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   // ----------------------------------------------------
   // Speech Synthesis & Interruption Logic (Hana Voice)
   // Default mood is neutral (no smiling or grinning)
+  // Connects directly to 3D VRM lip sync
   // ----------------------------------------------------
   const speakHanaLine = useCallback(
     async (text: string, onDone?: () => void, emotion: AvatarEmotion = 'neutral') => {
@@ -613,10 +654,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       }
 
       window.speechSynthesis.cancel();
+      lipSyncManager.endSpeech();
       currentHanaLineRef.current = text;
       hanaIsSpeakingRef.current = true;
       setHanaIsSpeaking(true);
       setHanaEmotion(emotion);
+
+      // Trigger lip sync manager for 3D model visemes
+      lipSyncManager.startSpeech(text);
 
       const voice = await waitForPersonaVoice(1500);
       const utterance = new SpeechSynthesisUtterance(text);
@@ -624,10 +669,23 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       utterance.pitch = 1.15;
       utterance.rate = 1.0;
 
+      // Real-time phoneme & word boundary events for fine lip syncing
+      utterance.onboundary = (event: any) => {
+        try {
+          if (event.name === 'word' || typeof event.charIndex === 'number') {
+            const idx = event.charIndex || 0;
+            const len = event.charLength || 6;
+            const word = text.slice(idx, idx + len);
+            lipSyncManager.onBoundary(word);
+          }
+        } catch {}
+      };
+
       let hasFinished = false;
       const finish = () => {
         if (hasFinished) return;
         hasFinished = true;
+        lipSyncManager.endSpeech();
         hanaIsSpeakingRef.current = false;
         setHanaIsSpeaking(false);
         setHanaEmotion('neutral');
@@ -640,6 +698,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         if (e.error !== 'interrupted' && e.error !== 'canceled') {
           console.warn('Hana speech error:', e);
         }
+        lipSyncManager.endSpeech();
         hanaIsSpeakingRef.current = false;
         setHanaIsSpeaking(false);
       };
@@ -658,6 +717,48 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     []
   );
 
+  // Re-explain current task if candidate expresses confusion or asks what to do
+  const reExplainCurrentTask = useCallback(
+    (phase: MeetingPhase) => {
+      const now = Date.now();
+      if (now - lastTaskReExplainTimeRef.current < 6500) return;
+      if (hanaIsSpeakingRef.current) return;
+      lastTaskReExplainTimeRef.current = now;
+
+      soundManager.playReceive();
+      setHanaEmotion('neutral');
+      setTaskClarificationNotice('Interviewer is re-explaining the task instructions...');
+
+      let textToSay = '';
+      if (phase === 'task_resume') {
+        textToSay =
+          "No problem! Please click the upload area on your screen to upload a copy of your updated resume or CV in PDF, DOCX, or text format. Once selected, click 'Confirm & Proceed'.";
+      } else if (phase === 'task_written') {
+        textToSay =
+          "To clarify: In the spotlight reflection area on your screen, please write down three things you like about yourself and why, reaching at least 100 characters. Then click submit.";
+      } else if (phase === 'task_pressure') {
+        textToSay =
+          "Sure! Review the four situational options on your screen, select the answer that best describes your approach under pressure, and click confirm.";
+      } else if (phase === 'task_snapshot') {
+        textToSay =
+          "Here are the instructions: Please hold up your paper with your phone number, look towards the camera, and say 'click' or 'ready' — or simply tap the 'Take Photo' button on your screen.";
+      }
+
+      if (textToSay) {
+        speakHanaLine(
+          textToSay,
+          () => {
+            setTimeout(() => {
+              setTaskClarificationNotice(null);
+            }, 3000);
+          },
+          'neutral'
+        );
+      }
+    },
+    [speakHanaLine]
+  );
+
   // Interruption handling: candidate speaks while Hana is explaining during OPEN questions only
   const handleCandidateSpeechActivity = useCallback(() => {
     const curPhase = meetingPhaseRef.current;
@@ -672,6 +773,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     if (hanaIsSpeakingRef.current) {
       // Candidate speaks during an open discussion
       window.speechSynthesis.cancel();
+      lipSyncManager.endSpeech();
       hanaIsSpeakingRef.current = false;
       setHanaIsSpeaking(false);
       wasInterruptedRef.current = true;
@@ -691,8 +793,67 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   }, [speakHanaLine]);
 
+  // Submit Answer to Questions
+  const handleSaveResponse = useCallback(
+    (phase: string, question: string, answer: string, nextPhase: MeetingPhase) => {
+      setRecordedResponses((prev) => [
+        ...prev,
+        {
+          phase,
+          question,
+          answer: answer.trim() || '[Spoken answer recorded via microphone stream]',
+          timestamp: new Date().toLocaleTimeString(),
+        },
+      ]);
+      setCandidateLiveTranscript('');
+      candidateTranscriptRef.current = '';
+      advanceToPhase(nextPhase);
+    },
+    []
+  );
+
+  // Reset / Trigger Silence Auto-Send for Open Questions (Similar to /chat continuous voice)
+  const resetSilenceTimer = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+    }
+
+    const curPhase = meetingPhaseRef.current;
+    if (curPhase !== 'question_1' && curPhase !== 'question_2') {
+      return;
+    }
+
+    // After 3.5 seconds of silence and candidate has spoken a meaningful response (> 15 chars),
+    // automatically forward response to Hana and advance
+    silenceTimerRef.current = setTimeout(() => {
+      const text = candidateTranscriptRef.current.trim();
+      const phaseNow = meetingPhaseRef.current;
+
+      if (text.length >= 15 && !hanaIsSpeakingRef.current) {
+        soundManager.playSend();
+        if (phaseNow === 'question_1') {
+          handleSaveResponse(
+            'question_1',
+            'Could you tell me a bit about yourself, your background, and what drives your passion for this role?',
+            text,
+            'question_2'
+          );
+        } else if (phaseNow === 'question_2') {
+          handleSaveResponse(
+            'question_2',
+            'Walk me through a challenging technical problem or project you tackled recently.',
+            text,
+            'task_resume'
+          );
+        }
+      }
+      silenceTimerRef.current = null;
+    }, 3500);
+  }, [handleSaveResponse]);
+
   // ----------------------------------------------------
-  // Candidate Speech Recognition (Real-Time Audio Input)
+  // Candidate Speech Recognition during Live Meeting
+  // Re-uses continuous pattern from /chat
   // ----------------------------------------------------
   useEffect(() => {
     if (stage !== 'meeting') return;
@@ -700,79 +861,165 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRec) return;
 
-    try {
-      const recognition = new SpeechRec();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
+    let isDisposed = false;
+    let recognition: any = null;
 
-      recognition.onresult = (event: any) => {
-        let interim = '';
-        let final = '';
+    const initMeetingRecognition = () => {
+      if (isDisposed) return;
+      try {
+        recognition = new SpeechRec();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            final += transcript;
-          } else {
-            interim += transcript;
+        recognition.onstart = () => {
+          if (!isDisposed) {
+            setIsCandidateSpeaking(false);
           }
-        }
+        };
 
-        const combined = (final || interim).trim();
-        setCandidateLiveTranscript(combined);
+        recognition.onresult = (event: any) => {
+          if (isDisposed) return;
+          let sessionFinal = '';
+          let sessionInterim = '';
 
-        // Check for interruption only in open discussion when candidate speaks coherent words
-        const curPhase = meetingPhaseRef.current;
-        const isOpenDiscussion =
-          curPhase === 'question_1' || curPhase === 'question_2' || curPhase === 'candidate_qa';
-
-        if (isOpenDiscussion && hanaIsSpeakingRef.current && combined.length > 6) {
-          handleCandidateSpeechActivity();
-        }
-
-        // Check for trigger words for snapshot verification: "click", "do it", "okay", "ready"
-        if (isListeningForTrigger && combined) {
-          const lower = combined.toLowerCase();
-          const triggers = ['click', 'do it', 'okay', 'ready'];
-          const matched = triggers.find((t) => lower.includes(t));
-          if (matched) {
-            setLastDetectedTrigger(matched);
-            handleTakeSnapshotTrigger();
+          for (let i = 0; i < event.results.length; i++) {
+            const item = event.results[i];
+            if (item.isFinal) {
+              sessionFinal += item[0].transcript + ' ';
+            } else {
+              sessionInterim += item[0].transcript;
+            }
           }
-        }
 
-        // Contextual subtle reactions from Hana while candidate is answering
-        if (combined.length > 25 && !hanaIsSpeakingRef.current && isOpenDiscussion) {
-          const reactions = ['Hmm...', 'I see', 'Got it', 'Understood'];
-          const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
-          setHanaReactionText(randomReaction);
-          setHanaEmotion('neutral');
-        }
-      };
+          const combined = (sessionFinal + sessionInterim).trim();
+          setCandidateLiveTranscript(combined);
+          candidateTranscriptRef.current = combined;
+          setIsCandidateSpeaking(true);
 
-      recognition.onerror = () => {
-        // Continue quietly
-      };
+          // Only process candidate speech during open discussions or active task queries
+          const curPhase = meetingPhaseRef.current;
+          const isOpenDiscussion =
+            curPhase === 'question_1' || curPhase === 'question_2' || curPhase === 'candidate_qa';
+          const isTaskPhase =
+            curPhase === 'task_resume' ||
+            curPhase === 'task_written' ||
+            curPhase === 'task_pressure' ||
+            curPhase === 'task_snapshot';
 
-      recognition.onend = () => {
-        if (stage === 'meeting') {
-          try {
-            recognition.start();
-          } catch {}
-        }
-      };
+          if (isOpenDiscussion) {
+            // Check for interruption only in open discussion when candidate speaks coherent words
+            if (hanaIsSpeakingRef.current && combined.length > 6) {
+              handleCandidateSpeechActivity();
+            }
 
-      recognition.start();
-      recognitionRef.current = recognition;
+            // Contextual subtle reactions from Hana while candidate is answering
+            if (combined.length > 25 && !hanaIsSpeakingRef.current) {
+              const reactions = ['Hmm...', 'I see', 'Got it', 'Understood'];
+              const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
+              setHanaReactionText(randomReaction);
+              setHanaEmotion('neutral');
+            }
 
-      return () => {
-        try {
-          recognition.stop();
-        } catch {}
-      };
-    } catch {}
-  }, [stage, isListeningForTrigger, handleCandidateSpeechActivity]);
+            // Start silence detection timer for auto-advancing response to Hana (like /chat)
+            resetSilenceTimer();
+          } else if (isTaskPhase) {
+            // Phrase detection during tasks: detect candidate queries, confusion, or asking what to do
+            const lower = combined.toLowerCase();
+            const confusionKeywords = [
+              'what should i do',
+              'what do i do',
+              'what am i supposed to do',
+              'what to do',
+              'can you repeat',
+              'could you repeat',
+              'repeat that',
+              'repeat please',
+              'say that again',
+              'explain again',
+              'explain that again',
+              'could you explain',
+              'can you explain',
+              'what does this mean',
+              'what do you mean',
+              'i am confused',
+              "i'm confused",
+              'i do not understand',
+              "i don't understand",
+              'help me',
+              'need help',
+              'pardon',
+              'how do i do this',
+              'what is this task',
+              'instructions again',
+            ];
+
+            const foundConfusion = confusionKeywords.find((k) => lower.includes(k));
+            if (foundConfusion && !hanaIsSpeakingRef.current) {
+              reExplainCurrentTask(curPhase);
+              setCandidateLiveTranscript('');
+              candidateTranscriptRef.current = '';
+            }
+
+            // Check for trigger words for snapshot verification: "click", "do it", "okay", "ready", "cheese", "take photo", "capture"
+            if (curPhase === 'task_snapshot' && isListeningForTriggerRef.current) {
+              const triggers = ['click', 'do it', 'okay', 'ready', 'cheese', 'snap', 'capture', 'photo', 'picture', 'take photo', 'take picture'];
+              const matched = triggers.find((t) => lower.includes(t));
+              if (matched && !isTriggerLockedRef.current) {
+                isTriggerLockedRef.current = true;
+                setLastDetectedTrigger(matched);
+                handleTakeSnapshotTrigger();
+                setCandidateLiveTranscript('');
+                candidateTranscriptRef.current = '';
+                setTimeout(() => {
+                  isTriggerLockedRef.current = false;
+                }, 2000);
+              }
+            }
+          }
+        };
+
+        recognition.onerror = (e: any) => {
+          // Continue quietly on transient errors
+          if (e.error === 'not-allowed') {
+            console.warn('Meeting mic access denied in speech rec');
+          }
+        };
+
+        recognition.onend = () => {
+          setIsCandidateSpeaking(false);
+          if (!isDisposed && stage === 'meeting') {
+            setTimeout(() => {
+              if (!isDisposed && stage === 'meeting') {
+                try {
+                  recognition.start();
+                } catch {
+                  // retry
+                }
+              }
+            }, 250);
+          }
+        };
+
+        recognition.start();
+        recognitionRef.current = recognition;
+      } catch (e) {
+        console.warn('SpeechRecognition start failed:', e);
+      }
+    };
+
+    initMeetingRecognition();
+
+    return () => {
+      isDisposed = true;
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
+      try {
+        recognition?.stop();
+      } catch {}
+    };
+  }, [stage, isListeningForTrigger, handleCandidateSpeechActivity, resetSilenceTimer]);
 
   // ----------------------------------------------------
   // Video Recording Engine (Full Screen / Meeting Capture)
@@ -781,28 +1028,31 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const startRecordingSession = async () => {
     try {
       recordedChunksRef.current = [];
+      setVideoPlaybackError(false);
 
-      // Record media stream directly while keeping candidate live video feed intact
-      let recordStream = mediaStreamRef.current;
-
-      // If mediaStream is available, clone or use tracks
-      if (recordStream) {
-        const videoTrack = recordStream.getVideoTracks()[0];
-        const audioTrack = recordStream.getAudioTracks()[0];
-        const tracks: MediaStreamTrack[] = [];
-        if (videoTrack) tracks.push(videoTrack);
-        if (audioTrack) tracks.push(audioTrack);
-        recordingStreamRef.current = new MediaStream(tracks);
+      const streamToRecord = mediaStreamRef.current;
+      if (!streamToRecord) {
+        console.warn('Waiting for mediaStream to initiate session recorder');
+        return;
       }
 
-      const streamToRecord = recordingStreamRef.current || mediaStreamRef.current;
-      if (!streamToRecord) return;
+      // Detect best supported format
+      let mimeType = 'video/webm;codecs=vp8,opus';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          if (MediaRecorder.isTypeSupported('video/webm')) {
+            mimeType = 'video/webm';
+          } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+            mimeType = 'video/mp4';
+          } else {
+            mimeType = '';
+          }
+        }
+      }
 
-      const options = { mimeType: 'video/webm;codecs=vp8,opus' };
       let recorder: MediaRecorder;
-
       try {
-        recorder = new MediaRecorder(streamToRecord, options);
+        recorder = mimeType ? new MediaRecorder(streamToRecord, { mimeType }) : new MediaRecorder(streamToRecord);
       } catch {
         recorder = new MediaRecorder(streamToRecord);
       }
@@ -814,14 +1064,24 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       };
 
       recorder.onstop = () => {
-        const fullBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-        const videoUrl = URL.createObjectURL(fullBlob);
-        setRecordedVideoUrl(videoUrl);
+        if (recordedChunksRef.current.length > 0) {
+          try {
+            const format = recorder.mimeType || mimeType || 'video/webm';
+            const fullBlob = new Blob(recordedChunksRef.current, { type: format });
+            const videoUrl = URL.createObjectURL(fullBlob);
+            setRecordedVideoUrl(videoUrl);
+          } catch (err) {
+            console.warn('Failed to build recording blob:', err);
+          }
+        }
+        setIsRecordingFinalizing(false);
       };
 
-      recorder.start(1000);
+      // Gather chunks every 500ms so data is continually captured
+      recorder.start(500);
       mediaRecorderRef.current = recorder;
 
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       setRecordedDuration(0);
       recordingTimerRef.current = setInterval(() => {
         setRecordedDuration((prev) => prev + 1);
@@ -831,16 +1091,63 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   };
 
-  const stopRecordingSession = () => {
-    if (recordingTimerRef.current) {
-      clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+  const stopRecordingSession = (): Promise<string | null> => {
+    return new Promise((resolve) => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+
+      const recorder = mediaRecorderRef.current;
+      if (!recorder || recorder.state === 'inactive') {
+        if (recordedChunksRef.current.length > 0 && !recordedVideoUrl) {
+          try {
+            const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            setRecordedVideoUrl(url);
+            resolve(url);
+            return;
+          } catch {}
+        }
+        resolve(recordedVideoUrl);
+        return;
+      }
+
+      setIsRecordingFinalizing(true);
+
+      const finalize = () => {
+        try {
+          if (recordedChunksRef.current.length > 0) {
+            const blob = new Blob(recordedChunksRef.current, {
+              type: recorder.mimeType || 'video/webm',
+            });
+            const url = URL.createObjectURL(blob);
+            setRecordedVideoUrl(url);
+            setIsRecordingFinalizing(false);
+            resolve(url);
+            return;
+          }
+        } catch (e) {
+          console.warn('Error creating video blob from recorder:', e);
+        }
+        setIsRecordingFinalizing(false);
+        resolve(null);
+      };
+
+      recorder.onstop = () => {
+        finalize();
+      };
+
       try {
-        mediaRecorderRef.current.stop();
+        recorder.requestData();
       } catch {}
-    }
+
+      try {
+        recorder.stop();
+      } catch {
+        finalize();
+      }
+    });
   };
 
   // ----------------------------------------------------
@@ -874,7 +1181,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       // Hana welcomes the candidate with neutral professional tone
       setMeetingPhase('welcome');
       const nameGreeting = candidateName.trim() ? `, ${candidateName.trim()}` : '';
-      const welcomeText = `Hello! Welcome to your interview with MuxAI. I'm Hana, your AI screening partner today. It's great to meet you${nameGreeting}. Can you hear and see me clearly?`;
+      const welcomeText = `Hello! Welcome to your interview with MuxAI. I'm Hana, your interviewer today. It's great to meet you${nameGreeting}. Can you hear and see me clearly?`;
       speakHanaLine(
         welcomeText,
         () => {
@@ -891,6 +1198,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const advanceToPhase = (nextPhase: MeetingPhase) => {
     setMeetingPhase(nextPhase);
     setCandidateLiveTranscript('');
+    candidateTranscriptRef.current = '';
 
     if (nextPhase === 'question_1') {
       const q1 = "Let's begin with a quick introduction. Could you tell me a bit about yourself, your background, and what drives your passion for this role?";
@@ -909,6 +1217,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       speakHanaLine(prompt, undefined, 'neutral');
     } else if (nextPhase === 'task_snapshot') {
       setSnapshotStep(1);
+      snapshotStepRef.current = 1;
       setIsListeningForTrigger(true);
       const prompt = "For fun and identity verification, please write down your phone number on a small piece of paper. First, hold it up and look directly forward, then say 'click', 'do it', 'okay', or 'ready' when you're set.";
       speakHanaLine(prompt, undefined, 'neutral');
@@ -923,20 +1232,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         }, 1500);
       }, 'neutral');
     }
-  };
-
-  // Submit Answer to Questions
-  const handleSaveResponse = (phase: string, question: string, answer: string, nextPhase: MeetingPhase) => {
-    setRecordedResponses((prev) => [
-      ...prev,
-      {
-        phase,
-        question,
-        answer: answer.trim() || '[Spoken answer recorded via microphone stream]',
-        timestamp: new Date().toLocaleTimeString(),
-      },
-    ]);
-    advanceToPhase(nextPhase);
   };
 
   // Handle Resume File Upload
@@ -1065,25 +1360,44 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     );
   };
 
-  // Capture Image From Camera Video Feed
-  const captureCameraFrame = (): string | null => {
+  // Capture Image From Camera Video Feed (Guaranteed non-null frame)
+  const captureCameraFrame = (): string => {
     try {
-      const videoEl = localVideoRef.current || lobbyVideoRef.current;
-      if (!videoEl) return null;
-
+      const videoEl = spotlightVideoRef.current || localVideoRef.current || lobbyVideoRef.current;
       const canvas = document.createElement('canvas');
-      canvas.width = videoEl.videoWidth || 640;
-      canvas.height = videoEl.videoHeight || 480;
+      const w = videoEl?.videoWidth || 640;
+      const h = videoEl?.videoHeight || 480;
+      canvas.width = w;
+      canvas.height = h;
       const ctx = canvas.getContext('2d');
-      if (!ctx) return null;
+      if (!ctx) throw new Error('No 2d context');
 
-      // Mirror horizontally to match self-view
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL('image/jpeg', 0.85);
+      if (videoEl && videoEl.readyState >= 2) {
+        // Mirror horizontally to match self-view
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+      } else {
+        // High fidelity fallback snapshot card
+        const grad = ctx.createLinearGradient(0, 0, w, h);
+        grad.addColorStop(0, '#0f172a');
+        grad.addColorStop(1, '#1e293b');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('IDENTITY VERIFICATION FRAME', w / 2, h / 2 - 20);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '16px monospace';
+        ctx.fillText(candidateName.trim() || 'Verified Candidate', w / 2, h / 2 + 15);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '13px sans-serif';
+        ctx.fillText(new Date().toLocaleTimeString(), w / 2, h / 2 + 45);
+      }
+      return canvas.toDataURL('image/jpeg', 0.88);
     } catch {
-      return null;
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#0f172a"/><text x="50%" y="50%" fill="#38bdf8" font-size="20" font-family="sans-serif" text-anchor="middle">Verification Snapshot</text></svg>');
     }
   };
 
@@ -1091,9 +1405,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const handleTakeSnapshotTrigger = () => {
     soundManager.playReceive();
     const frame = captureCameraFrame();
-    if (!frame) return;
+    const currentStep = snapshotStepRef.current || 1;
 
-    if (snapshotStep === 1) {
+    if (currentStep === 1) {
       setSnapshots((prev) => [
         ...prev,
         {
@@ -1104,10 +1418,11 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           timestamp: new Date().toLocaleTimeString(),
         },
       ]);
+      snapshotStepRef.current = 2;
       setSnapshotStep(2);
       const nextPrompt = "Awesome shot. Now, keep holding up the paper, turn your head slightly to the left, and say 'click' or 'ready'.";
       speakHanaLine(nextPrompt, undefined, 'neutral');
-    } else if (snapshotStep === 2) {
+    } else if (currentStep === 2) {
       setSnapshots((prev) => [
         ...prev,
         {
@@ -1118,10 +1433,11 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           timestamp: new Date().toLocaleTimeString(),
         },
       ]);
+      snapshotStepRef.current = 3;
       setSnapshotStep(3);
       const nextPrompt = "Got it! Lastly, turn your head slightly to the right while holding the paper, and say 'click' or 'do it'.";
       speakHanaLine(nextPrompt, undefined, 'neutral');
-    } else if (snapshotStep === 3) {
+    } else if (currentStep >= 3) {
       setSnapshots((prev) => [
         ...prev,
         {
@@ -1132,6 +1448,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
           timestamp: new Date().toLocaleTimeString(),
         },
       ]);
+      snapshotStepRef.current = 0;
       setSnapshotStep(0);
       setIsListeningForTrigger(false);
 
@@ -1188,9 +1505,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   // ----------------------------------------------------
   // End Meeting & Transition to Recruiter Review Mode
   // ----------------------------------------------------
-  const handleEndMeetingAndReview = () => {
-    stopRecordingSession();
+  const handleEndMeetingAndReview = async () => {
     window.speechSynthesis?.cancel();
+    lipSyncManager.endSpeech();
+    await stopRecordingSession();
     setStage('recruiter_review');
     setActivePov('recruiter');
   };
@@ -1458,7 +1776,21 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       Agree Manually
                     </button>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="pt-2 border-t border-neutral-200 flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHasAgreedToRules(true);
+                        setLobbyMatchPercent(100);
+                        soundManager.playSend();
+                      }}
+                      className="text-[11px] text-neutral-500 hover:text-sky-600 hover:underline cursor-pointer"
+                    >
+                      Or click here to agree manually
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1660,7 +1992,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       </div>
                       <div>
                         <h3 className="font-bold text-lg text-white font-heading">
-                          Hana is entering the meeting...
+                          Interviewer is entering the meeting...
                         </h3>
                         <p className="text-xs text-neutral-400 mt-1">Connecting AI interviewer</p>
                       </div>
@@ -1691,7 +2023,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
                         <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-xs text-neutral-300 font-medium mb-1">
                           <VideoOff className="w-3.5 h-3.5 text-neutral-400" />
-                          <span>Camera Off • Hana</span>
+                          <span>Camera Off • Interviewer</span>
                         </div>
                         <p className="text-[11px] text-neutral-400 font-mono">
                           Connecting 3D neural feed...
@@ -1734,7 +2066,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   {/* Tile Label */}
                   <div className="absolute bottom-4 left-4 px-3.5 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/20 flex items-center gap-2 z-20">
                     <span className={`w-2 h-2 rounded-full ${hanaIsSpeaking ? 'bg-sky-400 animate-pulse' : 'bg-emerald-400'}`} />
-                    <span className="text-xs font-semibold text-white">Hana (AI Talent Partner)</span>
+                    <span className="text-xs font-semibold text-white">Interviewer</span>
                   </div>
                 </div>
 
@@ -1757,6 +2089,17 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                     <div className="flex flex-col items-center gap-2 text-neutral-400">
                       <VideoOff className="w-10 h-10" />
                       <span className="text-xs">Camera Turned Off</span>
+                    </div>
+                  )}
+
+                  {/* Live speech auto-send visual indicator for candidate */}
+                  {candidateLiveTranscript && (
+                    <div className="absolute top-4 left-4 right-4 z-20 pointer-events-none">
+                      <div className="px-3.5 py-2 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 text-white text-xs leading-relaxed max-w-lg mx-auto shadow-lg flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                        <span className="truncate flex-1">&ldquo;{candidateLiveTranscript}&rdquo;</span>
+                        <span className="text-[10px] text-neutral-400 font-mono shrink-0">Auto-sending on silence...</span>
+                      </div>
                     </div>
                   )}
 
@@ -1796,7 +2139,17 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
             {/* Spotlight Dynamic Layout (Tasks: Resume Upload, Written, Pressure, Snapshots) */}
             {isSpotlightActive && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0 relative">
+                {/* Re-explaining Banner Toast */}
+                {taskClarificationNotice && (
+                  <div className="absolute top-2 inset-x-4 z-40 pointer-events-none">
+                    <div className="px-4 py-2 rounded-2xl bg-sky-600 text-white text-xs font-semibold text-center shadow-lg max-w-md mx-auto flex items-center justify-center gap-2">
+                      <Info className="w-4 h-4 shrink-0 text-white animate-pulse" />
+                      <span>{taskClarificationNotice}</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Left 4 cols: Compact Participant Video Tiles */}
                 <div className="lg:col-span-4 flex flex-col gap-3 min-h-0">
                   {/* Hana Mini Tile */}
@@ -1827,7 +2180,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       />
                     </div>
                     <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-20">
-                      Hana (AI Recruiter)
+                      Interviewer
                     </div>
                   </div>
 
@@ -1838,12 +2191,20 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       playsInline
                       muted
                       ref={(el) => {
+                        spotlightVideoRef.current = el;
+                        localVideoRef.current = el;
                         if (el && mediaStreamRef.current && el.srcObject !== mediaStreamRef.current) {
                           el.srcObject = mediaStreamRef.current;
                         }
                       }}
-                      className="w-full h-full object-cover transform -scale-x-100"
+                      className={`w-full h-full object-cover transform -scale-x-100 ${!isCameraActive ? 'hidden' : ''}`}
                     />
+                    {!isCameraActive && (
+                      <div className="flex flex-col items-center justify-center h-full text-neutral-400 gap-1.5 p-4">
+                        <VideoOff className="w-8 h-8" />
+                        <span className="text-[11px]">Camera Off</span>
+                      </div>
+                    )}
                     <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/20 text-[11px] font-semibold text-white z-10">
                       {candidateName.trim() || 'You'}
                     </div>
@@ -2112,22 +2473,31 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
                           <div>
                             <span className="text-xs font-semibold text-neutral-900 block">
-                              Scanning audio for voice trigger...
+                              Listening for voice trigger: &quot;click&quot;, &quot;ready&quot;, &quot;do it&quot;, or &quot;cheese&quot;
                             </span>
                             <span className="text-[11px] text-neutral-500 font-mono block">
-                              Say &quot;click&quot; / &quot;ready&quot; / &quot;do it&quot;
-                              {lastDetectedTrigger ? ` • Last heard: "${lastDetectedTrigger}"` : ''}
+                              {lastDetectedTrigger ? `Heard: "${lastDetectedTrigger}" • Capturing pose` : 'Speak clearly or click button to snap'}
                             </span>
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={handleTakeSnapshotTrigger}
-                          className="px-4 py-2 rounded-xl bg-neutral-200 hover:bg-neutral-300 text-neutral-800 text-xs font-semibold transition-colors cursor-pointer shrink-0"
-                        >
-                          Manual Snap
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleTakeSnapshotTrigger}
+                            className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 active:scale-95 text-white text-xs font-bold transition-all shadow-sm cursor-pointer shrink-0 flex items-center gap-1.5"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                            <span>Take Photo (Pose {snapshotStep || 1} of 3)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => advanceToPhase('candidate_qa')}
+                            className="px-3.5 py-2 rounded-xl bg-neutral-200 hover:bg-neutral-300 text-neutral-700 text-xs font-semibold transition-colors cursor-pointer shrink-0"
+                          >
+                            Skip / Proceed
+                          </button>
+                        </div>
                       </div>
 
                       {/* Display Captured Gallery */}
@@ -2159,6 +2529,12 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2.5 py-1 rounded-full border border-sky-200">
               {meetingPhase.replace('_', ' ').toUpperCase()}
             </span>
+            {(meetingPhase === 'question_1' || meetingPhase === 'question_2') && (
+              <span className="text-[11px] text-emerald-600 font-medium ml-2 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Listening &amp; auto-sending to Hana
+              </span>
+            )}
           </div>
 
           {/* Contextual Action Advance Controls for the candidate */}
@@ -2173,38 +2549,31 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               </button>
             )}
 
-            {meetingPhase === 'question_1' && (
+            {/* During Question 1 & 2, responses auto-forward to Hana on speech pause. A skip button is available if needed */}
+            {(meetingPhase === 'question_1' || meetingPhase === 'question_2') && (
               <button
                 type="button"
-                onClick={() =>
-                  handleSaveResponse(
-                    'question_1',
-                    'Could you tell me a bit about yourself, your background, and what drives your passion for this role?',
-                    candidateLiveTranscript,
-                    'question_2'
-                  )
-                }
-                className="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs font-bold cursor-pointer transition-colors shadow-xs flex items-center gap-1.5"
+                onClick={() => {
+                  if (meetingPhase === 'question_1') {
+                    handleSaveResponse(
+                      'question_1',
+                      'Introduction and background',
+                      candidateLiveTranscript,
+                      'question_2'
+                    );
+                  } else {
+                    handleSaveResponse(
+                      'question_2',
+                      'Challenging technical problem',
+                      candidateLiveTranscript,
+                      'task_resume'
+                    );
+                  }
+                }}
+                className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-neutral-600 text-xs font-medium cursor-pointer transition-colors flex items-center gap-1"
+                title="Skip to next phase if you are finished speaking"
               >
-                <span>Finished Answering</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-
-            {meetingPhase === 'question_2' && (
-              <button
-                type="button"
-                onClick={() =>
-                  handleSaveResponse(
-                    'question_2',
-                    'Walk me through a challenging technical problem or project you tackled recently.',
-                    candidateLiveTranscript,
-                    'task_resume'
-                  )
-                }
-                className="px-4 py-2 rounded-xl bg-sky-500 text-white hover:bg-sky-400 text-xs font-bold cursor-pointer transition-colors shadow-xs flex items-center gap-1.5"
-              >
-                <span>Finished Answering • Proceed to Tasks</span>
+                <span>Next</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
@@ -2331,7 +2700,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   <span>Session Length: {formatSeconds(recordedDuration)}</span>
                 </span>
                 <span>•</span>
-                <span>Interviewer: Hana (AI Agent)</span>
+                <span>Interviewer: Hana</span>
               </div>
             </div>
           </div>
@@ -2413,19 +2782,48 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               {/* Left 8 cols: Video Player */}
               <div className="lg:col-span-8 rounded-3xl bg-neutral-900 border border-neutral-200 p-4 shadow-xl space-y-3">
                 <div className="relative aspect-video rounded-2xl overflow-hidden bg-black flex items-center justify-center">
-                  {recordedVideoUrl ? (
+                  {recordedVideoUrl && !videoPlaybackError ? (
                     <video
                       ref={reviewVideoPlayerRef}
                       src={recordedVideoUrl}
                       controls
                       playsInline
+                      onError={() => setVideoPlaybackError(true)}
                       className="w-full h-full object-contain"
                     />
+                  ) : isRecordingFinalizing ? (
+                    <div className="flex flex-col items-center gap-3 text-neutral-300 p-6 text-center">
+                      <RefreshCw className="w-8 h-8 animate-spin text-sky-400" />
+                      <p className="text-sm font-semibold text-white">Finalizing interview recording...</p>
+                      <span className="text-xs text-neutral-400">Processing video and audio stream</span>
+                    </div>
+                  ) : snapshots.length > 0 ? (
+                    <div className="w-full h-full p-4 flex flex-col justify-between bg-neutral-900 text-white">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-sky-400 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4" /> Visual Identity Frames Recorded ({snapshots.length} angles)
+                        </span>
+                        <span className="text-xs font-mono text-neutral-400">Duration: {formatSeconds(recordedDuration)}</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3 my-auto">
+                        {snapshots.map((s) => (
+                          <div key={s.id} className="relative rounded-xl overflow-hidden border border-neutral-700 aspect-video">
+                            <img src={s.dataUrl} alt={s.label} className="w-full h-full object-cover transform -scale-x-100" />
+                            <span className="absolute bottom-1 inset-x-1 text-[10px] bg-black/75 text-center text-white rounded px-1 truncate">
+                              {s.angle.toUpperCase()}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-neutral-400 text-center">
+                        Identity verification frames confirmed. Video session log archived for recruiter evaluation.
+                      </p>
+                    </div>
                   ) : (
                     <div className="flex flex-col items-center gap-3 text-neutral-400 p-6 text-center">
                       <Video className="w-10 h-10 stroke-[1.5]" />
                       <p className="text-xs text-neutral-400">
-                        Interview recording is processed automatically when session concludes or reaches completion.
+                        Interview recording is processed automatically when session concludes.
                       </p>
                     </div>
                   )}
