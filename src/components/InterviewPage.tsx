@@ -3860,7 +3860,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                             Tell the interviewer when to take your photo
                           </span>
                           <span className="text-[11px] text-neutral-500 font-mono block">
-                            {lastDetectedTrigger ? `Detected: "${lastDetectedTrigger}" • Captured pose` : 'Say keyword or "skip" to proceed'}
+                            {lastDetectedTrigger ? `Detected: "${lastDetectedTrigger}" • Captured pose` : 'Let the interviewer know when to click the photo'}
                           </span>
                         </div>
                       </div>
