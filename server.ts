@@ -829,6 +829,122 @@ interface OmnichannelMessage {
 const omnichannelCallMessages = new Map<string, OmnichannelMessage[]>();
 const telegramLastUpdateOffsets = new Map<string, number>();
 
+interface DiscordGatewaySession {
+  ws: any;
+  heartbeatTimer: any;
+  lastSequence: number | null;
+  botUser: { id: string; username: string } | null;
+  token: string;
+  status: 'connected' | 'connecting' | 'error' | 'disconnected';
+}
+
+const activeDiscordGateways = new Map<string, DiscordGatewaySession>();
+
+function ensureDiscordBotOnline(rawToken: string): void {
+  const cleanToken = String(rawToken || '').trim().replace(/^Bot\s+/i, '');
+  if (!cleanToken || cleanToken.length < 20) return;
+
+  const existing = activeDiscordGateways.get(cleanToken);
+  if (existing && existing.status === 'connected' && existing.ws && existing.ws.readyState === 1) {
+    return;
+  }
+
+  if (typeof (globalThis as any).WebSocket === 'undefined') return;
+
+  try {
+    if (existing?.ws) {
+      try { existing.ws.close(1000); } catch {}
+    }
+    if (existing?.heartbeatTimer) {
+      clearInterval(existing.heartbeatTimer);
+    }
+
+    const session: DiscordGatewaySession = {
+      ws: null,
+      heartbeatTimer: null,
+      lastSequence: null,
+      botUser: null,
+      token: cleanToken,
+      status: 'connecting',
+    };
+    activeDiscordGateways.set(cleanToken, session);
+
+    const ws = new (globalThis as any).WebSocket('wss://gateway.discord.gg/?v=10&encoding=json');
+    session.ws = ws;
+
+    ws.onmessage = (event: any) => {
+      try {
+        const payload = JSON.parse(typeof event.data === 'string' ? event.data : event.data.toString());
+        const { op, d, s, t } = payload;
+        if (s !== undefined && s !== null) {
+          session.lastSequence = s;
+        }
+
+        // Opcode 10: Hello
+        if (op === 10) {
+          const interval = d.heartbeat_interval || 41250;
+          session.heartbeatTimer = setInterval(() => {
+            if (session.ws && session.ws.readyState === 1) {
+              session.ws.send(JSON.stringify({ op: 1, d: session.lastSequence }));
+            }
+          }, interval);
+
+          // Identify with immediate online presence
+          const identify = {
+            op: 2,
+            d: {
+              token: cleanToken,
+              intents: 513, // Guilds + Guild Messages
+              properties: {
+                os: 'linux',
+                browser: 'Hana',
+                device: 'Hana',
+                $os: 'linux',
+                $browser: 'Hana',
+                $device: 'Hana',
+              },
+              presence: {
+                activities: [{ name: 'Voice Calls with Hana 🌸', type: 0 }],
+                status: 'online',
+                afk: false,
+              },
+            },
+          };
+          ws.send(JSON.stringify(identify));
+        }
+
+        if (op === 1 && session.ws?.readyState === 1) {
+          session.ws.send(JSON.stringify({ op: 1, d: session.lastSequence }));
+        }
+
+        if (op === 0 && t === 'READY') {
+          session.status = 'connected';
+          session.botUser = d.user;
+        }
+      } catch (e) {
+        console.warn('[Discord Server Gateway] Parse error:', e);
+      }
+    };
+
+    ws.onerror = (err: any) => {
+      console.warn('[Discord Server Gateway] WebSocket notice:', err?.message || err);
+    };
+
+    ws.onclose = (evt: any) => {
+      if (session.heartbeatTimer) {
+        clearInterval(session.heartbeatTimer);
+        session.heartbeatTimer = null;
+      }
+      session.status = 'disconnected';
+      if (evt?.code !== 1000 && evt?.code !== 4004) {
+        setTimeout(() => ensureDiscordBotOnline(cleanToken), 5000);
+      }
+    };
+  } catch (err) {
+    console.warn('[Discord Server Gateway] Failed to start:', err);
+  }
+}
+
 async function transcribeAudioBuffer(audioBuffer: Buffer, mimeType: string = 'audio/ogg'): Promise<string | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
@@ -968,10 +1084,14 @@ app.post('/api/caller/platforms/test', async (req: Request, res: Response) => {
 
     // 3. Discord Bot API Ping
     if (platform === 'discord') {
-      const botToken = (creds?.botToken || '').trim();
+      const botToken = (creds?.botToken || '').trim().replace(/^Bot\s+/i, '');
       if (!botToken) {
         return res.status(400).json({ ok: false, error: 'Discord Bot Token is required' });
       }
+
+      // Immediately keep Discord bot active & online on the server
+      ensureDiscordBotOnline(botToken);
+
       const discordResp = await fetch('https://discord.com/api/v10/users/@me', {
         headers: {
           Authorization: `Bot ${botToken}`,
@@ -1192,7 +1312,7 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
 
     // 3. Discord Dispatch
     if (platform === 'discord') {
-      const botToken = (creds?.botToken || '').trim();
+      const botToken = (creds?.botToken || '').trim().replace(/^Bot\s+/i, '');
       const channelId = (creds?.channelId || targetRecipient || '').trim();
       const targetUserId = (creds?.targetUserId || '').trim();
 
@@ -1202,6 +1322,9 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
           error: 'Discord Bot Token and target Channel ID are required',
         });
       }
+
+      // Immediately bring bot online on Discord Gateway
+      ensureDiscordBotOnline(botToken);
 
       const mention = targetUserId ? `<@${targetUserId}> ` : '';
       const payload = {
@@ -1227,7 +1350,13 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
         const voiceBuf = await synthesizeHanaVoice(message);
         if (voiceBuf) {
           const form = new FormData();
-          form.append('content', `${mention}📞 **Incoming Live Voice Call from Hana AI!**\n> "${message}"\n🎙️ **Live Call Room:** [Join Call](${liveCallRoomUrl})`);
+          form.append(
+            'payload_json',
+            JSON.stringify({
+              content: `${mention}📞 **Incoming Live Voice Call from Hana AI!**\n> "${message}"\n🎙️ **Live Call Room:** [Join Call](${liveCallRoomUrl})`,
+              attachments: [{ id: 0, filename: 'hana_call_greeting.wav', description: 'Hana AI Spoken Voice Greeting' }],
+            })
+          );
           form.append('files[0]', new Blob([new Uint8Array(voiceBuf)], { type: 'audio/wav' }), 'hana_call_greeting.wav');
           const discResp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
             method: 'POST',
@@ -1235,6 +1364,12 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
             body: form,
           });
           discData = await discResp.json().catch(() => ({}));
+          if (!discResp.ok) {
+            return res.status(discResp.status).json({
+              ok: false,
+              error: discData?.message || 'Discord message dispatch failed. Ensure bot has Send Messages and Attach Files permissions in the channel.',
+            });
+          }
         } else {
           const discordResp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
             method: 'POST',
@@ -1245,17 +1380,16 @@ app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) =
             body: JSON.stringify(payload),
           });
           discData = await discordResp.json().catch(() => ({}));
+          if (!discordResp.ok) {
+            return res.status(discordResp.status).json({
+              ok: false,
+              error: discData?.message || 'Discord message dispatch failed.',
+            });
+          }
         }
-      } catch {
-        const discordResp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bot ${botToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-        discData = await discordResp.json().catch(() => ({}));
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : 'Error sending to Discord';
+        return res.status(500).json({ ok: false, error: errorMsg });
       }
 
       if (!omnichannelCallMessages.has(channelId)) {
@@ -1405,9 +1539,11 @@ app.get('/api/caller/platforms/poll', async (req: Request, res: Response) => {
     // 3. Active Discord channel polling if Discord bot token is present
     if (platform === 'discord' && botToken && target) {
       try {
+        const cleanToken = botToken.replace(/^Bot\s+/i, '');
+        ensureDiscordBotOnline(cleanToken);
         const discResp = await fetch(`https://discord.com/api/v10/channels/${target}/messages?limit=4`, {
           headers: {
-            Authorization: `Bot ${botToken}`,
+            Authorization: `Bot ${cleanToken}`,
             'Content-Type': 'application/json',
           },
         });
@@ -1516,17 +1652,25 @@ app.post('/api/caller/platforms/relay-reply', async (req: Request, res: Response
     }
 
     if (platform === 'discord') {
-      const cleanToken = String(botToken || '').trim();
+      const cleanToken = String(botToken || '').trim().replace(/^Bot\s+/i, '');
       if (!cleanToken) {
         return res.status(400).json({ ok: false, error: 'Discord Bot Token required' });
       }
+
+      ensureDiscordBotOnline(cleanToken);
 
       let voiceSent = false;
       try {
         const voiceBuf = await synthesizeHanaVoice(text);
         if (voiceBuf) {
           const form = new FormData();
-          form.append('content', `🌸 **Hana:** ${text}`.slice(0, 2000));
+          form.append(
+            'payload_json',
+            JSON.stringify({
+              content: `🌸 **Hana:** ${text}`.slice(0, 2000),
+              attachments: [{ id: 0, filename: 'hana_voice_reply.wav', description: 'Hana Spoken Voice Reply' }],
+            })
+          );
           form.append('files[0]', new Blob([new Uint8Array(voiceBuf)], { type: 'audio/wav' }), 'hana_voice_reply.wav');
 
           const discVoiceResp = await fetch(`https://discord.com/api/v10/channels/${target}/messages`, {
@@ -1562,6 +1706,20 @@ app.post('/api/caller/platforms/relay-reply', async (req: Request, res: Response
     return res.json({ ok: true });
   } catch (err: unknown) {
     return res.status(500).json({ ok: false, error: 'Relay failed' });
+  }
+});
+
+// Endpoint to explicitly keep Discord bot actively online
+app.post('/api/caller/platforms/keep-bot-online', (req: Request, res: Response) => {
+  try {
+    const { platform, botToken } = req.body || {};
+    if (platform === 'discord' && botToken) {
+      ensureDiscordBotOnline(botToken);
+      return res.json({ ok: true, platform: 'discord', status: 'online' });
+    }
+    return res.json({ ok: true });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || 'Failed' });
   }
 });
 

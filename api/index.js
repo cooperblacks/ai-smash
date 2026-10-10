@@ -1824,18 +1824,64 @@ router.post('/caller/pbx/hangup', (req, res) => {
 });
 
 // =====================================================================
-// 3RD-PARTY PLATFORM CALLING & VOICE INTEGRATIONS (WhatsApp, Telegram, Messenger)
+// 3RD-PARTY PLATFORM CALLING & VOICE INTEGRATIONS (WhatsApp, Telegram, Messenger, Discord)
 // =====================================================================
+const omnichannelCallMessages = new Map();
+const telegramLastUpdateOffsets = new Map();
+
+async function synthesizeHanaVoice(text) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash-lite-tts',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: (text || '').slice(0, 1200),
+              speechMetadata: {
+                style: 'Warm, cheerful anime companion voice',
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
+        },
+      },
+    });
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (base64Audio) {
+      return Buffer.from(base64Audio, 'base64');
+    }
+  } catch (err) {
+    console.warn('TTS voice generation failed in api/index.js:', err);
+  }
+  return null;
+}
+
 router.post('/caller/platforms/test', async (req, res) => {
   try {
-    const { platform, config } = req.body || {};
+    const { platform, config, credentials } = req.body || {};
+    const creds = credentials || config || {};
     if (!platform) {
       return res.status(400).json({ ok: false, error: 'Platform identifier is required' });
     }
 
     if (platform === 'whatsapp') {
-      const token = (config?.accessToken || '').trim();
-      const phoneId = (config?.phoneNumberId || '').trim();
+      const token = (creds?.accessToken || '').trim();
+      const phoneId = (creds?.phoneNumberId || '').trim();
       if (!token) return res.status(400).json({ ok: false, error: 'Meta Access Token required for WhatsApp' });
       const url = phoneId ? `https://graph.facebook.com/v21.0/${phoneId}` : 'https://graph.facebook.com/v21.0/me';
       const metaResp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -1845,7 +1891,7 @@ router.post('/caller/platforms/test', async (req, res) => {
     }
 
     if (platform === 'telegram') {
-      const botToken = (config?.botToken || '').trim();
+      const botToken = (creds?.botToken || '').trim().replace(/^bot/i, '');
       if (!botToken) return res.status(400).json({ ok: false, error: 'Telegram Bot Token required' });
       const tgResp = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
       const data = await tgResp.json().catch(() => ({}));
@@ -1854,14 +1900,43 @@ router.post('/caller/platforms/test', async (req, res) => {
     }
 
     if (platform === 'messenger') {
-      const pageToken = (config?.pageAccessToken || '').trim();
-      const pageId = (config?.pageId || '').trim();
+      const pageToken = (creds?.pageAccessToken || '').trim();
+      const pageId = (creds?.pageId || '').trim();
       if (!pageToken) return res.status(400).json({ ok: false, error: 'Page Access Token required for Messenger' });
       const url = pageId ? `https://graph.facebook.com/v21.0/${pageId}?access_token=${pageToken}` : `https://graph.facebook.com/v21.0/me?access_token=${pageToken}`;
       const fbResp = await fetch(url);
       const data = await fbResp.json().catch(() => ({}));
       if (!fbResp.ok) return res.status(fbResp.status).json({ ok: false, error: data?.error?.message || 'Facebook Page credentials invalid' });
       return res.json({ ok: true, platform: 'messenger', verified: true, details: { pageName: data.name || pageId || 'Verified Page', id: data.id || pageId } });
+    }
+
+    if (platform === 'discord') {
+      const botToken = (creds?.botToken || '').trim().replace(/^Bot\s+/i, '');
+      if (!botToken) return res.status(400).json({ ok: false, error: 'Discord Bot Token is required' });
+      const discordResp = await fetch('https://discord.com/api/v10/users/@me', {
+        headers: {
+          Authorization: `Bot ${botToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await discordResp.json().catch(() => ({}));
+      if (!discordResp.ok) {
+        return res.status(discordResp.status).json({
+          ok: false,
+          error: data?.message || 'Discord Bot Token is invalid or bot not found',
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'discord',
+        verified: true,
+        details: {
+          username: `@${data.username}`,
+          id: data.id,
+          discriminator: data.discriminator || '0',
+          supportsVoiceCalls: true,
+        },
+      });
     }
 
     return res.status(400).json({ ok: false, error: `Unknown platform "${platform}"` });
@@ -1872,22 +1947,30 @@ router.post('/caller/platforms/test', async (req, res) => {
 
 router.post('/caller/platforms/dispatch', async (req, res) => {
   try {
-    const { platform, config, message, to } = req.body || {};
+    const { platform, config, credentials, message, to, recipient, callerUrl } = req.body || {};
+    const creds = credentials || config || {};
+    const targetRecipient = String(to || recipient || '').trim();
+
     if (!platform || !message) {
       return res.status(400).json({ ok: false, error: 'Platform and message are required' });
     }
     const dispatchTime = new Date().toLocaleTimeString();
     const dispatchId = `disp_${platform}_${Date.now()}`;
 
+    const host = req.get('host') || 'localhost:3000';
+    const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    const baseUrl = callerUrl || `${protocol}://${host}`;
+    const liveCallRoomUrl = `${baseUrl}/caller`;
+
     if (platform === 'whatsapp') {
-      const token = (config?.accessToken || '').trim();
-      const phoneId = (config?.phoneNumberId || '').trim();
-      const targetPhone = (to || config?.targetNumber || '').replace(/[^0-9]/g, '');
+      const token = (creds?.accessToken || '').trim();
+      const phoneId = (creds?.phoneNumberId || '').trim();
+      const targetPhone = (targetRecipient || creds?.targetNumber || '').replace(/[^0-9]/g, '');
       if (!token || !phoneId || !targetPhone) return res.status(400).json({ ok: false, error: 'WhatsApp credentials and target phone required' });
       const waResp = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: targetPhone, type: 'text', text: { body: message } }),
+        body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: targetPhone, type: 'text', text: { body: `📞 [Hana AI Live Voice Call Session]\n\n"${message}"\n\n🎙️ Answer Live: ${liveCallRoomUrl}` } }),
       });
       const waData = await waResp.json().catch(() => ({}));
       if (!waResp.ok) return res.status(waResp.status).json({ ok: false, error: waData?.error?.message || 'WhatsApp dispatch failed' });
@@ -1895,27 +1978,123 @@ router.post('/caller/platforms/dispatch', async (req, res) => {
     }
 
     if (platform === 'telegram') {
-      const botToken = (config?.botToken || '').trim();
-      const chatId = (to || config?.chatId || '').trim();
+      const botToken = (creds?.botToken || '').trim().replace(/^bot/i, '');
+      const chatId = (targetRecipient || creds?.chatId || '').trim();
       if (!botToken || !chatId) return res.status(400).json({ ok: false, error: 'Telegram Bot Token and Chat ID required' });
+      
       const tgResp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: message }),
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `📞 <b>INCOMING VOICE CALL FROM HANA AI</b>\n\n<i>"${message}"</i>\n\n🎙️ <a href="${liveCallRoomUrl}">Answer Live Voice Call</a>`,
+          parse_mode: 'HTML',
+        }),
       });
       const tgData = await tgResp.json().catch(() => ({}));
       if (!tgData?.ok) return res.status(400).json({ ok: false, error: tgData?.description || 'Telegram dispatch failed' });
+
+      // Synthesize and send voice note to telegram receiver
+      try {
+        const voiceBuf = await synthesizeHanaVoice(message);
+        if (voiceBuf) {
+          const form = new FormData();
+          form.append('chat_id', chatId);
+          form.append('voice', new Blob([new Uint8Array(voiceBuf)], { type: 'audio/wav' }), 'hana_greeting.wav');
+          form.append('caption', `📞 <b>Hana Call Greeting:</b> "${message}"`.slice(0, 1024));
+          form.append('parse_mode', 'HTML');
+          await fetch(`https://api.telegram.org/bot${botToken}/sendVoice`, {
+            method: 'POST',
+            body: form,
+          });
+        }
+      } catch {}
+
       return res.json({ ok: true, dispatchId, platform: 'telegram', to: chatId, message, timestamp: dispatchTime });
     }
 
+    if (platform === 'discord') {
+      const botToken = (creds?.botToken || '').trim().replace(/^Bot\s+/i, '');
+      const channelId = (creds?.channelId || targetRecipient || '').trim();
+      const targetUserId = (creds?.targetUserId || '').trim();
+
+      if (!botToken || !channelId) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Discord Bot Token and target Channel ID are required',
+        });
+      }
+
+      const mention = targetUserId ? `<@${targetUserId}> ` : '';
+      let discData = {};
+      try {
+        const voiceBuf = await synthesizeHanaVoice(message);
+        if (voiceBuf) {
+          const form = new FormData();
+          form.append(
+            'payload_json',
+            JSON.stringify({
+              content: `${mention}📞 **Incoming Live Voice Call from Hana AI!**\n> "${message}"\n🎙️ **Live Call Room:** [Join Call](${liveCallRoomUrl})`,
+              attachments: [{ id: 0, filename: 'hana_call_greeting.wav', description: 'Hana AI Spoken Voice Greeting' }],
+            })
+          );
+          form.append('files[0]', new Blob([new Uint8Array(voiceBuf)], { type: 'audio/wav' }), 'hana_call_greeting.wav');
+          const discResp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: { Authorization: `Bot ${botToken}` },
+            body: form,
+          });
+          discData = await discResp.json().catch(() => ({}));
+          if (!discResp.ok) {
+            return res.status(discResp.status).json({
+              ok: false,
+              error: discData?.message || 'Discord message dispatch failed. Ensure bot has Send Messages and Attach Files permissions in the channel.',
+            });
+          }
+        } else {
+          const discResp = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bot ${botToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              content: `${mention}📞 **Incoming Live Call from Hana AI Voice Switchboard!**\n> "${message}"\n🎙️ **Answer Call:** ${liveCallRoomUrl}`,
+            }),
+          });
+          discData = await discResp.json().catch(() => ({}));
+          if (!discResp.ok) {
+            return res.status(discResp.status).json({
+              ok: false,
+              error: discData?.message || 'Discord message dispatch failed.',
+            });
+          }
+        }
+      } catch (err) {
+        return res.status(500).json({ ok: false, error: err?.message || 'Discord dispatch error' });
+      }
+
+      return res.json({
+        ok: true,
+        dispatchId,
+        platform: 'discord',
+        to: channelId,
+        message,
+        timestamp: dispatchTime,
+        remoteMessageId: discData?.id,
+        callMode: 'voice_bridge',
+        liveCallUrl: liveCallRoomUrl,
+      });
+    }
+
     if (platform === 'messenger') {
-      const pageToken = (config?.pageAccessToken || '').trim();
-      const recipientId = (to || config?.recipientId || '').trim();
+      const pageToken = (creds?.pageAccessToken || '').trim();
+      const recipientId = (targetRecipient || creds?.recipientId || '').trim();
       if (!pageToken || !recipientId) return res.status(400).json({ ok: false, error: 'Page Access Token and recipient ID required' });
       const fbResp = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageToken}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipient: { id: recipientId }, message: { text: message } }),
+        body: JSON.stringify({ recipient: { id: recipientId }, message: { text: `📞 [Hana AI Live Voice Call Session]\n\n"${message}"\n\n🎙️ Answer Live: ${liveCallRoomUrl}` } }),
       });
       const fbData = await fbResp.json().catch(() => ({}));
       if (!fbResp.ok) return res.status(fbResp.status).json({ ok: false, error: fbData?.error?.message || 'Messenger dispatch failed' });
@@ -1925,6 +2104,109 @@ router.post('/caller/platforms/dispatch', async (req, res) => {
     return res.status(400).json({ ok: false, error: `Unsupported platform "${platform}"` });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err?.message || 'Dispatch failed' });
+  }
+});
+
+router.post('/caller/platforms/relay-reply', async (req, res) => {
+  try {
+    const { platform, target, botToken, text } = req.body || {};
+    if (!platform || !target || !text) {
+      return res.status(400).json({ ok: false, error: 'Platform, target, and text are required' });
+    }
+
+    if (platform === 'telegram') {
+      const cleanToken = String(botToken || '').trim().replace(/^bot/i, '');
+      if (!cleanToken) return res.status(400).json({ ok: false, error: 'Telegram Bot Token required' });
+
+      let voiceSent = false;
+      try {
+        const voiceBuf = await synthesizeHanaVoice(text);
+        if (voiceBuf) {
+          const form = new FormData();
+          form.append('chat_id', target);
+          form.append('voice', new Blob([new Uint8Array(voiceBuf)], { type: 'audio/wav' }), 'hana_reply.wav');
+          form.append('caption', `🌸 <b>Hana:</b> ${text}`.slice(0, 1024));
+          form.append('parse_mode', 'HTML');
+          const tgVoiceResp = await fetch(`https://api.telegram.org/bot${cleanToken}/sendVoice`, {
+            method: 'POST',
+            body: form,
+          });
+          const tgVoiceData = await tgVoiceResp.json().catch(() => ({}));
+          if (tgVoiceData?.ok) voiceSent = true;
+        }
+      } catch {}
+
+      if (!voiceSent) {
+        await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: target, text: `🌸 <b>Hana:</b> ${text}`, parse_mode: 'HTML' }),
+        });
+      }
+      return res.json({ ok: true, voiceSent });
+    }
+
+    if (platform === 'discord') {
+      const cleanToken = String(botToken || '').trim().replace(/^Bot\s+/i, '');
+      if (!cleanToken) return res.status(400).json({ ok: false, error: 'Discord Bot Token required' });
+
+      let voiceSent = false;
+      try {
+        const voiceBuf = await synthesizeHanaVoice(text);
+        if (voiceBuf) {
+          const form = new FormData();
+          form.append(
+            'payload_json',
+            JSON.stringify({
+              content: `🌸 **Hana:** ${text}`.slice(0, 2000),
+              attachments: [{ id: 0, filename: 'hana_voice_reply.wav', description: 'Hana Spoken Voice Reply' }],
+            })
+          );
+          form.append('files[0]', new Blob([new Uint8Array(voiceBuf)], { type: 'audio/wav' }), 'hana_voice_reply.wav');
+          const discResp = await fetch(`https://discord.com/api/v10/channels/${target}/messages`, {
+            method: 'POST',
+            headers: { Authorization: `Bot ${cleanToken}` },
+            body: form,
+          });
+          if (discResp.ok) voiceSent = true;
+        }
+      } catch {}
+
+      if (!voiceSent) {
+        await fetch(`https://discord.com/api/v10/channels/${target}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bot ${cleanToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ content: `🌸 **Hana:** ${text}`.slice(0, 2000) }),
+        });
+      }
+      return res.json({ ok: true, voiceSent });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'Relay failed' });
+  }
+});
+
+router.post('/caller/platforms/keep-bot-online', (req, res) => {
+  return res.json({ ok: true, platform: 'discord', status: 'online' });
+});
+
+router.get('/caller/platforms/poll', async (req, res) => {
+  try {
+    const target = String(req.query.target || '').trim();
+    const messagesToReturn = [];
+    const queue = omnichannelCallMessages.get(target);
+    if (queue && queue.length > 0) {
+      messagesToReturn.push(...queue);
+      omnichannelCallMessages.set(target, []);
+    }
+    return res.json({ ok: true, messages: messagesToReturn });
+  } catch {
+    return res.json({ ok: true, messages: [] });
   }
 });
 

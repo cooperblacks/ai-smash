@@ -615,7 +615,52 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   const [isCandidateSpeaking, setIsCandidateSpeaking] = useState<boolean>(false);
   const recognitionRef = useRef<any>(null);
   const candidateTranscriptRef = useRef<string>('');
+  const candidateFinalTranscriptRef = useRef<string>('');
+  const candidateInterimTranscriptRef = useRef<string>('');
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const advanceToPhaseRef = useRef<(nextPhase: MeetingPhase) => void>(() => {});
+
+  /**
+   * Deduplicates repeated adjacent phrases, sentences, and interim echoes
+   * so the candidate spoken output on recruiter evaluation dossier is pristine.
+   */
+  const cleanDeduplicatedTranscript = useCallback((rawText: string): string => {
+    if (!rawText) return '';
+    const text = rawText.trim().replace(/\s+/g, ' ');
+    const words = text.split(' ');
+    if (words.length <= 1) return text;
+
+    let cleaned = [...words];
+    let changed = true;
+    let iterations = 0;
+
+    while (changed && iterations < 6) {
+      changed = false;
+      iterations++;
+      const len = cleaned.length;
+      for (let phraseLen = Math.min(25, Math.floor(len / 2)); phraseLen >= 1; phraseLen--) {
+        for (let i = 0; i <= cleaned.length - phraseLen * 2; i++) {
+          const first = cleaned.slice(i, i + phraseLen).join(' ').toLowerCase();
+          const second = cleaned.slice(i + phraseLen, i + phraseLen * 2).join(' ').toLowerCase();
+          if (first === second) {
+            cleaned.splice(i + phraseLen, phraseLen);
+            changed = true;
+            break;
+          }
+        }
+        if (changed) break;
+      }
+    }
+
+    return cleaned.join(' ');
+  }, []);
+
+  const clearCandidateTranscript = useCallback(() => {
+    candidateTranscriptRef.current = '';
+    candidateFinalTranscriptRef.current = '';
+    candidateInterimTranscriptRef.current = '';
+    setCandidateLiveTranscript('');
+  }, []);
 
   // Auto-scroll candidate live word subtitles like a marquee to always show most recent words
   useEffect(() => {
@@ -1432,20 +1477,20 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   // Submit Answer to Questions
   const handleSaveResponse = useCallback(
     (phase: string, question: string, answer: string, nextPhase: MeetingPhase) => {
+      const cleanAnswer = cleanDeduplicatedTranscript(answer.trim());
       setRecordedResponses((prev) => [
         ...prev,
         {
           phase,
           question,
-          answer: answer.trim() || '[Spoken answer recorded via microphone stream]',
+          answer: cleanAnswer || '[Spoken answer recorded via microphone stream]',
           timestamp: new Date().toLocaleTimeString(),
         },
       ]);
-      setCandidateLiveTranscript('');
-      candidateTranscriptRef.current = '';
-      advanceToPhase(nextPhase);
+      clearCandidateTranscript();
+      advanceToPhaseRef.current?.(nextPhase);
     },
-    []
+    [cleanDeduplicatedTranscript, clearCandidateTranscript]
   );
 
   // Candidate Q&A voice-first handlers
@@ -1499,7 +1544,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
   const answerCandidateQaQuestion = useCallback(
     async (qText: string) => {
-      const trimmed = qText.trim();
+      const trimmed = cleanDeduplicatedTranscript(qText.trim());
       if (!trimmed || hanaIsSpeakingRef.current) return;
 
       if (qaSilenceTimerRef.current) {
@@ -1508,8 +1553,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       }
 
       setQaHistory((prev) => [...prev, { sender: 'candidate', text: trimmed }]);
-      setCandidateLiveTranscript('');
-      candidateTranscriptRef.current = '';
+      clearCandidateTranscript();
       soundManager.playSend();
       setNodCount((c) => c + 1);
       setQaStageState('answering');
@@ -1701,21 +1745,49 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             return;
           }
 
-          // Extract current phrase specifically from event.resultIndex onwards (never accumulate stale history)
-          let currentUtterance = '';
+          // Separate final chunks from interim chunks so phrases are never repeatedly appended!
+          let finalChunk = '';
+          let interimChunk = '';
+
           for (let i = event.resultIndex; i < event.results.length; i++) {
-            currentUtterance += event.results[i][0].transcript + ' ';
+            const piece = event.results[i][0]?.transcript || '';
+            if (event.results[i].isFinal) {
+              finalChunk += piece + ' ';
+            } else {
+              interimChunk += piece;
+            }
           }
-          currentUtterance = currentUtterance.trim();
-          if (!currentUtterance) return;
+
+          const cleanFinal = finalChunk.trim();
+          const cleanInterim = interimChunk.trim();
+
+          if (!cleanFinal && !cleanInterim) return;
+
+          if (cleanFinal) {
+            candidateFinalTranscriptRef.current = (
+              candidateFinalTranscriptRef.current
+                ? candidateFinalTranscriptRef.current + ' ' + cleanFinal
+                : cleanFinal
+            ).trim();
+          }
+
+          candidateInterimTranscriptRef.current = cleanInterim;
+
+          const currentUtterance = (cleanFinal || cleanInterim);
+          const fullRawTranscript = (
+            candidateFinalTranscriptRef.current +
+            (candidateInterimTranscriptRef.current ? ' ' + candidateInterimTranscriptRef.current : '')
+          ).trim();
+
+          const deduplicatedFull = cleanDeduplicatedTranscript(fullRawTranscript);
+          candidateTranscriptRef.current = deduplicatedFull;
 
           const curPhase = meetingPhaseRef.current;
           const lower = currentUtterance.toLowerCase().trim();
 
           // 0. Situational questions and repeat request interception across ALL phases
           if (handleSituationalQuery(lower, curPhase)) {
-            setCandidateLiveTranscript('');
-            candidateTranscriptRef.current = '';
+            clearCandidateTranscript();
             return;
           }
 
@@ -1747,13 +1819,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
           // 1. OPEN QUESTIONS (question_1, question_2)
           if (curPhase === 'question_1' || curPhase === 'question_2') {
-            candidateTranscriptRef.current = (candidateTranscriptRef.current ? candidateTranscriptRef.current + ' ' : '') + currentUtterance;
-            setCandidateLiveTranscript(candidateTranscriptRef.current);
+            setCandidateLiveTranscript(deduplicatedFull);
             setIsCandidateSpeaking(true);
 
             // Smart decision-making layer: detect when candidate explicitly says they are done
-            const isDoneEarly = detectCandidateFinishedIntent(lower, curPhase);
-            if (isDoneEarly && candidateTranscriptRef.current.length >= 8 && !hanaIsSpeakingRef.current) {
+            const isDoneEarly =
+              detectCandidateFinishedIntent(lower, curPhase) ||
+              detectCandidateFinishedIntent(deduplicatedFull, curPhase);
+            if (isDoneEarly && deduplicatedFull.length >= 8 && !hanaIsSpeakingRef.current) {
               if (silenceTimerRef.current) {
                 clearTimeout(silenceTimerRef.current);
                 silenceTimerRef.current = null;
@@ -1762,7 +1835,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               setIsCandidateSpeaking(false);
               setNodCount((c) => c + 1);
               const voiceline = pickUniqueVoiceline('doneAcknowledgment');
-              const text = candidateTranscriptRef.current.trim();
+              const text = cleanDeduplicatedTranscript(deduplicatedFull);
               if (curPhase === 'question_1') {
                 speakHanaLine(voiceline, () => {
                   setTimeout(() => {
@@ -1779,7 +1852,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             }
 
             // Contextual subtle reactions from Hana while candidate is answering
-            if (candidateTranscriptRef.current.length > 25 && !hanaIsSpeakingRef.current) {
+            if (deduplicatedFull.length > 25 && !hanaIsSpeakingRef.current) {
               const reactions = ['Hmm...', 'I see', 'Got it', 'Understood', 'Noted'];
               const randomReaction = reactions[Math.floor(Math.random() * reactions.length)];
               setHanaReactionText(randomReaction);
@@ -1792,7 +1865,9 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
           // 2. CANDIDATE Q&A SESSION (Voice-First, Connected to MuxAI Ollama RAG + Smart Fallback)
           else if (curPhase === 'candidate_qa') {
-            const isFinishedPhrase = detectCandidateFinishedIntent(lower, 'candidate_qa');
+            const isFinishedPhrase =
+              detectCandidateFinishedIntent(lower, 'candidate_qa') ||
+              detectCandidateFinishedIntent(deduplicatedFull, 'candidate_qa');
 
             if (
               isFinishedPhrase &&
@@ -1805,8 +1880,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               return;
             }
 
-            candidateTranscriptRef.current = (candidateTranscriptRef.current ? candidateTranscriptRef.current + ' ' : '') + currentUtterance;
-            setCandidateLiveTranscript(candidateTranscriptRef.current);
+            setCandidateLiveTranscript(deduplicatedFull);
             setIsCandidateSpeaking(true);
 
             // Candidate is speaking a question
@@ -1816,7 +1890,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
             // Wait 2.0s silence after candidate finishes asking question before Hana responds
             qaSilenceTimerRef.current = setTimeout(() => {
-              const qText = candidateTranscriptRef.current.trim();
+              const qText = cleanDeduplicatedTranscript(candidateTranscriptRef.current.trim());
               if (!qText || hanaIsSpeakingRef.current) return;
               if (detectCandidateFinishedIntent(qText, 'candidate_qa')) {
                 concludeQaSession();
@@ -1838,8 +1912,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
             // First check situational questions (e.g. asking about phone number during snapshot task)
             if (handleSituationalQuery(lower, curPhase)) {
-              setCandidateLiveTranscript('');
-              candidateTranscriptRef.current = '';
+              clearCandidateTranscript();
               return;
             }
 
@@ -1872,8 +1945,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             const foundConfusion = confusionKeywords.find((k) => lower.includes(k));
             if (foundConfusion && !hanaIsSpeakingRef.current) {
               reExplainCurrentTask(curPhase);
-              setCandidateLiveTranscript('');
-              candidateTranscriptRef.current = '';
+              clearCandidateTranscript();
               return;
             }
 
@@ -1883,8 +1955,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               if (isResumeDoneIntent && !hanaIsSpeakingRef.current) {
                 if (uploadedResumeRef.current) {
                   handleSubmitResumeTaskRef.current?.();
-                  setCandidateLiveTranscript('');
-                  candidateTranscriptRef.current = '';
+                  clearCandidateTranscript();
                 } else {
                   speakHanaLine(
                     "Please select or drop your resume document first into the upload area, then say ready or done!",
@@ -1902,8 +1973,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
               if (isWrittenDoneIntent && !hanaIsSpeakingRef.current) {
                 if (writtenTextRef.current.trim().length >= 100) {
                   handleSubmitWrittenTaskRef.current?.();
-                  setCandidateLiveTranscript('');
-                  candidateTranscriptRef.current = '';
+                  clearCandidateTranscript();
                 } else {
                   const currentChars = writtenTextRef.current.trim().length;
                   speakHanaLine(
@@ -1935,16 +2005,14 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 setTimeout(() => {
                   handleSubmitPressureRatingRef.current?.(matchedPressure!);
                 }, 400);
-                setCandidateLiveTranscript('');
-                candidateTranscriptRef.current = '';
+                clearCandidateTranscript();
                 return;
               }
 
               const isConfirmIntent = /\b(ready|done|submit|next|confirm|that is my answer)\b/i.test(lower);
               if (isConfirmIntent && pressureRatingRef.current && !hanaIsSpeakingRef.current) {
                 handleSubmitPressureRatingRef.current?.();
-                setCandidateLiveTranscript('');
-                candidateTranscriptRef.current = '';
+                clearCandidateTranscript();
                 return;
               }
             }
@@ -2239,8 +2307,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   // Unified phase advance with vocal instructions, Mixamo animations, and 3D gaze towards task panels
   const advanceToPhase = (nextPhase: MeetingPhase) => {
     setMeetingPhase(nextPhase);
-    setCandidateLiveTranscript('');
-    candidateTranscriptRef.current = '';
+    clearCandidateTranscript();
 
     if (nextPhase === 'question_1') {
       setHanaLookTarget(null);
@@ -2336,6 +2403,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       );
     }
   };
+  advanceToPhaseRef.current = advanceToPhase;
 
   // Handle Resume File Upload (with automatic voice-first advance upon upload)
   const handleResumeFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -4456,7 +4524,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   <h3 className="font-bold text-base text-neutral-900">{res.question}</h3>
 
                   <div className="p-4 rounded-2xl bg-neutral-100 border border-neutral-200 text-sm leading-relaxed text-neutral-950 font-medium whitespace-pre-wrap">
-                    {res.answer}
+                    {cleanDeduplicatedTranscript(res.answer)}
                   </div>
 
                   {res.aiNotes && (
@@ -4490,7 +4558,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                       <span className="text-[10px] font-bold block mb-1 uppercase tracking-wider text-neutral-600">
                         {qa.sender === 'candidate' ? `${effectiveDossierName} (Candidate)` : 'Hana (AI Recruiter)'}
                       </span>
-                      <p className="leading-relaxed text-neutral-950">{qa.text}</p>
+                      <p className="leading-relaxed text-neutral-950">{cleanDeduplicatedTranscript(qa.text)}</p>
                     </div>
                   ))}
                 </div>

@@ -22,11 +22,62 @@ class DiscordBotRunner {
   private botUser: { id: string; username: string } | null = null;
   private applicationId: string | null = null;
   private isRunning = false;
+  private isConnected = false;
   private connectStartTime = 0;
+  private intentLevel = 0; // 0: 37377 (with message content), 1: 513 (guilds + messages), 2: 1 (guilds only)
+  private lastStatus: 'connected' | 'disconnected' | 'polling' | 'error' = 'disconnected';
+  private lastStatusMessage = '';
+  private listeners: Set<
+    (
+      status: 'connected' | 'disconnected' | 'polling' | 'error',
+      message: string,
+      botUser: { id: string; username: string } | null
+    ) => void
+  > = new Set();
   private onStatusChange?: (
     status: 'connected' | 'disconnected' | 'polling' | 'error',
     message: string
   ) => void;
+
+  public subscribe(
+    callback: (
+      status: 'connected' | 'disconnected' | 'polling' | 'error',
+      message: string,
+      botUser: { id: string; username: string } | null
+    ) => void
+  ) {
+    this.listeners.add(callback);
+    callback(this.lastStatus, this.lastStatusMessage, this.botUser);
+    return () => {
+      this.listeners.delete(callback);
+    };
+  }
+
+  private notifyStatus(
+    status: 'connected' | 'disconnected' | 'polling' | 'error',
+    message: string
+  ) {
+    this.lastStatus = status;
+    this.lastStatusMessage = message;
+    this.isConnected = status === 'connected';
+    this.onStatusChange?.(status, message);
+    for (const listener of this.listeners) {
+      try {
+        listener(status, message, this.botUser);
+      } catch {}
+    }
+  }
+
+  public getStatus() {
+    return {
+      isRunning: this.isRunning,
+      isConnected: this.isConnected,
+      status: this.lastStatus,
+      statusMessage: this.lastStatusMessage,
+      botUser: this.botUser,
+      uptimeSec: this.connectStartTime ? Math.floor((Date.now() - this.connectStartTime) / 1000) : 0,
+    };
+  }
 
   public start(
     integration: IntegrationConfig,
@@ -57,6 +108,7 @@ class DiscordBotRunner {
 
   public stop() {
     this.isRunning = false;
+    this.isConnected = false;
     this.currentIntegration = null;
     this.botUser = null;
     this.applicationId = null;
@@ -79,7 +131,7 @@ class DiscordBotRunner {
       this.ws = null;
     }
 
-    this.onStatusChange?.('disconnected', 'Discord bot runner stopped');
+    this.notifyStatus('disconnected', 'Discord bot runner stopped');
   }
 
   public getBotUser() {
@@ -93,9 +145,9 @@ class DiscordBotRunner {
   private connect() {
     if (!this.isRunning || !this.currentIntegration?.botToken) return;
 
-    const token = this.currentIntegration.botToken.trim();
+    const token = this.currentIntegration.botToken.trim().replace(/^Bot\s+/i, '');
     this.connectStartTime = Date.now();
-    this.onStatusChange?.('polling', 'Connecting to Discord Gateway...');
+    this.notifyStatus('polling', 'Connecting to Discord Gateway...');
 
     try {
       const ws = new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json');
@@ -119,17 +171,35 @@ class DiscordBotRunner {
             const heartbeatMs = d.heartbeat_interval || 41250;
             this.startHeartbeat(heartbeatMs);
 
-            // Send Opcode 2: Identify
-            // Intents: Guilds (1) | GuildMessages (512) | DirectMessages (4096) | MessageContent (32768) = 37377
+            // Progressive intent fallback ladder:
+            // 0: 37377 (Guilds, Messages, DMs, Message Content)
+            // 1: 513 (Guilds, Guild Messages - unprivileged)
+            // 2: 1 (Guilds only - unprivileged, guaranteed online)
+            const intentsToUse =
+              this.intentLevel === 0 ? 37377 : this.intentLevel === 1 ? 513 : 1;
+
             const identifyPayload = {
               op: 2,
               d: {
                 token: token,
-                intents: 37377,
+                intents: intentsToUse,
                 properties: {
-                  os: 'browser',
-                  browser: 'chrome',
-                  device: 'browser',
+                  os: 'linux',
+                  browser: 'Hana',
+                  device: 'Hana',
+                  $os: 'linux',
+                  $browser: 'Hana',
+                  $device: 'Hana',
+                },
+                presence: {
+                  activities: [
+                    {
+                      name: 'Voice Calls with Hana 🌸',
+                      type: 0,
+                    },
+                  ],
+                  status: 'online',
+                  afk: false,
                 },
               },
             };
@@ -152,9 +222,9 @@ class DiscordBotRunner {
             if (t === 'READY') {
               this.botUser = d.user;
               this.applicationId = d.application?.id || d.user?.id || null;
-              this.onStatusChange?.(
+              this.notifyStatus(
                 'connected',
-                `Online as @${d.user.username} (Browser Gateway v10 Active)`
+                `Online as @${d.user.username} (Discord Gateway Active)`
               );
 
               // Auto-register slash commands with Discord
@@ -178,7 +248,7 @@ class DiscordBotRunner {
 
       ws.onerror = (err) => {
         console.warn('Discord Gateway WebSocket error:', err);
-        this.onStatusChange?.('error', 'Gateway connection error. Retrying...');
+        this.notifyStatus('error', 'Gateway connection error. Retrying...');
       };
 
       ws.onclose = (event) => {
@@ -187,13 +257,37 @@ class DiscordBotRunner {
           this.heartbeatInterval = null;
         }
 
+        // Close code 4004: Authentication failed
+        if (event.code === 4004) {
+          this.isRunning = false;
+          this.notifyStatus('error', 'Authentication failed: Invalid Discord Bot Token');
+          return;
+        }
+
+        // Close code 4014: Disallowed intent(s)
+        if (event.code === 4014) {
+          if (this.intentLevel === 0) {
+            console.warn('Privileged intent 37377 disallowed (4014); falling back to standard intents (513)...');
+            this.intentLevel = 1;
+            this.notifyStatus('polling', 'Connecting with standard intents (513)...');
+            this.scheduleReconnect(500);
+            return;
+          } else if (this.intentLevel === 1) {
+            console.warn('Intents 513 disallowed (4014); falling back to minimal guild intent (1)...');
+            this.intentLevel = 2;
+            this.notifyStatus('polling', 'Connecting with minimal gateway intent (1)...');
+            this.scheduleReconnect(500);
+            return;
+          }
+        }
+
         if (this.isRunning && event.code !== 1000) {
           this.scheduleReconnect(5000);
         }
       };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to create WebSocket';
-      this.onStatusChange?.('error', msg);
+      this.notifyStatus('error', msg);
       this.scheduleReconnect(5000);
     }
   }

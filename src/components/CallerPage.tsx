@@ -68,6 +68,7 @@ import { TelemetryBar } from './TelemetryBar';
 import { VRMCanvas } from './VRMCanvas';
 import { VRMSubtitles } from './VRMSubtitles';
 import { OmnichannelGatewaysGrid } from './OmnichannelGatewaysGrid';
+import { discordBotRunner } from '../lib/discordRunner';
 
 export interface CallerPageProps {
   onNavigateHome: () => void;
@@ -614,6 +615,9 @@ export const CallerPage: React.FC<CallerPageProps> = ({
           const serialized = JSON.stringify(next);
           localStorage.setItem(STORAGE_KEYS.PLATFORMS, serialized);
           localStorage.setItem('hana_caller_omnichannel_backup', serialized);
+          if (next.discord?.botToken?.trim()) {
+            localStorage.setItem('discord_bot_token', next.discord.botToken.trim().replace(/^Bot\s+/i, ''));
+          }
         } catch (e) {
           console.warn('Failed to persist platform credentials:', e);
         }
@@ -667,6 +671,119 @@ export const CallerPage: React.FC<CallerPageProps> = ({
   useEffect(() => {
     activePlatformCallRef.current = activePlatformCall;
   }, [activePlatformCall]);
+
+  // Frontend audio monitoring toggle (default false: omnichannel calls send voice to receiving end, not local speakers)
+  const [frontendMonitorAudio, setFrontendMonitorAudio] = useState<boolean>(false);
+  const frontendMonitorAudioRef = useRef(frontendMonitorAudio);
+  useEffect(() => {
+    frontendMonitorAudioRef.current = frontendMonitorAudio;
+  }, [frontendMonitorAudio]);
+
+  // Real-time Discord Gateway connection state
+  const [discordGatewayStatus, setDiscordGatewayStatus] = useState<{
+    status: 'connected' | 'disconnected' | 'polling' | 'error';
+    message: string;
+    botUser?: { id: string; username: string } | null;
+  }>({
+    status: 'disconnected',
+    message: 'Gateway idle',
+  });
+
+  // Subscribe to discordBotRunner status updates
+  useEffect(() => {
+    const unsub = discordBotRunner.subscribe((status, message, botUser) => {
+      setDiscordGatewayStatus({ status, message, botUser });
+    });
+    return unsub;
+  }, []);
+
+  // Auto-connect Discord Bot when token is available so it stays active & online immediately
+  useEffect(() => {
+    const token = platformCreds.discord.botToken?.trim();
+    if (token && token.length > 20 && platformCreds.discord.enabled !== false) {
+      discordBotRunner.start(
+        {
+          id: 'caller_discord_session',
+          platform: 'discord',
+          name: 'Discord Bot',
+          botToken: token,
+          channelId: platformCreds.discord.channelId,
+          guildId: platformCreds.discord.guildId,
+          enabled: true,
+          status: 'polling',
+        },
+        (status, message) => {
+          setDiscordGatewayStatus({
+            status,
+            message,
+            botUser: discordBotRunner.getBotUser(),
+          });
+          if (status === 'connected') {
+            setPlatformCreds((prev) => ({
+              ...prev,
+              discord: {
+                ...prev.discord,
+                status: 'verified',
+                statusMessage: message,
+              },
+            }));
+          }
+        }
+      );
+    }
+  }, [
+    platformCreds.discord.botToken,
+    platformCreds.discord.enabled,
+    platformCreds.discord.channelId,
+    platformCreds.discord.guildId,
+  ]);
+
+  const handleConnectDiscord = useCallback(async () => {
+    const cfg = platformCreds.discord;
+    const token = cfg.botToken?.trim().replace(/^Bot\s+/i, '');
+    if (!token) {
+      alert('Please enter your Discord Bot Token first.');
+      return;
+    }
+
+    // 1. Keep bot active & online on the server
+    fetch('/api/caller/platforms/keep-bot-online', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: 'discord', botToken: token }),
+    }).catch(() => {});
+
+    // 2. Connect client-side Discord Gateway runner
+    discordBotRunner.start(
+      {
+        id: 'caller_discord_session',
+        platform: 'discord',
+        name: 'Discord Bot',
+        botToken: token,
+        channelId: cfg.channelId,
+        guildId: cfg.guildId,
+        enabled: true,
+        status: 'polling',
+      },
+      (status, message) => {
+        setDiscordGatewayStatus({
+          status,
+          message,
+          botUser: discordBotRunner.getBotUser(),
+        });
+        if (status === 'connected') {
+          setPlatformCreds((prev) => ({
+            ...prev,
+            discord: {
+              ...prev.discord,
+              status: 'verified',
+              statusMessage: message,
+            },
+          }));
+        }
+      }
+    );
+  }, [platformCreds.discord]);
 
   const [platformActivityLog, setPlatformActivityLog] = useState<PlatformActivityLogItem[]>([
     {
@@ -972,25 +1089,29 @@ export const CallerPage: React.FC<CallerPageProps> = ({
   // 2-Way Voice Synthesis Engine (Hana TTS with Lip-Sync)
   // ----------------------------------------------------
   const speakAgentVoice = useCallback(
-    async (text: string, onDone?: () => void): Promise<void> => {
+    async (
+      text: string,
+      onDone?: () => void,
+      options?: { silentVisualOnly?: boolean }
+    ): Promise<void> => {
       const cleanText = text
         .replace(/[*#`_~]+/g, '')
         .replace(/\[[^\]]*\]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
 
-      if (
-        !cleanText ||
-        isSpeakerMutedRef.current ||
-        typeof window === 'undefined' ||
-        !('speechSynthesis' in window)
-      ) {
+      if (!cleanText) {
         if (callStatusRef.current !== 'idle' && callStatusRef.current !== 'ended') {
           setCallStatus('listening');
         }
         onDone?.();
         return;
       }
+
+      // Check whether to suppress frontend browser audio speaker output:
+      // Omnichannel options send voice to receiving end (Discord, Telegram, WhatsApp, Messenger), not web frontend!
+      const isOmnichannelCall = Boolean(activePlatformCallRef.current);
+      const isSilentVisual = Boolean(options?.silentVisualOnly || (isOmnichannelCall && !frontendMonitorAudioRef.current));
 
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current);
@@ -999,7 +1120,7 @@ export const CallerPage: React.FC<CallerPageProps> = ({
       setSilenceProgress(null);
 
       try {
-        window.speechSynthesis.cancel();
+        window.speechSynthesis?.cancel();
       } catch {}
 
       hanaIsSpeakingRef.current = true;
@@ -1016,6 +1137,84 @@ export const CallerPage: React.FC<CallerPageProps> = ({
       detectEmotionForResponse(cleanText)
         .then((emo) => setAvatarEmotion(emo))
         .catch(() => setAvatarEmotion('neutral'));
+
+      // If silent visual mode is active (omnichannel call):
+      // The voice was sent to the remote receiver (Discord, Telegram, WhatsApp, etc.).
+      // The web frontend animates the 3D avatar lips & subtitles visually without playing local audio!
+      if (isSilentVisual || isSpeakerMutedRef.current || typeof window === 'undefined' || !('speechSynthesis' in window)) {
+        return new Promise((resolve) => {
+          const words = cleanText.split(/\s+/).filter(Boolean);
+          let currentWordIndex = 0;
+          const wordIntervalMs = 240;
+
+          setSubtitleState({
+            isActive: true,
+            text: cleanText,
+            charIndex: 0,
+            currentWord: words[0] || '',
+          });
+
+          lipSyncManager.startSpeech(cleanText);
+
+          let finished = false;
+          let visualTimer: any = null;
+
+          const finishSpeech = () => {
+            if (finished) return;
+            finished = true;
+            if (visualTimer) clearInterval(visualTimer);
+            lipSyncManager.endSpeech();
+            hanaIsSpeakingRef.current = false;
+            setHanaIsSpeaking(false);
+            setSubtitleState((prev) => ({ ...prev, isActive: false }));
+
+            speechCooldownUntilRef.current = Date.now() + 850;
+
+            if (callStatusRef.current !== 'idle' && callStatusRef.current !== 'ended') {
+              setCallStatus('listening');
+              if (!isMicMutedRef.current) {
+                setTimeout(() => {
+                  if (
+                    !hanaIsSpeakingRef.current &&
+                    callStatusRef.current !== 'idle' &&
+                    callStatusRef.current !== 'ended' &&
+                    !isMicMutedRef.current
+                  ) {
+                    try {
+                      recognitionRef.current?.start();
+                    } catch {}
+                  }
+                }, 900);
+              }
+            }
+
+            onDone?.();
+            resolve();
+          };
+
+          visualTimer = setInterval(() => {
+            if (finished) return;
+            if (currentWordIndex < words.length) {
+              const word = words[currentWordIndex];
+              lipSyncManager.onBoundary(word);
+              setSubtitleState({
+                isActive: true,
+                text: cleanText,
+                charIndex: currentWordIndex,
+                currentWord: word,
+              });
+              currentWordIndex++;
+            } else {
+              finishSpeech();
+            }
+          }, wordIntervalMs);
+
+          const maxDurationMs = Math.max(2500, (words.length / 2.2) * 1000 + 1800);
+          setTimeout(() => {
+            if (!finished) finishSpeech();
+          }, maxDurationMs);
+        });
+      }
 
       const personaVoice = await waitForPersonaVoice(1000);
       const matchedVoice = personaVoice || getPersonaVoice();
@@ -1409,7 +1608,9 @@ export const CallerPage: React.FC<CallerPageProps> = ({
         }).catch(() => {});
       }
 
-      await speakAgentVoice(finalReply);
+      await speakAgentVoice(finalReply, undefined, {
+        silentVisualOnly: Boolean(activePlatformCallRef.current && !frontendMonitorAudioRef.current),
+      });
     },
     [
       activeModel,
@@ -1429,6 +1630,31 @@ export const CallerPage: React.FC<CallerPageProps> = ({
     setTestingPlatform(platform);
     try {
       const cfg = platformCreds[platform];
+
+      // If Discord, ensure DiscordBotRunner connects immediately to keep bot online
+      if (platform === 'discord' && platformCreds.discord.botToken?.trim()) {
+        const discToken = platformCreds.discord.botToken.trim();
+        discordBotRunner.start(
+          {
+            id: 'caller_discord_session',
+            platform: 'discord',
+            name: 'Discord Bot',
+            botToken: discToken,
+            channelId: platformCreds.discord.channelId,
+            guildId: platformCreds.discord.guildId,
+            enabled: true,
+            status: 'polling',
+          },
+          (status, message) => {
+            setDiscordGatewayStatus({
+              status,
+              message,
+              botUser: discordBotRunner.getBotUser(),
+            });
+          }
+        );
+      }
+
       const resp = await fetch('/api/caller/platforms/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1494,7 +1720,6 @@ export const CallerPage: React.FC<CallerPageProps> = ({
     setDispatchingPlatform(platform);
     try {
       const cfg = platformCreds[platform];
-      const testMsg = `Hello! This is Hana AI voice agent calling regarding your appointment. How may I assist you today?`;
       const target =
         platform === 'whatsapp'
           ? platformCreds.whatsapp.targetNumber
@@ -1508,6 +1733,34 @@ export const CallerPage: React.FC<CallerPageProps> = ({
         alert(`Please enter the target destination for ${platform.toUpperCase()}`);
         return;
       }
+
+      // If Discord call, activate DiscordBotRunner immediately so bot shows green ONLINE status
+      if (platform === 'discord' && platformCreds.discord.botToken?.trim()) {
+        const discToken = platformCreds.discord.botToken.trim();
+        discordBotRunner.start(
+          {
+            id: 'caller_discord_session',
+            platform: 'discord',
+            name: 'Discord Bot',
+            botToken: discToken,
+            channelId: platformCreds.discord.channelId,
+            guildId: platformCreds.discord.guildId,
+            enabled: true,
+            status: 'polling',
+          },
+          (status, message) => {
+            setDiscordGatewayStatus({
+              status,
+              message,
+              botUser: discordBotRunner.getBotUser(),
+            });
+          }
+        );
+      }
+
+      const greeting =
+        currentPreset.outboundGreeting ||
+        `Hello! This is Hana AI voice agent calling regarding your appointment. How may I assist you today?`;
 
       // 1. Immediately initiate active outbound call on the Caller web frontend!
       setActivePlatformCall({
@@ -1533,7 +1786,6 @@ export const CallerPage: React.FC<CallerPageProps> = ({
           setCallStatus('connected');
           soundManager.playReceive();
 
-          const greeting = currentPreset.outboundGreeting || testMsg;
           const greetId = `msg_greet_${Date.now()}`;
           processedMsgIdsRef.current.add(greetId);
 
@@ -1546,11 +1798,13 @@ export const CallerPage: React.FC<CallerPageProps> = ({
               modelUsed: activeModel.name,
             },
           ]);
-          speakAgentVoice(greeting);
+          // Voice is sent to the remote receiving end (Discord/Telegram/WhatsApp/Messenger),
+          // so local web frontend speakers stay silent while avatar & subtitles animate visually!
+          speakAgentVoice(greeting, undefined, { silentVisualOnly: true });
         }, 900);
       }, 700);
 
-      // 2. Dispatch call to platform backend API
+      // 2. Dispatch call to platform backend API with voice greeting
       const resp = await fetch('/api/caller/platforms/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1558,7 +1812,7 @@ export const CallerPage: React.FC<CallerPageProps> = ({
           platform,
           config: cfg,
           credentials: cfg,
-          message: testMsg,
+          message: greeting,
           to: target,
           recipient: target,
           ragContext: ragText,
@@ -1573,7 +1827,7 @@ export const CallerPage: React.FC<CallerPageProps> = ({
             platform,
             action: `Live ${platform.toUpperCase()} Call Active`,
             target: data.to || target,
-            message: `${testMsg} (Interactive Voice Bridge Initiated)`,
+            message: `Voice greeting dispatched to ${platform.toUpperCase()} receiver. (Web frontend speaker quiet).`,
             timestamp: new Date().toLocaleTimeString(),
             status: 'success',
           },
@@ -2781,6 +3035,10 @@ export const CallerPage: React.FC<CallerPageProps> = ({
           setTimeout(() => setSavedPlatformNotice(false), 2000);
         }}
         onNavigateToDocs={onNavigateToDocs}
+        discordStatus={discordGatewayStatus}
+        onConnectDiscord={handleConnectDiscord}
+        frontendMonitorAudio={frontendMonitorAudio}
+        onToggleFrontendMonitorAudio={() => setFrontendMonitorAudio((prev) => !prev)}
       />
 
       {/* ======================================================== */}
