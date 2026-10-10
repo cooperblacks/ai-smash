@@ -37,6 +37,10 @@ import {
   saveUnlockedOutfits,
   getBrowserDeviceLabel,
   getOrCreateDeviceFingerprint,
+  isCodeAlreadyRedeemed,
+  recordRedeemedCode,
+  setSessionPassword,
+  clearSessionPassword,
 } from '../lib/storage';
 
 interface SidebarProps {
@@ -238,11 +242,13 @@ const SidebarComponent: React.FC<SidebarProps> = ({
           if (data.user) {
             saveAccountSession(data.user);
             setFallbackAccountUser(data.user);
+            setSessionPassword(authPassword);
           }
         }
       } else {
         if (typeof onSignIn === 'function') {
           await onSignIn(authEmail.trim(), authPassword);
+          setSessionPassword(authPassword);
         } else {
           const resp = await fetch('/api/auth/signin', {
             method: 'POST',
@@ -261,6 +267,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
           if (data.user) {
             saveAccountSession(data.user);
             setFallbackAccountUser(data.user);
+            setSessionPassword(authPassword);
           }
         }
       }
@@ -331,6 +338,15 @@ const SidebarComponent: React.FC<SidebarProps> = ({
     const rawCode = redeemInput.trim();
     if (!rawCode || !accountUser) return;
     setProfileStatusMsg(null);
+
+    if (isCodeAlreadyRedeemed(rawCode)) {
+      setProfileStatusMsg({
+        type: 'error',
+        text: 'You have already applied this redeem code.',
+      });
+      return;
+    }
+
     setIsRedeeming(true);
     try {
       const matchedSecretSkins = resolveSecretOutfitsByRedeemCode(rawCode);
@@ -358,6 +374,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
           }
         }
       }
+      recordRedeemedCode(rawCode);
       setRedeemInput('');
       if (matchedSecretSkins.length === 1) {
         setProfileStatusMsg({
@@ -386,6 +403,7 @@ const SidebarComponent: React.FC<SidebarProps> = ({
   };
 
   const handleSignOutClick = () => {
+    clearSessionPassword();
     if (typeof onSignOut === 'function') {
       onSignOut();
     } else {

@@ -40,6 +40,7 @@ interface LandingPageProps {
   onNavigateToDocs?: (path?: string) => void;
   onNavigateToHumanizer?: () => void;
   onNavigateToInterview?: (path?: string) => void;
+  onNavigateToCaller?: () => void;
 }
 
 interface AccordionItem {

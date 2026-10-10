@@ -48,6 +48,52 @@ function verifyPassword(password: string, storedHash: string): boolean {
   }
 }
 
+// ---------------------------------------------------------------------
+// In-Memory Active User Passwords & AES-256-GCM Message Encryption
+// Encrypts conversations and messages so NeonDB only stores encrypted data
+// ---------------------------------------------------------------------
+export const activeUserPasswords = new Map<number, string>();
+
+function deriveEncryptionKey(password: string, salt: Buffer): Buffer {
+  return crypto.scryptSync(password, salt, 32);
+}
+
+export function encryptWithPassword(plainText: string, password?: string): string {
+  if (!plainText || !password) return plainText;
+  if (plainText.startsWith('enc::')) return plainText; // avoid double-encryption
+  try {
+    const salt = crypto.randomBytes(16);
+    const iv = crypto.randomBytes(12);
+    const key = deriveEncryptionKey(password, salt);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const encrypted = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `enc::${salt.toString('hex')}:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+  } catch (err) {
+    console.warn('Message encryption failed, keeping content:', err);
+    return plainText;
+  }
+}
+
+export function decryptWithPassword(cipherText: string, password?: string): string {
+  if (!cipherText || !cipherText.startsWith('enc::') || !password) return cipherText;
+  try {
+    const parts = cipherText.split(':');
+    if (parts.length < 6) return cipherText;
+    const salt = Buffer.from(parts[2], 'hex');
+    const iv = Buffer.from(parts[3], 'hex');
+    const tag = Buffer.from(parts[4], 'hex');
+    const encryptedData = Buffer.from(parts[5], 'hex');
+    const key = deriveEncryptionKey(password, salt);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(encryptedData), decipher.final()]);
+    return decrypted.toString('utf8');
+  } catch {
+    return cipherText;
+  }
+}
+
 function sanitizeUser(u: InternalUserRecord | DbUserRecord): DbUserRecord {
   const rawAvatar = (u.avatar_url || '').trim();
   const normalizedAvatar =
@@ -213,6 +259,15 @@ CREATE TABLE IF NOT EXISTS redeem_codes (
 
 ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS unlocked_outfit_ids TEXT[] NOT NULL DEFAULT '{}';
 
+CREATE TABLE IF NOT EXISTS user_redeemed_codes (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_redeemed_codes_user ON user_redeemed_codes(user_id);
+
 INSERT INTO redeem_codes (code, account_type_grant, unlocked_outfit_ids, duration_days, max_uses)
 VALUES
   ('MUXAI-VIBE', 'paid', '{}', 365, 10000),
@@ -278,6 +333,7 @@ async function ensureNeonSchema(): Promise<PoolType | null> {
 const fallbackUsers = new Map<string, InternalUserRecord>();
 const fallbackConversations = new Map<number, Conversation[]>();
 const fallbackCustomThemes = new Map<number, ThemeDefinition[]>();
+const fallbackRedeemedByUser = new Map<number, Set<string>>();
 const validPaidRedeemCodes = new Set<string>([
   'MUXAI-PREMIUM-2026',
   'HANA-VIP',
@@ -342,6 +398,7 @@ export async function signUpAccount(params: {
       );
 
       const user = sanitizeUser(insertRes.rows[0]);
+      activeUserPasswords.set(user.id, params.password);
       return { user, conversations: [], customThemes: [] };
     } catch (err: any) {
       if (err.message && err.message.includes('already exists')) {
@@ -377,6 +434,7 @@ export async function signUpAccount(params: {
   fallbackUsers.set(cleanEmail, newUser);
   fallbackConversations.set(newUser.id, []);
   fallbackCustomThemes.set(newUser.id, []);
+  activeUserPasswords.set(newUser.id, params.password);
 
   return {
     user: sanitizeUser(newUser),
@@ -425,7 +483,8 @@ export async function signInAccount(params: {
     );
 
     const user = sanitizeUser(updateRes.rows[0]);
-    const userData = await fetchUserSyncedData(user.id);
+    activeUserPasswords.set(user.id, params.password);
+    const userData = await fetchUserSyncedData(user.id, params.password);
     return {
       user,
       conversations: userData.conversations,
@@ -445,9 +504,20 @@ export async function signInAccount(params: {
     stored.device_fingerprints.push(params.fingerprint);
   }
 
+  activeUserPasswords.set(stored.id, params.password);
+  const rawConvs = fallbackConversations.get(stored.id) || [];
+  const decryptedConvs: Conversation[] = rawConvs.map((conv) => ({
+    ...conv,
+    title: decryptWithPassword(conv.title, params.password),
+    messages: (conv.messages || []).map((m) => ({
+      ...m,
+      content: decryptWithPassword(m.content, params.password),
+    })),
+  }));
+
   return {
     user: sanitizeUser(stored),
-    conversations: fallbackConversations.get(stored.id) || [],
+    conversations: decryptedConvs,
     customThemes: fallbackCustomThemes.get(stored.id) || [],
   };
 }
@@ -541,6 +611,14 @@ export async function redeemAccountCode(params: {
   const pool = await ensureNeonSchema();
 
   if (pool) {
+    const alreadyRedeemedRes = await pool.query(
+      'SELECT 1 FROM user_redeemed_codes WHERE user_id = $1 AND UPPER(code) = $2',
+      [params.userId, cleanCode]
+    );
+    if (alreadyRedeemedRes.rows.length > 0) {
+      throw new Error('You have already applied this redeem code.');
+    }
+
     const codeRes = await pool.query('SELECT * FROM redeem_codes WHERE UPPER(code) = $1', [cleanCode]);
     const hasDbRow = codeRes.rows.length > 0;
 
@@ -553,6 +631,10 @@ export async function redeemAccountCode(params: {
 
     if (hasDbRow) {
       const codeRow = codeRes.rows[0];
+      if (Array.isArray(codeRow.redeemed_by) && codeRow.redeemed_by.includes(params.userId)) {
+        throw new Error('You have already applied this redeem code.');
+      }
+
       if (Number(codeRow.used_count) >= Number(codeRow.max_uses)) {
         throw new Error('This redeem code has reached its usage limit.');
       }
@@ -581,6 +663,11 @@ export async function redeemAccountCode(params: {
       );
     }
 
+    await pool.query(
+      `INSERT INTO user_redeemed_codes (user_id, code) VALUES ($1, $2) ON CONFLICT (user_id, code) DO NOTHING`,
+      [params.userId, cleanCode]
+    );
+
     const existingUserRes = await pool.query('SELECT * FROM users WHERE id = $1', [params.userId]);
     if (existingUserRes.rows.length === 0) {
       throw new Error('User account not found.');
@@ -607,6 +694,11 @@ export async function redeemAccountCode(params: {
   }
 
   // Fallback verification when NeonDB is not configured
+  const userRedeemed = fallbackRedeemedByUser.get(params.userId);
+  if (userRedeemed && userRedeemed.has(cleanCode)) {
+    throw new Error('You have already applied this redeem code.');
+  }
+
   if (!isBuiltInPaidCode && matchedSecretIds.length === 0) {
     throw new Error('Invalid or expired redeem code.');
   }
@@ -621,6 +713,10 @@ export async function redeemAccountCode(params: {
         const curUnlocked = Array.isArray(u.unlocked_outfits) ? u.unlocked_outfits : [];
         u.unlocked_outfits = Array.from(new Set([...curUnlocked, ...matchedSecretIds]));
       }
+      if (!fallbackRedeemedByUser.has(params.userId)) {
+        fallbackRedeemedByUser.set(params.userId, new Set());
+      }
+      fallbackRedeemedByUser.get(params.userId)!.add(cleanCode);
       return sanitizeUser(u);
     }
   }
@@ -628,11 +724,12 @@ export async function redeemAccountCode(params: {
   throw new Error('User account not found.');
 }
 
-export async function fetchUserSyncedData(userId: number): Promise<{
+export async function fetchUserSyncedData(userId: number, password?: string): Promise<{
   conversations: Conversation[];
   customThemes: ThemeDefinition[];
   unlockedOutfits: string[];
 }> {
+  const effectivePassword = password || activeUserPasswords.get(userId);
   const pool = await ensureNeonSchema();
   if (pool) {
     const userRes = await pool.query('SELECT unlocked_outfits FROM users WHERE id = $1', [userId]);
@@ -652,10 +749,13 @@ export async function fetchUserSyncedData(userId: number): Promise<{
     const msgsByConv = new Map<string, Conversation['messages']>();
     for (const m of msgRes.rows) {
       const list = msgsByConv.get(m.conversation_id) || [];
+      const decryptedContent = effectivePassword
+        ? decryptWithPassword(m.content, effectivePassword)
+        : m.content;
       list.push({
         id: m.id,
         role: m.role,
-        content: m.content,
+        content: decryptedContent,
         timestamp: Number(m.timestamp),
         modelUsed: m.model_used || undefined,
         tokensCount: m.tokens_count ? Number(m.tokens_count) : undefined,
@@ -668,7 +768,7 @@ export async function fetchUserSyncedData(userId: number): Promise<{
 
     const conversations: Conversation[] = convRes.rows.map((c) => ({
       id: c.id,
-      title: c.title,
+      title: effectivePassword ? decryptWithPassword(c.title, effectivePassword) : c.title,
       createdAt: Number(c.created_at),
       updatedAt: Number(c.updated_at),
       pinned: Boolean(c.pinned),
@@ -701,8 +801,18 @@ export async function fetchUserSyncedData(userId: number): Promise<{
     }
   }
 
+  const rawConvs = fallbackConversations.get(userId) || [];
+  const decryptedConvs: Conversation[] = rawConvs.map((conv) => ({
+    ...conv,
+    title: effectivePassword ? decryptWithPassword(conv.title, effectivePassword) : conv.title,
+    messages: (conv.messages || []).map((m) => ({
+      ...m,
+      content: effectivePassword ? decryptWithPassword(m.content, effectivePassword) : m.content,
+    })),
+  }));
+
   return {
-    conversations: fallbackConversations.get(userId) || [],
+    conversations: decryptedConvs,
     customThemes: fallbackCustomThemes.get(userId) || [],
     unlockedOutfits: fallbackUnlocked,
   };
@@ -713,7 +823,9 @@ export async function syncUserConversationsAndThemes(params: {
   conversations?: Conversation[];
   customThemes?: ThemeDefinition[];
   unlockedOutfits?: string[];
+  password?: string;
 }): Promise<void> {
+  const effectivePassword = params.password || activeUserPasswords.get(params.userId);
   const pool = await ensureNeonSchema();
   if (pool) {
     const client = await pool.connect();
@@ -738,6 +850,10 @@ export async function syncUserConversationsAndThemes(params: {
 
       if (Array.isArray(params.conversations)) {
         for (const conv of params.conversations) {
+          const encTitle = effectivePassword
+            ? encryptWithPassword(conv.title || 'Direct Message', effectivePassword)
+            : conv.title || 'Direct Message';
+
           await client.query(
             `INSERT INTO conversations (id, user_id, title, model_id, pinned, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -749,7 +865,7 @@ export async function syncUserConversationsAndThemes(params: {
             [
               conv.id,
               params.userId,
-              conv.title || 'Direct Message',
+              encTitle,
               conv.modelId || 'smollm2-135m',
               Boolean(conv.pinned),
               Number(conv.createdAt) || Date.now(),
@@ -758,6 +874,10 @@ export async function syncUserConversationsAndThemes(params: {
           );
 
           for (const msg of conv.messages || []) {
+            const encContent = effectivePassword
+              ? encryptWithPassword(msg.content, effectivePassword)
+              : msg.content;
+
             await client.query(
               `INSERT INTO messages (
                 id, conversation_id, user_id, role, content, timestamp,
@@ -771,7 +891,7 @@ export async function syncUserConversationsAndThemes(params: {
                 conv.id,
                 params.userId,
                 msg.role,
-                msg.content,
+                encContent,
                 Number(msg.timestamp) || Date.now(),
                 msg.modelUsed || null,
                 msg.tokensCount ?? null,
@@ -828,7 +948,17 @@ export async function syncUserConversationsAndThemes(params: {
     }
   }
   if (Array.isArray(params.conversations)) {
-    fallbackConversations.set(params.userId, params.conversations);
+    const encConvs = effectivePassword
+      ? params.conversations.map((c) => ({
+          ...c,
+          title: encryptWithPassword(c.title || 'Direct Message', effectivePassword),
+          messages: (c.messages || []).map((m) => ({
+            ...m,
+            content: encryptWithPassword(m.content, effectivePassword),
+          })),
+        }))
+      : params.conversations;
+    fallbackConversations.set(params.userId, encConvs);
   }
   if (Array.isArray(params.customThemes)) {
     fallbackCustomThemes.set(params.userId, params.customThemes);

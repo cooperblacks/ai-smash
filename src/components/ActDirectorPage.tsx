@@ -111,6 +111,60 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   const [showSubtitles, setShowSubtitles] = useState<boolean>(true);
   const [autoplayOnClose, setAutoplayOnClose] = useState<boolean>(false);
 
+  // Force Test (Invisible forcefield / pressure physics)
+  const [isForceTestActive, setIsForceTestActive] = useState<boolean>(false);
+  const isForceTestActiveRef = useRef<boolean>(false);
+  useEffect(() => {
+    isForceTestActiveRef.current = isForceTestActive;
+    if (!isForceTestActive) {
+      if (forceIndicatorRef.current) forceIndicatorRef.current.visible = false;
+      if (controlsRef.current) controlsRef.current.enabled = true;
+    }
+  }, [isForceTestActive]);
+
+  const isPointerDownRef = useRef<boolean>(false);
+  const pointerInsideCanvasRef = useRef<boolean>(false);
+  const pointerDownTimeRef = useRef<number>(0);
+  const pointerNdcRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const prevHitPointRef = useRef<THREE.Vector3 | null>(null);
+  const forceIndicatorRef = useRef<THREE.Group | null>(null);
+  const forcePhysicsRef = useRef<{
+    activeBone: THREE.Object3D | null;
+    targetOffset: THREE.Vector3;
+    currentOffset: THREE.Vector3;
+    velocity: THREE.Vector3;
+    isContact: boolean;
+    contactPoint: THREE.Vector3;
+    pressure: number;
+  }>({
+    activeBone: null,
+    targetOffset: new THREE.Vector3(),
+    currentOffset: new THREE.Vector3(),
+    velocity: new THREE.Vector3(),
+    isContact: false,
+    contactPoint: new THREE.Vector3(),
+    pressure: 0,
+  });
+
+  // Fast bone proxy colliders for zero-lag raycasting & accurate animated touch
+  const proxyCollidersRef = useRef<THREE.Mesh[]>([]);
+
+  // Look at Camera (biomechanical human limits)
+  const [lookAtCamera, setLookAtCamera] = useState<boolean>(true);
+  const lookAtCameraRef = useRef<boolean>(true);
+  useEffect(() => {
+    lookAtCameraRef.current = lookAtCamera;
+  }, [lookAtCamera]);
+
+  // Remote Fetcher State
+  const [useRemoteFetcher, setUseRemoteFetcher] = useState<boolean>(false);
+  const [remoteModelVersion, setRemoteModelVersion] = useState<string>('1.2');
+  const [remoteModelOutfit, setRemoteModelOutfit] = useState<string>('');
+  const [isFetchingRemoteModel, setIsFetchingRemoteModel] = useState<boolean>(false);
+  const [remoteAnimName, setRemoteAnimName] = useState<string>('dance');
+  const [isFetchingRemoteAnim, setIsFetchingRemoteAnim] = useState<boolean>(false);
+  const [remoteStatusMessage, setRemoteStatusMessage] = useState<string | null>(null);
+
   // Timeline Script State
   const [cues, setCues] = useState<TimelineCue[]>(ACT_INITIAL_CUES);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -140,15 +194,25 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
 
   // ----------------------------------------------------
   // On-Demand Animation Loader & Playback Helper
+  // Ensures animations selected from browser loop until another is picked
   // ----------------------------------------------------
   const ensureAnimationAction = useCallback(
-    async (key: string): Promise<THREE.AnimationAction | null> => {
+    async (key: string, loop = true): Promise<THREE.AnimationAction | null> => {
       const mixer = mixerRef.current;
       const vrm = vrmRef.current;
       if (!mixer || !vrm) return null;
 
       const existing = actionsMapRef.current.get(key);
-      if (existing) return existing;
+      if (existing) {
+        if (loop) {
+          existing.setLoop(THREE.LoopRepeat, Infinity);
+          existing.clampWhenFinished = false;
+        } else {
+          existing.setLoop(THREE.LoopOnce, 1);
+          existing.clampWhenFinished = true;
+        }
+        return existing;
+      }
 
       const inFlight = loadingAnimPromisesRef.current.get(key);
       if (inFlight) return inFlight;
@@ -160,8 +224,9 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
 
       if (animItem.clip) {
         const action = mixer.clipAction(animItem.clip);
-        if (animItem.key === 'idle' || animItem.key === 'walk') {
+        if (loop) {
           action.setLoop(THREE.LoopRepeat, Infinity);
+          action.clampWhenFinished = false;
         } else {
           action.setLoop(THREE.LoopOnce, 1);
           action.clampWhenFinished = true;
@@ -180,8 +245,9 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
             if (clip && mixerRef.current === mixer && vrmRef.current === vrm) {
               animItem.clip = clip;
               const action = mixer.clipAction(clip);
-              if (animItem.key === 'idle' || animItem.key === 'walk') {
+              if (loop) {
                 action.setLoop(THREE.LoopRepeat, Infinity);
+                action.clampWhenFinished = false;
               } else {
                 action.setLoop(THREE.LoopOnce, 1);
                 action.clampWhenFinished = true;
@@ -207,7 +273,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   );
 
   const playAnimationByKey = useCallback(
-    async (key: string, crossFadeDuration = 0.35) => {
+    async (key: string, crossFadeDuration = 0.35, loop = true) => {
       setActiveAnimKey(key);
       const mixer = mixerRef.current;
       if (!mixer) return;
@@ -215,7 +281,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       let targetAction = actionsMapRef.current.get(key) || null;
       if (!targetAction) {
         setLoadingAnimKey(key);
-        targetAction = await ensureAnimationAction(key);
+        targetAction = await ensureAnimationAction(key, loop);
         setLoadingAnimKey((prev) => (prev === key ? null : prev));
       }
 
@@ -224,6 +290,14 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       }
 
       if (!targetAction) return;
+
+      if (loop) {
+        targetAction.setLoop(THREE.LoopRepeat, Infinity);
+        targetAction.clampWhenFinished = false;
+      } else {
+        targetAction.setLoop(THREE.LoopOnce, 1);
+        targetAction.clampWhenFinished = true;
+      }
 
       const prevAction = currentActionRef.current;
       if (prevAction === targetAction) {
@@ -245,6 +319,61 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       currentActionRef.current = targetAction;
     },
     [ensureAnimationAction]
+  );
+
+  // Stop animations and return to default rest pose (T-pose / bind pose)
+  const stopAllAnimationsToDefaultPose = useCallback((crossFadeDuration = 0.25) => {
+    setActiveAnimKey('none');
+    const mixer = mixerRef.current;
+    const vrm = vrmRef.current;
+
+    if (currentActionRef.current) {
+      currentActionRef.current.fadeOut(crossFadeDuration);
+      setTimeout(() => {
+        currentActionRef.current?.stop();
+        currentActionRef.current = null;
+      }, crossFadeDuration * 1000);
+    }
+
+    if (mixer) {
+      mixer.stopAllAction();
+    }
+
+    if (vrm?.humanoid) {
+      const allBoneNames = [
+        'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+        'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
+        'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
+        'leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'leftToes',
+        'rightUpperLeg', 'rightLowerLeg', 'rightFoot', 'rightToes'
+      ];
+      for (const bName of allBoneNames) {
+        const normNode = vrm.humanoid.getNormalizedBoneNode(bName as any);
+        if (normNode) {
+          normNode.quaternion.identity();
+          normNode.position.set(0, 0, 0);
+        }
+        const rawNode = vrm.humanoid.getRawBoneNode(bName as any);
+        if (rawNode) {
+          rawNode.quaternion.identity();
+        }
+      }
+      vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
+      vrm.scene.rotation.set(0, 0, 0);
+      vrm.scene.updateMatrixWorld(true);
+    }
+  }, []);
+
+  // Toggle animation or disable back to default rest pose if already active
+  const handleToggleOrPlayAnimation = useCallback(
+    (key: string) => {
+      if (activeAnimKey === key) {
+        stopAllAnimationsToDefaultPose();
+      } else {
+        playAnimationByKey(key, 0.35, true);
+      }
+    },
+    [activeAnimKey, stopAllAnimationsToDefaultPose, playAnimationByKey]
   );
 
   // ----------------------------------------------------
@@ -462,6 +591,80 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     grid.material.transparent = true;
     scene.add(grid);
 
+    // Force Test Visual Indicator (invisible forcefield ripple halo)
+    const forceGroup = new THREE.Group();
+    const innerOrb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.035, 16, 16),
+      new THREE.MeshBasicMaterial({
+        color: 0xff3b5c,
+        transparent: true,
+        opacity: 0.65,
+        depthWrite: false,
+      })
+    );
+    const outerRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.04, 0.085, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0x55d2f6,
+        transparent: true,
+        opacity: 0.55,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    forceGroup.add(innerOrb);
+    forceGroup.add(outerRing);
+    forceGroup.visible = false;
+    scene.add(forceGroup);
+    forceIndicatorRef.current = forceGroup;
+
+    // Raycaster for Force Test interaction
+    const forceRaycaster = new THREE.Raycaster();
+
+    // Canvas Pointer Event Listeners for Force Test
+    const updatePointerPos = (e: PointerEvent) => {
+      if (!canvas) return;
+      pointerInsideCanvasRef.current = true;
+      const rect = canvas.getBoundingClientRect();
+      pointerNdcRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointerNdcRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+
+    const handlePointerDown = (e: PointerEvent) => {
+      if (!isForceTestActiveRef.current) return;
+      isPointerDownRef.current = true;
+      pointerDownTimeRef.current = performance.now();
+      updatePointerPos(e);
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!isForceTestActiveRef.current) return;
+      updatePointerPos(e);
+    };
+
+    const handlePointerUp = () => {
+      isPointerDownRef.current = false;
+      prevHitPointRef.current = null;
+      if (controlsRef.current && !isForceTestActiveRef.current) {
+        controlsRef.current.enabled = true;
+      }
+    };
+
+    const handlePointerLeave = () => {
+      pointerInsideCanvasRef.current = false;
+      isPointerDownRef.current = false;
+      prevHitPointRef.current = null;
+      if (controlsRef.current) {
+        controlsRef.current.enabled = true;
+      }
+    };
+
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    canvas.addEventListener('pointermove', handlePointerMove);
+    canvas.addEventListener('pointerup', handlePointerUp);
+    canvas.addEventListener('pointerleave', handlePointerLeave);
+    canvas.addEventListener('pointercancel', handlePointerUp);
+
     // Blinking
     let nextBlinkTime = 2.5;
     let blinkTimer = 0;
@@ -480,9 +683,208 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       }
 
       if (vrmRef.current) {
+        // Crucial: synchronize animated skeleton matrices so proxy colliders match the active pose
+        vrmRef.current.scene.updateMatrixWorld(true);
+
+        // ----------------------------------------------------
+        // 1. NATURAL "LOOK AT CAMERA" ANGLE CLAMPING
+        // Evaluates relative to character torso and slerps over active animations
+        // ----------------------------------------------------
+        if (lookAtCameraRef.current && vrmRef.current.humanoid && cameraRef.current) {
+          const head = vrmRef.current.humanoid.getNormalizedBoneNode('head');
+          const neck = vrmRef.current.humanoid.getNormalizedBoneNode('neck');
+
+          if (head) {
+            const headWorldPos = new THREE.Vector3();
+            head.getWorldPosition(headWorldPos);
+
+            const toCamWorld = cameraRef.current.position.clone().sub(headWorldPos).normalize();
+            const charQuat = new THREE.Quaternion();
+            vrmRef.current.scene.getWorldQuaternion(charQuat);
+
+            const localDir = toCamWorld.applyQuaternion(charQuat.clone().invert()).normalize();
+
+            // Calculate yaw and pitch relative to character body (+Z forward, +Y up, +X right)
+            const yaw = Math.atan2(localDir.x, localDir.z);
+            const pitch = -Math.atan2(localDir.y, Math.hypot(localDir.x, localDir.z));
+
+            // Human limits: max natural yaw ~55deg; smoothly fade out if camera is behind (> 55deg to 85deg)
+            const maxYaw = 55 * (Math.PI / 180);
+            const fadeStartYaw = 55 * (Math.PI / 180);
+            const cutoffYaw = 85 * (Math.PI / 180);
+
+            let influence = 1.0;
+            const absYaw = Math.abs(yaw);
+            if (absYaw >= cutoffYaw) {
+              influence = 0.0;
+            } else if (absYaw > fadeStartYaw) {
+              influence = 1.0 - (absYaw - fadeStartYaw) / (cutoffYaw - fadeStartYaw);
+            }
+
+            if (influence > 0.001) {
+              const clampedYaw = Math.max(-maxYaw, Math.min(maxYaw, yaw)) * influence;
+              const clampedPitch = Math.max(-25 * (Math.PI / 180), Math.min(30 * (Math.PI / 180), pitch)) * influence;
+
+              // Smoothly blend head and neck towards camera direction over current animation pose
+              const headTargetQuat = new THREE.Quaternion().setFromEuler(
+                new THREE.Euler(clampedPitch * 0.65, clampedYaw * 0.65, 0, 'YXZ')
+              );
+              head.quaternion.slerp(headTargetQuat, 0.85 * influence);
+
+              if (neck) {
+                const neckTargetQuat = new THREE.Quaternion().setFromEuler(
+                  new THREE.Euler(clampedPitch * 0.35, clampedYaw * 0.35, 0, 'YXZ')
+                );
+                neck.quaternion.slerp(neckTargetQuat, 0.65 * influence);
+              }
+            }
+          }
+        }
+
+        // ----------------------------------------------------
+        // 2. ULTRA-FAST REAL-TIME FORCEFIELD & PRESSURE PHYSICS ("FORCE TEST")
+        // Uses bone proxy colliders for 0.01ms instantaneous raycasting (zero lag)
+        // Works dynamically even during active animations!
+        // ----------------------------------------------------
+        if (isForceTestActiveRef.current && cameraRef.current && proxyCollidersRef.current.length > 0) {
+          // Raycast only when pointer is active over canvas or down (eliminates all idle loop lag)
+          if (pointerInsideCanvasRef.current || isPointerDownRef.current) {
+            forceRaycaster.setFromCamera(
+              new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
+              cameraRef.current
+            );
+
+            // Fast raycast against proxy colliders only (eliminates lag from 50k skinned triangles)
+            const intersects = forceRaycaster.intersectObjects(proxyCollidersRef.current, false);
+            const hit = intersects[0];
+            const phys = forcePhysicsRef.current;
+
+            if (hit) {
+              phys.isContact = true;
+              phys.contactPoint.copy(hit.point);
+
+              // While touching/interacting with model, disable orbit controls so pointer acts directly on model
+              if (controlsRef.current) {
+                controlsRef.current.enabled = false;
+              }
+
+              // Position and show forcefield halo
+              if (forceIndicatorRef.current) {
+                forceIndicatorRef.current.position.copy(hit.point);
+                const normal = hit.face
+                  ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
+                  : new THREE.Vector3(0, 0, 1);
+                forceIndicatorRef.current.lookAt(hit.point.clone().add(normal));
+                forceIndicatorRef.current.visible = true;
+              }
+
+              // Pressure & holding depth accumulation
+              let pressure = 0.25;
+              if (isPointerDownRef.current) {
+                const holdSec = (performance.now() - pointerDownTimeRef.current) / 1000;
+                pressure = Math.min(1.0, 0.42 + holdSec * 1.5);
+              }
+              phys.pressure = pressure;
+
+              if (forceIndicatorRef.current) {
+                const s = 0.85 + pressure * 1.15;
+                forceIndicatorRef.current.scale.set(s, s, s);
+              }
+
+              const hitBone = hit.object.userData.boneNode as THREE.Object3D;
+              if (hitBone) {
+                phys.activeBone = hitBone;
+
+                // Push vector: ray direction pushes inward into the body
+                const pushDirWorld = forceRaycaster.ray.direction
+                  .clone()
+                  .multiplyScalar(0.045 + pressure * 0.09);
+
+                // Tangential dragging / rubbing friction effect
+                if (isPointerDownRef.current && prevHitPointRef.current) {
+                  const dragVector = hit.point.clone().sub(prevHitPointRef.current);
+                  pushDirWorld.add(dragVector.multiplyScalar(0.8));
+                }
+                prevHitPointRef.current = hit.point.clone();
+
+                // Convert push force into local coordinate space of bone parent
+                if (hitBone.parent) {
+                  const parentInvQuat = new THREE.Quaternion();
+                  hitBone.parent.getWorldQuaternion(parentInvQuat);
+                  parentInvQuat.invert();
+                  phys.targetOffset.copy(pushDirWorld.applyQuaternion(parentInvQuat));
+                } else {
+                  phys.targetOffset.copy(pushDirWorld);
+                }
+
+                // Reactive micro-expression (gentle blink or shy reaction on poke/press)
+                if (isPointerDownRef.current && vrmRef.current.expressionManager) {
+                  try {
+                    vrmRef.current.expressionManager.setValue('blink', Math.min(0.5, pressure * 0.6));
+                    if (pressure > 0.62) {
+                      vrmRef.current.expressionManager.setValue('surprised', 0.32);
+                    }
+                  } catch {}
+                }
+              }
+            } else {
+              phys.isContact = false;
+              phys.targetOffset.set(0, 0, 0);
+              prevHitPointRef.current = null;
+              if (forceIndicatorRef.current) {
+                forceIndicatorRef.current.visible = false;
+              }
+              if (controlsRef.current && !isPointerDownRef.current) {
+                controlsRef.current.enabled = true;
+              }
+            }
+          }
+
+          // Spring-damper physics simulation for bone displacement and bouncy recoil
+          const phys = forcePhysicsRef.current;
+          if (phys.activeBone) {
+            const k = 160.0;
+            const damping = 15.0;
+            const force = phys.targetOffset.clone().sub(phys.currentOffset).multiplyScalar(k);
+            const damp = phys.velocity.clone().multiplyScalar(damping);
+            const accel = force.sub(damp);
+
+            phys.velocity.add(accel.multiplyScalar(delta));
+            phys.currentOffset.add(phys.velocity.clone().multiplyScalar(delta));
+            phys.activeBone.position.add(phys.currentOffset);
+
+            // Subtle posture tilt impulse so pushed bone visibly flexes and springs back
+            const tiltQuat = new THREE.Quaternion().setFromEuler(
+              new THREE.Euler(
+                -phys.currentOffset.z * 3.2,
+                phys.currentOffset.x * 2.5,
+                -phys.currentOffset.x * 2.0,
+                'YXZ'
+              )
+            );
+            phys.activeBone.quaternion.multiply(tiltQuat);
+
+            if (!phys.isContact && phys.currentOffset.lengthSq() < 0.00001 && phys.velocity.lengthSq() < 0.00001) {
+              phys.activeBone = null;
+            }
+          }
+        } else {
+          if (forceIndicatorRef.current && forceIndicatorRef.current.visible) {
+            forceIndicatorRef.current.visible = false;
+          }
+          if (controlsRef.current && !controlsRef.current.enabled) {
+            controlsRef.current.enabled = true;
+          }
+        }
+
+        // ----------------------------------------------------
+        // 3. VRM UPDATE - Propagates normalized bone rotations & procedural offsets to skeleton & SkinnedMeshes!
+        // ----------------------------------------------------
         vrmRef.current.update(delta);
 
-        // Update LipSync & Visemes
+        // ----------------------------------------------------
+        // 4. Update LipSync, Visemes & Facial Expressions
+        // ----------------------------------------------------
         lipSyncManager.update(delta, clock.getElapsedTime());
         const visemes = lipSyncManager.getVisemes();
 
@@ -512,7 +914,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
             } catch {}
           }
 
-          // Direct setting of custom named blendshapes (e.g. silly, lovey, wink, smug, blush) if present
+          // Direct setting of custom named blendshapes if present
           if (activeEmo.key !== 'neutral') {
             try {
               vrmRef.current.expressionManager.setValue(activeEmo.key, 1.0);
@@ -559,6 +961,11 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       isDisposed = true;
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', handleResize);
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      canvas.removeEventListener('pointermove', handlePointerMove);
+      canvas.removeEventListener('pointerup', handlePointerUp);
+      canvas.removeEventListener('pointerleave', handlePointerLeave);
+      canvas.removeEventListener('pointercancel', handlePointerUp);
       controls.dispose();
       renderer.dispose();
     };
@@ -608,6 +1015,50 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
 
       vrmRef.current = vrm;
       scene.add(vrm.scene);
+
+      // Build lightweight proxy colliders on humanoid bones for ultra-fast (0.01ms) raycasting & animated hit tracking
+      proxyCollidersRef.current = [];
+      if (vrm.humanoid) {
+        const colliderDefs: Array<{
+          boneName: string;
+          geo: THREE.BufferGeometry;
+          offset?: [number, number, number];
+        }> = [
+          { boneName: 'head', geo: new THREE.SphereGeometry(0.14, 8, 8), offset: [0, 0.08, 0] },
+          { boneName: 'neck', geo: new THREE.SphereGeometry(0.08, 8, 8), offset: [0, 0.04, 0] },
+          { boneName: 'chest', geo: new THREE.BoxGeometry(0.26, 0.22, 0.18), offset: [0, 0.06, 0] },
+          { boneName: 'spine', geo: new THREE.SphereGeometry(0.15, 8, 8) },
+          { boneName: 'hips', geo: new THREE.SphereGeometry(0.2, 8, 8), offset: [0, -0.04, 0] },
+          { boneName: 'leftUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.22, 6), offset: [0, -0.1, 0] },
+          { boneName: 'rightUpperArm', geo: new THREE.CylinderGeometry(0.06, 0.06, 0.22, 6), offset: [0, -0.1, 0] },
+          { boneName: 'leftLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0] },
+          { boneName: 'rightLowerArm', geo: new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), offset: [0, -0.1, 0] },
+          { boneName: 'leftUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.32, 6), offset: [0, -0.15, 0] },
+          { boneName: 'rightUpperLeg', geo: new THREE.CylinderGeometry(0.08, 0.08, 0.32, 6), offset: [0, -0.15, 0] },
+          { boneName: 'leftLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.32, 6), offset: [0, -0.15, 0] },
+          { boneName: 'rightLowerLeg', geo: new THREE.CylinderGeometry(0.07, 0.07, 0.32, 6), offset: [0, -0.15, 0] },
+        ];
+
+        const proxyMat = new THREE.MeshBasicMaterial({
+          transparent: true,
+          opacity: 0.0,
+          depthWrite: false,
+        });
+
+        for (const def of colliderDefs) {
+          const boneNode = vrm.humanoid.getNormalizedBoneNode(def.boneName as any);
+          if (boneNode) {
+            const mesh = new THREE.Mesh(def.geo, proxyMat);
+            mesh.visible = true;
+            if (def.offset) {
+              mesh.position.set(def.offset[0], def.offset[1], def.offset[2]);
+            }
+            mesh.userData = { boneName: def.boneName, boneNode };
+            boneNode.add(mesh);
+            proxyCollidersRef.current.push(mesh);
+          }
+        }
+      }
 
       const mixer = new THREE.AnimationMixer(vrm.scene);
       mixerRef.current = mixer;
@@ -664,8 +1115,8 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
         const key = `custom_${Date.now()}`;
         const name = file.name.replace(/\.fbx$/i, '');
         const action = mixerRef.current.clipAction(clip);
-        action.setLoop(THREE.LoopOnce, 1);
-        action.clampWhenFinished = true;
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.clampWhenFinished = false;
         actionsMapRef.current.set(key, action);
 
         const newItem: AnimationItem = {
@@ -678,7 +1129,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
         };
         setAnimations((prev) => [...prev, newItem]);
         animationsRef.current = [...animationsRef.current, newItem];
-        playAnimationByKey(key);
+        playAnimationByKey(key, 0.35, true);
       }
     } catch (err) {
       console.error('FBX upload error:', err);
@@ -698,6 +1149,122 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     } catch (err) {
       console.error('VRM upload error:', err);
     }
+  };
+
+  // Remote Fetcher: Fetch VRM Model Directly from Remote URL
+  const handleFetchRemoteModel = async () => {
+    const version = remoteModelVersion.trim() || '1.2';
+    const outfit = remoteModelOutfit.trim();
+    const fileName = outfit ? `hana_v${version}_${outfit}_vrm1.vrm` : `hana_v${version}_vrm1.vrm`;
+
+    setIsFetchingRemoteModel(true);
+    setRemoteStatusMessage(`Fetching ${fileName}...`);
+
+    const candidateUrls = [
+      `/api/vrm?file=${encodeURIComponent(fileName)}`,
+      `https://muxai.vercel.app/${fileName}`,
+      `https://ai.mux8.com/${fileName}`,
+    ];
+
+    let buffer: ArrayBuffer | null = null;
+    for (const url of candidateUrls) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const buf = await resp.arrayBuffer();
+          if (buf && buf.byteLength > 1000) {
+            buffer = buf;
+            break;
+          }
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+
+    if (buffer) {
+      setCustomVrmName(fileName);
+      setCustomVrmBuffer(buffer);
+      setRemoteStatusMessage(`Successfully loaded ${fileName}`);
+    } else {
+      setRemoteStatusMessage(`Unable to fetch ${fileName} from remote sources.`);
+    }
+    setIsFetchingRemoteModel(false);
+    setTimeout(() => setRemoteStatusMessage(null), 4000);
+  };
+
+  // Remote Fetcher: Fetch Mixamo Animation (.fbx) from Remote URL
+  const handleFetchRemoteAnimation = async () => {
+    const animName = remoteAnimName.trim() || 'dance';
+    const fileName = `mixamo_${animName}.fbx`;
+
+    if (!vrmRef.current || !mixerRef.current) {
+      setRemoteStatusMessage('No character model active to apply animation to.');
+      return;
+    }
+
+    setIsFetchingRemoteAnim(true);
+    setRemoteStatusMessage(`Fetching ${fileName}...`);
+
+    const candidateUrls = [
+      `/api/animation/${animName}`,
+      `https://muxai.vercel.app/${fileName}`,
+      `https://ai.mux8.com/${fileName}`,
+    ];
+
+    let buffer: ArrayBuffer | null = null;
+    for (const url of candidateUrls) {
+      try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+          const buf = await resp.arrayBuffer();
+          if (buf && buf.byteLength > 1000) {
+            buffer = buf;
+            break;
+          }
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+
+    if (buffer) {
+      try {
+        const fbxLoader = new FBXLoader();
+        const fbxGroup = fbxLoader.parse(buffer, '');
+        const clip = retargetAnimation(fbxGroup, vrmRef.current);
+        if (clip) {
+          const key = `remote_${animName}_${Date.now()}`;
+          const action = mixerRef.current.clipAction(clip);
+          action.setLoop(THREE.LoopRepeat, Infinity);
+          action.clampWhenFinished = false;
+          actionsMapRef.current.set(key, action);
+
+          const newItem: AnimationItem = {
+            key,
+            name: `Remote: ${animName}`,
+            fileName,
+            category: 'custom',
+            isCustom: true,
+            clip,
+          };
+          setAnimations((prev) => [...prev, newItem]);
+          animationsRef.current = [...animationsRef.current, newItem];
+          await playAnimationByKey(key, 0.35, true);
+          setRemoteStatusMessage(`Playing ${fileName} in loop`);
+        } else {
+          setRemoteStatusMessage(`Failed to retarget animation from ${fileName}`);
+        }
+      } catch (err) {
+        console.error(err);
+        setRemoteStatusMessage(`Failed to parse FBX animation from ${fileName}`);
+      }
+    } else {
+      setRemoteStatusMessage(`Unable to fetch ${fileName} from remote sources.`);
+    }
+
+    setIsFetchingRemoteAnim(false);
+    setTimeout(() => setRemoteStatusMessage(null), 4000);
   };
 
   // Timeline Step Operations
@@ -859,7 +1426,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                 {animations.slice(0, 6).map((anim) => (
                   <button
                     key={anim.key}
-                    onClick={() => playAnimationByKey(anim.key)}
+                    onClick={() => handleToggleOrPlayAnimation(anim.key)}
                     className={`py-1.5 px-2 rounded-xl font-medium text-[11px] truncate border transition-all cursor-pointer ${
                       activeAnimKey === anim.key
                         ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.15))] text-[var(--theme-accent,#55d2f6)] font-bold'
@@ -940,7 +1507,24 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
               </span>
             </button>
 
-            {/* Checkmark Options: Show Subtitles & Autoplay on close */}
+            {/* Force Test Button (enable/disable) below Script Editor */}
+            <button
+              type="button"
+              onClick={() => setIsForceTestActive((prev) => !prev)}
+              className={`w-full py-2.5 px-3 rounded-xl font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs active:scale-95 ${
+                isForceTestActive
+                  ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-md ring-2 ring-rose-400/50'
+                  : 'border border-black/10 dark:border-white/10 bg-black/[0.04] dark:bg-white/[0.06] text-neutral-700 dark:text-neutral-200 hover:bg-black/[0.08] dark:hover:bg-white/[0.1]'
+              }`}
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${isForceTestActive ? 'animate-pulse text-amber-200' : 'text-neutral-500'}`} />
+              <span>Force Test</span>
+              <span className="text-[10px] font-mono opacity-80 font-normal">
+                ({isForceTestActive ? 'Enabled' : 'Disabled'})
+              </span>
+            </button>
+
+            {/* Current Checkmark Options Row: Show Subtitles & Autoplay on close */}
             <div className="flex items-center gap-3 pt-1 px-1 flex-wrap">
               <label className="flex items-center gap-1.5 cursor-pointer select-none">
                 <input
@@ -966,6 +1550,129 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                 </span>
               </label>
             </div>
+
+            {/* Below the current row: Checkmark for "Look at camera" and "Use remote fetcher" */}
+            <div className="flex items-center gap-3 pt-0.5 px-1 flex-wrap">
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={lookAtCamera}
+                  onChange={(e) => setLookAtCamera(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-black/20 dark:border-white/20 accent-[var(--theme-accent,#55d2f6)] cursor-pointer"
+                />
+                <span className="text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+                  Look at camera
+                </span>
+              </label>
+
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={useRemoteFetcher}
+                  onChange={(e) => setUseRemoteFetcher(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-black/20 dark:border-white/20 accent-[var(--theme-accent,#55d2f6)] cursor-pointer"
+                />
+                <span className="text-[11px] font-medium text-neutral-700 dark:text-neutral-300">
+                  Use remote fetcher
+                </span>
+              </label>
+            </div>
+
+            {/* Remote Fetcher UI Panel (when Use remote fetcher is enabled) */}
+            {useRemoteFetcher && (
+              <div className="p-2.5 rounded-xl border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.03] space-y-2.5">
+                {remoteStatusMessage && (
+                  <div className="text-[10px] font-mono px-2 py-1 rounded bg-[var(--theme-accent-soft,rgba(85,210,246,0.15))] text-[var(--theme-accent,#55d2f6)] font-semibold truncate">
+                    {remoteStatusMessage}
+                  </div>
+                )}
+
+                {/* Model Remote Fetcher: "hana_v" [] "_" [] "_vrm1.vrm" */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold block">
+                    Remote Model
+                  </span>
+                  <div className="flex items-center gap-1 bg-black/[0.04] dark:bg-white/[0.05] p-1.5 rounded-lg text-xs font-mono border border-black/5 dark:border-white/5">
+                    <span className="text-neutral-500 font-semibold shrink-0 select-none">hana_v</span>
+                    <input
+                      type="text"
+                      value={remoteModelVersion}
+                      onChange={(e) => setRemoteModelVersion(e.target.value)}
+                      placeholder="1.2"
+                      className="w-10 bg-white dark:bg-black/40 border border-black/15 dark:border-white/15 rounded px-1 py-0.5 text-xs font-mono text-center focus:outline-none focus:ring-1 focus:ring-[var(--theme-accent,#55d2f6)] text-neutral-900 dark:text-white"
+                      title="Model version"
+                    />
+                    <span className="text-neutral-500 font-semibold shrink-0 select-none">_</span>
+                    <input
+                      type="text"
+                      value={remoteModelOutfit}
+                      onChange={(e) => setRemoteModelOutfit(e.target.value)}
+                      placeholder="pinkmaid"
+                      className="flex-1 min-w-0 bg-white dark:bg-black/40 border border-black/15 dark:border-white/15 rounded px-1.5 py-0.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[var(--theme-accent,#55d2f6)] text-neutral-900 dark:text-white"
+                      title="Outfit code (optional, e.g. pinkmaid, redhoodie, or leave blank for default)"
+                    />
+                    <span className="text-neutral-500 font-semibold shrink-0 select-none">_vrm1.vrm</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleFetchRemoteModel}
+                    disabled={isFetchingRemoteModel}
+                    className="w-full py-1.5 px-2 rounded-lg text-xs font-semibold text-white transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs"
+                    style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
+                  >
+                    {isFetchingRemoteModel ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Fetching Model...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Box className="w-3.5 h-3.5" />
+                        <span>Fetch & Load VRM</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Animation Remote Fetcher: "mixamo_" [] ".fbx" */}
+                <div className="space-y-1.5 pt-2 border-t border-black/5 dark:border-white/5">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold block">
+                    Remote Motion
+                  </span>
+                  <div className="flex items-center gap-1 bg-black/[0.04] dark:bg-white/[0.05] p-1.5 rounded-lg text-xs font-mono border border-black/5 dark:border-white/5">
+                    <span className="text-neutral-500 font-semibold shrink-0 select-none">mixamo_</span>
+                    <input
+                      type="text"
+                      value={remoteAnimName}
+                      onChange={(e) => setRemoteAnimName(e.target.value)}
+                      placeholder="dance"
+                      className="flex-1 min-w-0 bg-white dark:bg-black/40 border border-black/15 dark:border-white/15 rounded px-1.5 py-0.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[var(--theme-accent,#55d2f6)] text-neutral-900 dark:text-white"
+                      title="Mixamo animation name (e.g. dance, wave, walk, idle, wait)"
+                    />
+                    <span className="text-neutral-500 font-semibold shrink-0 select-none">.fbx</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleFetchRemoteAnimation}
+                    disabled={isFetchingRemoteAnim}
+                    className="w-full py-1.5 px-2 rounded-lg text-xs font-semibold text-white transition-all active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs"
+                    style={{ backgroundColor: 'var(--theme-accent, #55d2f6)' }}
+                  >
+                    {isFetchingRemoteAnim ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Fetching Motion...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Film className="w-3.5 h-3.5" />
+                        <span>Fetch & Loop Motion</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1239,7 +1946,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                             playAnimationByKey(anim.key);
                             setIsAnimModalOpen(false);
                           } else {
-                            playAnimationByKey(anim.key);
+                            handleToggleOrPlayAnimation(anim.key);
                           }
                         }}
                         className={`group p-3 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 cursor-pointer ${

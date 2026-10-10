@@ -44,6 +44,11 @@ import {
   saveStoredIntegrations,
   addOrUpdateIntegration,
   removeStoredIntegration,
+  getSessionPassword,
+  setSessionPassword,
+  clearSessionPassword,
+  isCodeAlreadyRedeemed,
+  recordRedeemedCode,
 } from './lib/storage';
 import {
   streamPersonaResponse,
@@ -539,6 +544,7 @@ export default function App() {
       }
       const user = data.user as AccountUser;
       setAccountUser(user);
+      setSessionPassword(password);
       // Sync existing local conversations, custom themes & unlocked outfits up to NeonDB for this new user
       fetch('/api/account/sync', {
         method: 'POST',
@@ -548,6 +554,7 @@ export default function App() {
           conversations,
           customThemes,
           unlockedOutfits: unlockedOutfitIds,
+          password,
         }),
       }).catch(() => {});
     },
@@ -571,6 +578,7 @@ export default function App() {
         throw new Error(data.error || 'Failed to sign in.');
       }
       const user = data.user as AccountUser;
+      setSessionPassword(password);
       const serverUnlocked = Array.isArray(user.unlocked_outfits)
         ? user.unlocked_outfits
         : Array.isArray(data.unlockedOutfits)
@@ -599,6 +607,7 @@ export default function App() {
             conversations,
             customThemes,
             unlockedOutfits: unlockedOutfitIds,
+            password,
           }),
         }).catch(() => {});
       }
@@ -611,6 +620,7 @@ export default function App() {
   );
 
   const handleSignOut = useCallback(() => {
+    clearSessionPassword();
     setAccountUser(null);
     setEquippedOutfitId(DEFAULT_OUTFIT_ID);
     setUnlockedOutfitIds([]);
@@ -645,19 +655,24 @@ export default function App() {
   const handleRedeemCode = useCallback(
     async (code: string) => {
       if (!accountUser) return;
+      const clean = code.trim().toUpperCase();
+      if (isCodeAlreadyRedeemed(clean)) {
+        throw new Error('You have already applied this redeem code.');
+      }
       const resp = await fetch('/api/account/redeem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: accountUser.id,
-          code,
+          code: clean,
         }),
       });
       const data = await resp.json();
       if (!resp.ok || data.error) {
         throw new Error(data.error || 'Failed to redeem code.');
       }
-      const matchedSecret = resolveSecretOutfitsByRedeemCode(code).map((o) => o.id);
+      recordRedeemedCode(clean);
+      const matchedSecret = resolveSecretOutfitsByRedeemCode(clean).map((o) => o.id);
       if (data.user) {
         const userUnlocked = Array.isArray(data.user.unlocked_outfits)
           ? data.user.unlocked_outfits
@@ -680,6 +695,7 @@ export default function App() {
   // Sync conversations, custom themes & unlocked outfits to NeonDB when logged in
   useEffect(() => {
     if (!accountUser) return;
+    const sessionPwd = getSessionPassword();
     const syncTimer = setTimeout(() => {
       fetch('/api/account/sync', {
         method: 'POST',
@@ -689,6 +705,7 @@ export default function App() {
           conversations,
           customThemes,
           unlockedOutfits: unlockedOutfitIds,
+          password: sessionPwd || undefined,
         }),
       }).catch(() => {});
     }, 1200);
