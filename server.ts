@@ -2061,7 +2061,8 @@ app.get('/api/account/sync/:userId', async (req: Request, res: Response) => {
     if (!userId || Number.isNaN(userId)) {
       return res.status(400).json({ error: 'Valid userId is required.' });
     }
-    const data = await fetchUserSyncedData(userId);
+    const password = typeof req.query.password === 'string' ? req.query.password : undefined;
+    const data = await fetchUserSyncedData(userId, password);
     res.json(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to fetch synced data.';
@@ -2071,7 +2072,7 @@ app.get('/api/account/sync/:userId', async (req: Request, res: Response) => {
 
 app.post('/api/account/sync', async (req: Request, res: Response) => {
   try {
-    const { userId, conversations, customThemes, unlockedOutfits } = req.body || {};
+    const { userId, conversations, customThemes, unlockedOutfits, password } = req.body || {};
     if (!userId || Number.isNaN(Number(userId))) {
       return res.status(400).json({ error: 'Valid userId is required.' });
     }
@@ -2080,6 +2081,7 @@ app.post('/api/account/sync', async (req: Request, res: Response) => {
       conversations,
       customThemes,
       unlockedOutfits,
+      password,
     });
     res.json({ ok: true });
   } catch (err: unknown) {

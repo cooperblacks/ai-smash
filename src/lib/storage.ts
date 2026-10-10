@@ -648,3 +648,69 @@ export function saveStoredProviderModel(providerId: ApiProviderId, modelName: st
     console.error(`Failed to save selected model for ${providerId}:`, err);
   }
 }
+
+// ----------------------------------------------------
+// Redeemed Codes Tracking (Prevents reapplying redeemed codes)
+// ----------------------------------------------------
+const REDEEMED_CODES_KEY = 'aismash_redeemed_codes';
+
+export function loadStoredRedeemedCodes(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(REDEEMED_CODES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredRedeemedCodes(codes: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(REDEEMED_CODES_KEY, JSON.stringify(codes));
+  } catch {}
+}
+
+export function isCodeAlreadyRedeemed(code: string): boolean {
+  const codes = loadStoredRedeemedCodes();
+  return codes.map((c) => c.toUpperCase().trim()).includes(code.toUpperCase().trim());
+}
+
+export function recordRedeemedCode(code: string): void {
+  const codes = loadStoredRedeemedCodes();
+  const clean = code.toUpperCase().trim();
+  if (!codes.includes(clean)) {
+    saveStoredRedeemedCodes([...codes, clean]);
+  }
+}
+
+// ----------------------------------------------------
+// Session Password Helpers (For local password-based sync)
+// ----------------------------------------------------
+const SESSION_AUTH_PASSWORD_KEY = 'aismash_session_pwd';
+
+export function getSessionPassword(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return sessionStorage.getItem(SESSION_AUTH_PASSWORD_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionPassword(password: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(SESSION_AUTH_PASSWORD_KEY, password);
+  } catch {}
+}
+
+export function clearSessionPassword(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.removeItem(SESSION_AUTH_PASSWORD_KEY);
+  } catch {}
+}
+
