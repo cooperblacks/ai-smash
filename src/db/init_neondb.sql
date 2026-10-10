@@ -100,13 +100,14 @@ ALTER TABLE redeem_codes ADD COLUMN IF NOT EXISTS unlocked_outfit_ids TEXT[] NOT
 -- Seed default promotional & secret wardrobe redeem codes
 INSERT INTO redeem_codes (code, account_type_grant, unlocked_outfit_ids, duration_days, max_uses)
 VALUES
-  ('MUXAI-PREMIUM-2026', 'paid', '{}', 365, 10000),
-  ('HANA-VIP', 'paid', '{}', 365, 10000),
-  ('AISMASH-PRO', 'paid', '{}', 365, 10000),
+  ('MUXAI-VIBE', 'paid', '{}', 365, 10000),
+  ('HANA-VIP', 'paid', '{}', 30, 10000),
+  ('AISMASH-PRO', 'paid', '{}', 7, 10000),
   ('HANA-PINKDRESS2', 'skin', ARRAY['beauty-of-pink'], 3650, 100000),
   ('HANA-STREETWEAR', 'skin', ARRAY['streetwear'], 3650, 100000),
   ('HANA-MODERNCASUAL', 'skin', ARRAY['staying-casual'], 3650, 100000),
   ('HANA-GOTHICDRESS', 'skin', ARRAY['gothic-beauty'], 3650, 100000),
+  ('HANA-BLACKONESIE', 'skin', ARRAY['black-swimsuit'], 3650, 100000),
   ('HANA-DARKHOODIE', 'skin', ARRAY['powerpuff'], 3650, 100000),
   ('HANA-FORMALUNIFORM', 'skin', ARRAY['neat-and-nimble'], 3650, 100000),
   ('HANA-LACEDRESS', 'skin', ARRAY['frilly-dress'], 3650, 100000),
@@ -116,18 +117,8 @@ VALUES
   ('HANA-HUSBAND-POV', 'skin', ARRAY['white-lingerie-socks'], 3650, 100000),
   ('HANA-SLEEPY', 'skin', ARRAY['white-lingerie'], 3650, 100000),
   ('HANA-IS-MINE', 'skin', ARRAY['base'], 3650, 100000),
-  ('HANA-BLACKONESIE', 'skin', ARRAY['home-alone'], 3650, 100000),
-  ('HANA-SECRET-WARDROBE', 'skin', ARRAY[
-    'beauty-of-pink',
-    'streetwear',
-    'staying-casual',
-    'gothic-beauty',
-    'powerpuff',
-    'neat-and-nimble',
-    'frilly-dress',
-    'cookie-maid',
-    'coffee-maid'
-  ], 3650, 100000)
+  ('HANA-PAIN-GIVER', 'skin', ARRAY['pain-giver'], 3650, 100000),
+  ('HANA-PAIN-TAKER', 'skin', ARRAY['pain-taker'], 3650, 100000),
 ON CONFLICT (code) DO UPDATE SET
   unlocked_outfit_ids = EXCLUDED.unlocked_outfit_ids;
 

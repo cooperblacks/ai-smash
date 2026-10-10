@@ -777,8 +777,8 @@ export const SECRET_WARDROBE_OUTFITS: WardrobeOutfit[] = [
     redeemCode: 'HANA-GOTHICDRESS',
   },
   {
-    id: 'home-alone',
-    name: 'Home Alone',
+    id: 'black-swimsuit',
+    name: 'Swimwear',
     fileName: 'hana_v1.0_blackonesie_vrm1.vrm',
     modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.0_blackonesie_vrm1.vrm`,
     fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.0_blackonesie_vrm1.vrm`,
@@ -875,6 +875,26 @@ export const SECRET_WARDROBE_OUTFITS: WardrobeOutfit[] = [
     isPremium: false,
     isSecret: true,
     redeemCode: 'HANA-BLACKHEART',
+  },
+  {
+    id: 'pain-giver',
+    name: 'Dominant Top',
+    fileName: 'hana_v1.2_darkpain_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.2_darkpain_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.2_darkpain_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-PAIN-GIVER',
+  },
+  {
+    id: 'pain-taker',
+    name: 'Submissive Bottom',
+    fileName: 'hana_v1.2_darkslave_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.2_darksalve_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.2_darkslave_vrm1.vrm`,
+    isPremium: false,
+    isSecret: true,
+    redeemCode: 'HANA-PAIN-TAKER',
   },
 ];
 
