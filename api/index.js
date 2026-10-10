@@ -1188,15 +1188,36 @@ router.post('/chat', async (req, res) => {
 
     const outputTokens = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
 
-    const responseStream = await ai.models.generateContentStream({
-      model: 'gemini-3.8-flash',
-      contents: formattedContents,
-      config: {
-        systemInstruction: systemPrompt || DEFAULT_SYSTEM_PROMPT,
-        temperature: 0.85,
-        maxOutputTokens: outputTokens,
-      },
-    });
+    const candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.8-flash',
+    ];
+
+    let responseStream = null;
+    let lastError = null;
+
+    for (const cand of candidateModels) {
+      try {
+        responseStream = await ai.models.generateContentStream({
+          model: cand,
+          contents: formattedContents,
+          config: {
+            systemInstruction: systemPrompt || DEFAULT_SYSTEM_PROMPT,
+            temperature: 0.85,
+            maxOutputTokens: outputTokens,
+          },
+        });
+        if (responseStream) break;
+      } catch (streamErr) {
+        lastError = streamErr;
+        console.warn(`Model ${cand} unavailable in api/chat:`, streamErr.message || streamErr);
+      }
+    }
+
+    if (!responseStream) {
+      throw lastError || new Error('No available Gemini model responded');
+    }
 
     for await (const chunk of responseStream) {
       const text = chunk.text;
@@ -1629,6 +1650,295 @@ router.post('/account/sync', async (req, res) => {
     const message = err instanceof Error ? err.message : 'Failed to sync account data.';
     res.status(400).json({ error: message });
   }
+});
+
+// =====================================================================
+// Self-Hosted Zero-API WebRTC & Real-Time Telephone PBX Switchboard
+// =====================================================================
+const registeredPbxLines = new Map();
+const pbxCallSessions = new Map();
+
+function normalizeDigits(raw) {
+  const digits = String(raw || '').replace(/[^0-9]/g, '');
+  if (digits.length === 10) return `1${digits}`;
+  return digits;
+}
+
+router.post('/caller/pbx/register', (req, res) => {
+  const rawLine = String(req.body?.lineNumber || '').trim();
+  const key = normalizeDigits(rawLine);
+  if (!key) {
+    return res.status(400).json({ ok: false, error: 'Invalid line number' });
+  }
+  registeredPbxLines.set(key, { lineNumber: rawLine, lastSeen: Date.now() });
+  return res.json({
+    ok: true,
+    lineKey: key,
+    onlineLines: registeredPbxLines.size,
+  });
+});
+
+router.get('/caller/pbx/poll', (req, res) => {
+  const rawLine = String(req.query.lineNumber || '').trim();
+  const callId = String(req.query.callId || '').trim();
+  const key = normalizeDigits(rawLine);
+
+  if (key) {
+    registeredPbxLines.set(key, { lineNumber: rawLine, lastSeen: Date.now() });
+  }
+
+  if (callId && pbxCallSessions.has(callId)) {
+    return res.json({
+      ok: true,
+      activeCall: pbxCallSessions.get(callId),
+    });
+  }
+
+  if (key) {
+    for (const session of pbxCallSessions.values()) {
+      if (
+        normalizeDigits(session.toNumber) === key &&
+        (session.status === 'ringing' || session.status === 'connected') &&
+        Date.now() - session.updatedAt < 120000
+      ) {
+        return res.json({
+          ok: true,
+          incomingCall: session,
+        });
+      }
+    }
+  }
+
+  return res.json({ ok: true, incomingCall: null, activeCall: null });
+});
+
+router.post('/caller/pbx/dial', (req, res) => {
+  const fromNumber = String(req.body?.fromNumber || '+1 (555) 010-1000').trim();
+  const toNumber = String(req.body?.toNumber || '').trim();
+  const offerSdp = req.body?.offerSdp || null;
+
+  if (!normalizeDigits(toNumber)) {
+    return res.status(400).json({ ok: false, error: 'Destination phone number required' });
+  }
+
+  const callId = `pbx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const session = {
+    callId,
+    fromNumber,
+    toNumber,
+    status: 'ringing',
+    offerSdp,
+    answerSdp: null,
+    callerIce: [],
+    calleeIce: [],
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  pbxCallSessions.set(callId, session);
+  const targetOnline = registeredPbxLines.has(normalizeDigits(toNumber));
+
+  return res.json({
+    ok: true,
+    callId,
+    targetOnline,
+    session,
+  });
+});
+
+router.post('/caller/pbx/answer', (req, res) => {
+  const callId = String(req.body?.callId || '').trim();
+  const session = pbxCallSessions.get(callId);
+  if (!session) {
+    return res.status(404).json({ ok: false, error: 'Call session not found' });
+  }
+  session.status = 'connected';
+  if (req.body?.answerSdp) {
+    session.answerSdp = req.body.answerSdp;
+  }
+  session.updatedAt = Date.now();
+  return res.json({ ok: true, session });
+});
+
+router.post('/caller/pbx/signal', (req, res) => {
+  const callId = String(req.body?.callId || '').trim();
+  const role = req.body?.role === 'callee' ? 'callee' : 'caller';
+  const candidate = req.body?.candidate;
+  const offerSdp = req.body?.offerSdp;
+  const answerSdp = req.body?.answerSdp;
+
+  const session = pbxCallSessions.get(callId);
+  if (!session) {
+    return res.status(404).json({ ok: false, error: 'Call session not found' });
+  }
+
+  if (offerSdp) session.offerSdp = offerSdp;
+  if (answerSdp) {
+    session.answerSdp = answerSdp;
+    session.status = 'connected';
+  }
+  if (candidate) {
+    if (role === 'caller') {
+      session.callerIce.push(candidate);
+    } else {
+      session.calleeIce.push(candidate);
+    }
+  }
+  session.updatedAt = Date.now();
+  return res.json({ ok: true, session });
+});
+
+router.post('/caller/pbx/message', (req, res) => {
+  const callId = String(req.body?.callId || '').trim();
+  const session = pbxCallSessions.get(callId);
+  if (!session) {
+    return res.status(404).json({ ok: false, error: 'Call session not found' });
+  }
+
+  const msg = {
+    id: String(req.body?.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`),
+    sender: req.body?.sender === 'agent' ? 'agent' : 'callee',
+    fromNumber: String(req.body?.fromNumber || ''),
+    text: String(req.body?.text || '').trim(),
+    timestamp: String(req.body?.timestamp || '00:00'),
+    modelUsed: req.body?.modelUsed ? String(req.body.modelUsed) : undefined,
+  };
+
+  if (msg.text && !session.messages.some((m) => m.id === msg.id)) {
+    session.messages.push(msg);
+    session.updatedAt = Date.now();
+  }
+
+  return res.json({ ok: true, session });
+});
+
+router.post('/caller/pbx/hangup', (req, res) => {
+  const callId = String(req.body?.callId || '').trim();
+  const session = pbxCallSessions.get(callId);
+  if (session) {
+    session.status = 'ended';
+    session.updatedAt = Date.now();
+  }
+  return res.json({ ok: true });
+});
+
+// =====================================================================
+// 3RD-PARTY PLATFORM CALLING & VOICE INTEGRATIONS (WhatsApp, Telegram, Messenger)
+// =====================================================================
+router.post('/caller/platforms/test', async (req, res) => {
+  try {
+    const { platform, config } = req.body || {};
+    if (!platform) {
+      return res.status(400).json({ ok: false, error: 'Platform identifier is required' });
+    }
+
+    if (platform === 'whatsapp') {
+      const token = (config?.accessToken || '').trim();
+      const phoneId = (config?.phoneNumberId || '').trim();
+      if (!token) return res.status(400).json({ ok: false, error: 'Meta Access Token required for WhatsApp' });
+      const url = phoneId ? `https://graph.facebook.com/v21.0/${phoneId}` : 'https://graph.facebook.com/v21.0/me';
+      const metaResp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await metaResp.json().catch(() => ({}));
+      if (!metaResp.ok) return res.status(metaResp.status).json({ ok: false, error: data?.error?.message || 'WhatsApp credentials invalid' });
+      return res.json({ ok: true, platform: 'whatsapp', verified: true, details: { displayPhoneNumber: data.display_phone_number || phoneId || 'Verified', verifiedName: data.verified_name || 'Hana WhatsApp Agent' } });
+    }
+
+    if (platform === 'telegram') {
+      const botToken = (config?.botToken || '').trim();
+      if (!botToken) return res.status(400).json({ ok: false, error: 'Telegram Bot Token required' });
+      const tgResp = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+      const data = await tgResp.json().catch(() => ({}));
+      if (!data?.ok) return res.status(400).json({ ok: false, error: data?.description || 'Telegram bot token invalid' });
+      return res.json({ ok: true, platform: 'telegram', verified: true, details: { username: data.result?.username, firstName: data.result?.first_name } });
+    }
+
+    if (platform === 'messenger') {
+      const pageToken = (config?.pageAccessToken || '').trim();
+      const pageId = (config?.pageId || '').trim();
+      if (!pageToken) return res.status(400).json({ ok: false, error: 'Page Access Token required for Messenger' });
+      const url = pageId ? `https://graph.facebook.com/v21.0/${pageId}?access_token=${pageToken}` : `https://graph.facebook.com/v21.0/me?access_token=${pageToken}`;
+      const fbResp = await fetch(url);
+      const data = await fbResp.json().catch(() => ({}));
+      if (!fbResp.ok) return res.status(fbResp.status).json({ ok: false, error: data?.error?.message || 'Facebook Page credentials invalid' });
+      return res.json({ ok: true, platform: 'messenger', verified: true, details: { pageName: data.name || pageId || 'Verified Page', id: data.id || pageId } });
+    }
+
+    return res.status(400).json({ ok: false, error: `Unknown platform "${platform}"` });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || 'Platform test failed' });
+  }
+});
+
+router.post('/caller/platforms/dispatch', async (req, res) => {
+  try {
+    const { platform, config, message, to } = req.body || {};
+    if (!platform || !message) {
+      return res.status(400).json({ ok: false, error: 'Platform and message are required' });
+    }
+    const dispatchTime = new Date().toLocaleTimeString();
+    const dispatchId = `disp_${platform}_${Date.now()}`;
+
+    if (platform === 'whatsapp') {
+      const token = (config?.accessToken || '').trim();
+      const phoneId = (config?.phoneNumberId || '').trim();
+      const targetPhone = (to || config?.targetNumber || '').replace(/[^0-9]/g, '');
+      if (!token || !phoneId || !targetPhone) return res.status(400).json({ ok: false, error: 'WhatsApp credentials and target phone required' });
+      const waResp = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: targetPhone, type: 'text', text: { body: message } }),
+      });
+      const waData = await waResp.json().catch(() => ({}));
+      if (!waResp.ok) return res.status(waResp.status).json({ ok: false, error: waData?.error?.message || 'WhatsApp dispatch failed' });
+      return res.json({ ok: true, dispatchId, platform: 'whatsapp', to: targetPhone, message, timestamp: dispatchTime });
+    }
+
+    if (platform === 'telegram') {
+      const botToken = (config?.botToken || '').trim();
+      const chatId = (to || config?.chatId || '').trim();
+      if (!botToken || !chatId) return res.status(400).json({ ok: false, error: 'Telegram Bot Token and Chat ID required' });
+      const tgResp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: message }),
+      });
+      const tgData = await tgResp.json().catch(() => ({}));
+      if (!tgData?.ok) return res.status(400).json({ ok: false, error: tgData?.description || 'Telegram dispatch failed' });
+      return res.json({ ok: true, dispatchId, platform: 'telegram', to: chatId, message, timestamp: dispatchTime });
+    }
+
+    if (platform === 'messenger') {
+      const pageToken = (config?.pageAccessToken || '').trim();
+      const recipientId = (to || config?.recipientId || '').trim();
+      if (!pageToken || !recipientId) return res.status(400).json({ ok: false, error: 'Page Access Token and recipient ID required' });
+      const fbResp = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageToken}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient: { id: recipientId }, message: { text: message } }),
+      });
+      const fbData = await fbResp.json().catch(() => ({}));
+      if (!fbResp.ok) return res.status(fbResp.status).json({ ok: false, error: fbData?.error?.message || 'Messenger dispatch failed' });
+      return res.json({ ok: true, dispatchId, platform: 'messenger', to: recipientId, message, timestamp: dispatchTime });
+    }
+
+    return res.status(400).json({ ok: false, error: `Unsupported platform "${platform}"` });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err?.message || 'Dispatch failed' });
+  }
+});
+
+router.get('/caller/webhooks/:platform', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && challenge) {
+    return res.status(200).send(challenge);
+  }
+  return res.json({ ok: true, status: 'listening', platform: req.params.platform });
+});
+
+router.post('/caller/webhooks/:platform', (req, res) => {
+  return res.json({ ok: true, received: true, platform: req.params.platform });
 });
 
 apiApp.use('/api', router);

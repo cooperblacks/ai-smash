@@ -263,6 +263,7 @@ export async function streamPersonaResponse({
   userMessage,
   devicePref,
   maxTokens = TOKEN_CONFIG.defaultTokens,
+  customSystemPrompt,
   onToken,
   onTelemetry,
   onProgress,
@@ -272,6 +273,7 @@ export async function streamPersonaResponse({
   userMessage: string;
   devicePref: 'auto' | 'webgpu' | 'wasm';
   maxTokens?: number;
+  customSystemPrompt?: string;
   onToken: (token: string, fullAccumulated: string) => void;
   onTelemetry?: (stats: {
     ttftMs: number;
@@ -304,7 +306,7 @@ export async function streamPersonaResponse({
 
   // If Cloud Model (Gemini 3.8 Flash)
   if (model.family === 'cloud') {
-    const systemPrompt = getPersonaPrompt(false) + getToolCallingSystemPrompt();
+    const systemPrompt = customSystemPrompt || (getPersonaPrompt(false) + getToolCallingSystemPrompt());
     const messagesPayload = [
       ...history.slice(-8).map((m) => ({ role: m.role, content: m.content })),
       { role: 'user', content: userMessage },
@@ -386,7 +388,7 @@ export async function streamPersonaResponse({
       );
     }
 
-    const systemPrompt = getPersonaPrompt(false) + getToolCallingSystemPrompt();
+    const systemPrompt = customSystemPrompt || (getPersonaPrompt(false) + getToolCallingSystemPrompt());
     const messagesPayload = [
       ...history.slice(-10).map((m) => ({ role: m.role, content: m.content })),
       { role: 'user', content: userMessage },
@@ -525,6 +527,7 @@ export async function streamPersonaResponse({
       history,
       userMessage,
       maxTokens,
+      customSystemPrompt,
       onToken,
       onTelemetry: (stats) => {
         onTelemetry?.({
@@ -541,7 +544,7 @@ export async function streamPersonaResponse({
   // In-Browser SLM (Transformers.js)
   const generator = await loadModelPipeline(model, devicePref, onProgress);
   const device = await detectBestHardwareDevice(devicePref);
-  const personaPrompt = getPersonaPrompt(model.isSmallModel);
+  const personaPrompt = customSystemPrompt || getPersonaPrompt(model.isSmallModel);
 
   // Build structured chat prompt
   const conversationMessages = [

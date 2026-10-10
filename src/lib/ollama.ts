@@ -168,6 +168,7 @@ interface StreamOllamaOptions {
   history: Message[];
   userMessage: string;
   maxTokens?: number;
+  customSystemPrompt?: string;
   onToken: (piece: string, accumulated: string) => void;
   onTelemetry?: (stats: { tokensPerSec: number; ttftMs: number; totalMs: number; tokenCount: number }) => void;
 }
@@ -177,14 +178,14 @@ interface StreamOllamaOptions {
  * Works seamlessly in client-side / static deployments (e.g. Firebase Hosting).
  */
 async function streamDirectOllama(options: StreamOllamaOptions): Promise<string> {
-  const { url, model = '', history, userMessage, maxTokens = TOKEN_CONFIG.defaultTokens, onToken, onTelemetry } = options;
+  const { url, model = '', history, userMessage, maxTokens = TOKEN_CONFIG.defaultTokens, customSystemPrompt, onToken, onTelemetry } = options;
   const startTime = Date.now();
   let firstTokenTime: number | null = null;
   let tokenCount = 0;
   let accumulated = '';
 
   const messagesToSend = [
-    { role: 'system', content: SYSTEM_PROMPTS.full },
+    { role: 'system', content: customSystemPrompt || SYSTEM_PROMPTS.full },
     ...history.map((m) => ({ role: m.role, content: m.content })),
     { role: 'user', content: userMessage },
   ];
@@ -270,7 +271,7 @@ async function streamDirectOllama(options: StreamOllamaOptions): Promise<string>
  * if the server proxy is unavailable or running on a static host.
  */
 export async function streamOllama(options: StreamOllamaOptions): Promise<string> {
-  const { url, model = '', history, userMessage, maxTokens = TOKEN_CONFIG.defaultTokens, onToken, onTelemetry } = options;
+  const { url, model = '', history, userMessage, maxTokens = TOKEN_CONFIG.defaultTokens, customSystemPrompt, onToken, onTelemetry } = options;
   const startTime = Date.now();
   let firstTokenTime: number | null = null;
   let tokenCount = 0;
@@ -295,7 +296,7 @@ export async function streamOllama(options: StreamOllamaOptions): Promise<string
         url,
         model,
         messages: messagesToSend,
-        systemPrompt: SYSTEM_PROMPTS.full,
+        systemPrompt: customSystemPrompt || SYSTEM_PROMPTS.full,
         maxTokens,
       }),
     });

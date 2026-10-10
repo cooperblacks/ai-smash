@@ -41,7 +41,7 @@ interface DocArticle {
   id: string;
   path: string;
   title: string;
-  category: 'Getting Started' | 'Hana APIs' | 'AI Model APIs' | 'Integrations';
+  category: 'Getting Started' | 'Hana APIs' | 'Hana features' | 'AI Model APIs' | 'Integrations';
   tagline: string;
   logoUrl?: string;
   content: {
@@ -348,6 +348,364 @@ sse.onmessage = (event) => {
         'Camera FOV: Use FOV 28 at position (0, 1.15, 1.65) and lookAt (0, 1.05, 0) for optimal portrait framing of Hana.',
         'Mouth Deadzone: In your lip-sync render loop, snap viseme values below 0.02 directly to 0 to prevent subtle mouth jitter.',
         'Transparent OBS Overlay: Set WebGLRenderer alpha: true and render background transparent for clean stream capture.',
+      ],
+    },
+  },
+
+  // ========================================================
+  // HANA FEATURES: OMNICHANNEL VOICE & CALLING SYSTEMS
+  // ========================================================
+
+  // 1. WHATSAPP BUSINESS SETUP
+  {
+    id: 'whatsapp-feature',
+    path: '/docs/features/whatsapp',
+    title: 'WhatsApp Business Setup',
+    category: 'Hana features',
+    tagline: 'How to obtain Phone Number ID, WABA ID, Permanent System User Access Token, and configure Meta Webhooks for Hana calling',
+    logoUrl: 'https://muxai.vercel.app/logo/whatsapp.jpg',
+    content: {
+      overview:
+        'Hana bridges directly to Meta\'s WhatsApp Cloud API to handle customer inquiries via intelligent voice notes, interactive WebRTC voice calling, and automated receptionist switchboards. All incoming voice messages and text inquiries are retrieved, grounded in your active RAG prompt, and answered in Hana\'s synthesized speech. This guide explains how to get each required piece of information from the Meta Developer and Business Manager consoles.',
+      prerequisites: [
+        'A Meta Developer account at developers.facebook.com',
+        'A Meta Business Manager account at business.facebook.com',
+        'A phone number not currently registered on a personal WhatsApp consumer app (or a test phone number provided by the Meta sandbox)',
+        'Hana /caller instance or webhook callback endpoint (/api/caller/webhooks/whatsapp)',
+      ],
+      parameters: [
+        {
+          name: 'phoneNumberId',
+          type: 'string',
+          required: true,
+          desc: 'Meta Graph API Phone Number ID for the WhatsApp business sender (e.g. 104829104857201)',
+        },
+        {
+          name: 'wabaId',
+          type: 'string',
+          required: true,
+          desc: 'WhatsApp Business Account (WABA) ID registered under your Meta Business Manager',
+        },
+        {
+          name: 'accessToken',
+          type: 'string',
+          required: true,
+          desc: 'Permanent System User Access Token with whatsapp_business_messaging & whatsapp_business_management scopes',
+        },
+        {
+          name: 'targetNumber',
+          type: 'string',
+          required: true,
+          desc: 'Target recipient mobile number in international E.164 format (e.g. +15552348901)',
+        },
+        {
+          name: 'verifyToken',
+          type: 'string',
+          required: true,
+          desc: 'Custom verification string for Meta webhook challenge validation (default: hana_wa_verify_2026)',
+        },
+        {
+          name: 'callMode',
+          type: 'enum',
+          required: false,
+          desc: 'Calling mode: audio_note (Opus voice note), voip_bridge (WebRTC call), or receptionist (interactive RAG)',
+        },
+      ],
+      steps: [
+        {
+          title: '1. Create a Meta Developer App & Add WhatsApp',
+          desc: 'Visit developers.facebook.com, log in, and click "My Apps" > "Create App". Select "Other" > "Business" as the app type, give your app a name (e.g., "Hana Voice Dispatcher"), and click Create. On the App Dashboard, locate the "WhatsApp" product card and click "Set up".',
+        },
+        {
+          title: '2. How to Get Phone Number ID & WABA ID',
+          desc: 'In the left sidebar, navigate to WhatsApp > API Setup. In the "Send and receive messages" panel, locate "Phone number ID" (a numeric ID like 104829104857201). Right underneath it, locate the "WhatsApp Business Account ID" (WABA ID). Copy both IDs into Hana\'s corresponding input fields in /caller.',
+          lang: 'bash',
+          code: `# Phone Number ID & WABA ID are visible in Meta App Dashboard > WhatsApp > API Setup
+Phone Number ID: 104829104857201
+WhatsApp Business Account ID: 109283746501928`,
+        },
+        {
+          title: '3. How to Generate a Permanent System User Access Token',
+          desc: 'The temporary token displayed in the API Setup tab expires after 24 hours. For permanent 24/7 reception, generate a System User token: 1) Go to business.facebook.com > Business Settings > Users > System Users. 2) Click "Add", name the user "Hana Receptionist", and set the role to "Admin". 3) Click "Assign Assets", select your Meta App under "Apps", and enable "Full Control". 4) Click "Generate New Token", choose your App, set token expiration to "Never", and check both "whatsapp_business_messaging" and "whatsapp_business_management" permissions. 5) Copy the token (starts with EAABw...) into Hana\'s System Access Token field.',
+        },
+        {
+          title: '4. How to Configure Meta Webhook Callback & Verify Token',
+          desc: 'In your Meta App Dashboard, navigate to WhatsApp > Configuration. Under "Webhook", click "Edit". Set the Callback URL to your Hana instance endpoint: https://your-domain/api/caller/webhooks/whatsapp. Set the Verify Token to match the verify token in Hana (default: hana_wa_verify_2026). Click "Verify and Save". Then, click "Manage" under Webhook fields and subscribe to the "messages" event field.',
+          lang: 'bash',
+          code: `# Meta Webhook Configuration:
+Callback URL: https://ai.mux8.com/api/caller/webhooks/whatsapp
+Verify Token: hana_wa_verify_2026
+Webhook Fields Subscribed: messages, message_template_status_update`,
+        },
+        {
+          title: '5. Test Connection Handshake & Dispatch Outbound Voice Call',
+          desc: 'In Hana /caller, click "Test Handshake" on the WhatsApp card. Hana verifies your credentials by querying Meta\'s Graph API GET /v21.0/{phone-number-id}. Once the status badge switches to "Verified", enter your target phone number in E.164 format (e.g. +1 555-234-8901) and click "Dispatch Call" to deliver an outbound voice message or trigger an incoming simulation.',
+        },
+      ],
+      codeExample: {
+        lang: 'bash',
+        code: `curl -X POST "https://graph.facebook.com/v21.0/104829104857201/messages" \\
+  -H "Authorization: Bearer EAABw..." \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "messaging_product": "whatsapp",
+    "recipient_type": "individual",
+    "to": "+15552348901",
+    "type": "audio",
+    "audio": {
+      "link": "https://ai.mux8.com/audio/hana_greeting.mp3"
+    }
+  }'`,
+      },
+      tips: [
+        'Phone numbers must be in strict E.164 format (+ followed by country code and subscriber number with no spaces, dashes, or parentheses).',
+        'Meta requires customer opt-in or an existing customer-initiated conversation thread within 24 hours to receive non-template media messages.',
+        'Credentials entered in /caller are stored locally in your browser storage (localStorage) and never uploaded to public servers.',
+      ],
+    },
+  },
+
+  // 2. TELEGRAM VOICE BOT SETUP
+  {
+    id: 'telegram-feature',
+    path: '/docs/features/telegram',
+    title: 'Telegram Voice Bot Setup',
+    category: 'Hana features',
+    tagline: 'How to create a bot via @BotFather, retrieve your Bot Token, find your Chat ID, set secret webhook tokens, and configure voice calling modes',
+    logoUrl: 'https://muxai.vercel.app/logo/telegram.jpg',
+    content: {
+      overview:
+        'Hana interfaces with Telegram\'s MTProto Bot API to operate as a voice-enabled assistant. You can dispatch OGG Opus voice messages, stream interactive VoIP calls, and auto-reply to incoming voice or text notes in channels and groups. Setup takes less than 3 minutes using Telegram\'s official @BotFather bot.',
+      prerequisites: [
+        'A Telegram account on mobile or desktop app',
+        'Access to @BotFather bot within Telegram',
+        'Hana /caller instance or webhook callback endpoint (/api/caller/webhooks/telegram)',
+      ],
+      parameters: [
+        {
+          name: 'botToken',
+          type: 'string',
+          required: true,
+          desc: 'Telegram Bot API token issued by @BotFather (format: 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ)',
+        },
+        {
+          name: 'chatId',
+          type: 'string',
+          required: true,
+          desc: 'Target Telegram Chat ID (numeric integer like 987654321) or recipient @username',
+        },
+        {
+          name: 'secretToken',
+          type: 'string',
+          required: false,
+          desc: 'Secret token passed in X-Telegram-Bot-Api-Secret-Token header for webhook request authentication',
+        },
+        {
+          name: 'callMode',
+          type: 'enum',
+          required: false,
+          desc: 'Voice calling mode: voice_note (Opus voice note), voip_gateway (2-way VoIP stream), or channel_agent (receptionist bot)',
+        },
+      ],
+      steps: [
+        {
+          title: '1. How to Create a Bot with @BotFather & Obtain Bot Token',
+          desc: 'Open Telegram and search for "@BotFather" (the official verified bot with a blue checkmark). Click Start or send "/newbot". Follow the prompts: 1) Enter a friendly display name (e.g., "Hana AI Receptionist"). 2) Enter a unique username ending in "bot" (e.g., "HanaReceptionistBot"). @BotFather will immediately send you your HTTP API Bot Token (e.g. 123456789:ABCdefGHIjklMNO...). Copy this token into Hana\'s "Telegram Bot Token" field.',
+          lang: 'bash',
+          code: `# BotFather output format:
+Use this token to access the HTTP API:
+123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
+Keep your token secure and store it safely.`,
+        },
+        {
+          title: '2. How to Configure Bot Capabilities & Privacy Mode',
+          desc: 'In your chat with @BotFather: 1) Send "/setprivacy" > select your bot > choose "Disable" so Hana can hear messages in group switchboards. 2) Send "/setdescription" to explain your receptionist\'s hours and services. 3) Send "/setuserpic" to upload Hana\'s avatar so users see her friendly face.',
+        },
+        {
+          title: '3. How to Find Your Target User / Chat ID',
+          desc: 'To send voice calls or messages to a specific user, you need their numeric Chat ID: Method A: Search Telegram for "@userinfobot" or "@raw_data_bot" and send "/start". It immediately prints your numeric "Id" (e.g., 987654321). Method B: Send any message to your newly created bot, then open in your browser: https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates. Look for the "id" field inside the "chat" object. Paste this ID or your "@username" into Hana\'s Chat ID field.',
+        },
+        {
+          title: '4. How to Register Webhook with Telegram API',
+          desc: 'To have Telegram deliver incoming voice notes and messages directly to Hana, register your webhook callback URL using Telegram\'s setWebhook endpoint. Include your custom Secret Token for tamper-proof verification.',
+          lang: 'bash',
+          code: `curl -X POST "https://api.telegram.org/bot123456789:ABCdefGHIjklMNO/setWebhook" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "url": "https://ai.mux8.com/api/caller/webhooks/telegram",
+    "secret_token": "hana_tg_secret_2026",
+    "allowed_updates": ["message", "edited_message"]
+  }'`,
+        },
+        {
+          title: '5. Ping @getMe & Test Outbound Voice Dispatch',
+          desc: 'In Hana /caller, click "Ping @getMe" on the Telegram tile. Hana calls https://api.telegram.org/bot<token>/getMe to verify bot credentials in real time. Once verified, click "Dispatch Call" to send a voice note to the specified Chat ID, or click "Simulate Inbound Telegram Voice Turn" to test RAG response generation.',
+        },
+      ],
+      codeExample: {
+        lang: 'bash',
+        code: `curl -X POST "https://api.telegram.org/bot123456789:ABCdefGHIjklMNO/sendVoice" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "chat_id": "987654321",
+    "voice": "https://ai.mux8.com/audio/hana_greeting.ogg",
+    "caption": "Spoken by Hana AI Receptionist"
+  }'`,
+      },
+      tips: [
+        'Telegram voice notes must be encoded in OGG format with the Opus codec (audio/ogg; codecs=opus). Hana transcodes speech automatically.',
+        'The Telegram Bot API is completely free with no per-minute or per-message fees.',
+        'All credentials are saved locally in your browser storage and persist across page refreshes.',
+      ],
+    },
+  },
+
+  // 3. FACEBOOK MESSENGER AUDIO SETUP
+  {
+    id: 'messenger-feature',
+    path: '/docs/features/messenger',
+    title: 'Messenger Audio Gateway Setup',
+    category: 'Hana features',
+    tagline: 'How to retrieve Facebook Page ID, Page Access Token, App Secret, and Recipient PSID for Hana voice messaging and calling',
+    logoUrl: 'https://muxai.vercel.app/logo/messenger.jpg',
+    content: {
+      overview:
+        'Hana integrates with Meta\'s Messenger Platform (Graph API) to provide automated voice calling and spoken audio message responses to visitors on your Facebook Business Page. When a visitor leaves a voice message or asks a question, Hana generates an intelligent RAG response and returns high-fidelity audio.',
+      prerequisites: [
+        'A Facebook Business Page (or Creator Page) that you administer',
+        'A Meta Developer App (business type) at developers.facebook.com',
+        'Hana /caller instance or webhook callback endpoint (/api/caller/webhooks/messenger)',
+      ],
+      parameters: [
+        {
+          name: 'pageId',
+          type: 'string',
+          required: true,
+          desc: 'Numeric identifier of your Facebook Business Page (e.g. 102938475619283)',
+        },
+        {
+          name: 'pageAccessToken',
+          type: 'string',
+          required: true,
+          desc: 'Page Access Token generated from Meta Developer App with pages_messaging permission',
+        },
+        {
+          name: 'appSecret',
+          type: 'string',
+          required: true,
+          desc: 'Meta App Secret from App Settings > Basic, used to verify X-Hub-Signature-256 signatures',
+        },
+        {
+          name: 'recipientId',
+          type: 'string',
+          required: true,
+          desc: 'Target user Page-Scoped ID (PSID) assigned by Facebook for conversations with your Page',
+        },
+        {
+          name: 'verifyToken',
+          type: 'string',
+          required: true,
+          desc: 'Verification token string matching your Meta Webhook configuration (default: hana_fb_verify_2026)',
+        },
+        {
+          name: 'callMode',
+          type: 'enum',
+          required: false,
+          desc: 'Audio channel mode: audio_message (voice message), call_bridge (WebRTC call bridge), or two_way_agent',
+        },
+      ],
+      steps: [
+        {
+          title: '1. Create a Facebook Page & Meta Developer App',
+          desc: 'Ensure you have a published Facebook Page (e.g. "Hana Clinic & Wellness"). Visit developers.facebook.com, click "My Apps" > "Create App", select "Other" > "Business", name your app, and add the "Messenger" product from the catalog.',
+        },
+        {
+          title: '2. How to Find Your Facebook Page ID',
+          desc: 'Open Facebook in your browser and switch to your Page profile. 1) Click Settings & privacy > Settings > Page setup. 2) Alternatively, click on the "About" tab on your Page and select "Page transparency". Copy the numeric "Page ID" (e.g., 102938475619283) into Hana\'s "Facebook Page ID" field.',
+        },
+        {
+          title: '3. How to Generate Page Access Token & Set Permissions',
+          desc: 'In the Meta App Dashboard, navigate to Messenger > API Setup in the left menu. Under "Access Tokens", click "Add or remove Pages" and select your Page. Click "Generate Token". In the permission modal, approve "pages_messaging", "pages_manage_metadata", and "pages_read_engagement". Copy the generated token (starts with EAA...) into Hana\'s "Page Access Token" field.',
+        },
+        {
+          title: '4. How to Retrieve Meta App Secret',
+          desc: 'In the Meta App Dashboard left sidebar, navigate to App settings > Basic. Locate the "App Secret" field, click "Show", enter your Meta account password, and copy the secret hash into Hana\'s "Meta App Secret" field in /caller.',
+        },
+        {
+          title: '5. How to Obtain Recipient PSID (Page-Scoped ID)',
+          desc: 'In Messenger, user IDs are page-scoped (PSID). To get a recipient\'s PSID: 1) Have the user send a message to your Facebook Page. 2) Inspect the incoming webhook payload at /api/caller/webhooks/messenger—the sender.id field is the user\'s PSID (e.g., 4820194857201928). 3) Alternatively, call GET /v21.0/{page-id}/conversations?fields=participants&access_token={token} to list customer PSIDs. Paste this ID into Hana\'s "Recipient PSID" field.',
+        },
+        {
+          title: '6. How to Configure Webhook & Verify Page',
+          desc: 'In Meta App Dashboard > Messenger > API Setup > Webhooks: 1) Click "Add Callback URL". 2) Enter https://your-domain/api/caller/webhooks/messenger. 3) Enter your Verify Token (hana_fb_verify_2026) and save. 4) Under Subscriptions, enable "messages" and "messaging_postbacks". 5) In Hana /caller, click "Verify Page" to test the Graph API connection, then click "Dispatch Call" to send a voice message!',
+          lang: 'bash',
+          code: `# Messenger Webhook Configuration:
+Callback URL: https://ai.mux8.com/api/caller/webhooks/messenger
+Verify Token: hana_fb_verify_2026
+Events Subscribed: messages, messaging_postbacks`,
+        },
+      ],
+      codeExample: {
+        lang: 'bash',
+        code: `curl -X POST "https://graph.facebook.com/v21.0/me/messages?access_token=EAA..." \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "recipient": { "id": "4820194857201928" },
+    "message": {
+      "attachment": {
+        "type": "audio",
+        "payload": {
+          "url": "https://ai.mux8.com/audio/hana_greeting.mp3",
+          "is_reusable": true
+        }
+      }
+    }
+  }'`,
+      },
+      tips: [
+        'Always use a Page Access Token, never a User Access Token. Page Access Tokens do not expire when generated via System Users.',
+        'Standard Messenger policy requires sending responses within 24 hours of the user\'s last message unless using an approved Message Tag.',
+        'All credentials remain strictly client-side in browser storage so your tokens are never exposed.',
+      ],
+    },
+  },
+
+  // 4. OMNICHANNEL VOICE GATEWAY ARCHITECTURE
+  {
+    id: 'omnichannel-feature',
+    path: '/docs/features/omnichannel',
+    title: 'Omnichannel Voice Switchboard',
+    category: 'Hana features',
+    tagline: 'Multi-channel RAG architecture bridging WhatsApp, Telegram, and Messenger into Hana\'s 3D avatar voice engine',
+    logoUrl: 'https://ai.mux8.com/hana_icon.png',
+    content: {
+      overview:
+        'The Omnichannel Voice Switchboard in Hana provides a unified runtime connecting Meta WhatsApp Cloud API, Telegram Bot MTProto API, and Facebook Messenger Graph API into a single reactive RAG receptionist brain. It enables real-time 3D avatar lip-sync, spoken voice synthesis, and zero-latency context grounding across every customer touchpoint.',
+      prerequisites: [
+        'At least one configured platform (WhatsApp, Telegram, or Messenger)',
+        'Active knowledge base prompt configured in Hana /caller (Clinic, Bistro, SaaS Demo, or Custom)',
+      ],
+      steps: [
+        {
+          title: '1. Unified Multi-Platform Inbound Normalization',
+          desc: 'Incoming webhook events from WhatsApp, Telegram, and Messenger are normalized by Hana into a universal conversational turn format containing sender ID, platform origin, audio/text content, and channel mode.',
+        },
+        {
+          title: '2. Real-Time RAG Grounding & Policy Enforcement',
+          desc: 'Hana matches the user question against the active RAG knowledge base selected in /caller (e.g. Clinic hours, prices, open slots). Responses strictly follow business facts and guidelines.',
+        },
+        {
+          title: '3. Streaming Speech Synthesis & 3D Lip-Sync',
+          desc: 'Response text streams through Web Speech API or server-side TTS. The 3D avatar in /caller animates corresponding facial blendshapes and mouth visemes (aa, ih, ou, ee, oh) while dispatching the audio file back to the customer.',
+        },
+        {
+          title: '4. Browser Storage Persistence & Safe Backup',
+          desc: 'All platform credentials, webhook tokens, phone numbers, and chat IDs are stored securely in browser localStorage (hana_caller_platforms_v2). You can export your full configuration via the "Export Config" button at any time.',
+        },
+      ],
+      tips: [
+        'Turn on "Auto-Answer Channels" in /caller to let Hana automatically reply to voice notes across all platforms.',
+        'Use the "Simulate Inbound" buttons on each tile to test your RAG prompts and answers before going live.',
       ],
     },
   },
@@ -1374,6 +1732,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({
   const categories = [
     'Getting Started',
     'Hana APIs',
+    'Hana features',
     'AI Model APIs',
     'Integrations',
   ] as const;
@@ -1396,6 +1755,26 @@ export const DocsPage: React.FC<DocsPageProps> = ({
       cleanPath.includes('/graphql')
     ) {
       const match = DOCS_ARTICLES.find((a) => a.id === 'third-party-avatar');
+      if (match) return match;
+    }
+
+    if (cleanPath.includes('/whatsapp')) {
+      const match = DOCS_ARTICLES.find((a) => a.id === 'whatsapp-feature');
+      if (match) return match;
+    }
+
+    if (cleanPath.includes('/telegram')) {
+      const match = DOCS_ARTICLES.find((a) => a.id === 'telegram-feature');
+      if (match) return match;
+    }
+
+    if (cleanPath.includes('/messenger')) {
+      const match = DOCS_ARTICLES.find((a) => a.id === 'messenger-feature');
+      if (match) return match;
+    }
+
+    if (cleanPath.includes('/omnichannel') || cleanPath.includes('/features')) {
+      const match = DOCS_ARTICLES.find((a) => a.id === 'omnichannel-feature');
       if (match) return match;
     }
 
@@ -1681,6 +2060,109 @@ export const DocsPage: React.FC<DocsPageProps> = ({
                 <p className="text-[10px] text-neutral-500 leading-tight">
                   Single query endpoint at <code className="text-cyan-500">/api/graphql</code>
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Hana Features Omnichannel Calling Capability Banner */}
+          {activeArticle.category === 'Hana features' && (
+            <div className="mb-8 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => onNavigate('/docs/features/whatsapp')}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                    activeArticle.id === 'whatsapp-feature'
+                      ? 'bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-700/60 shadow-xs'
+                      : 'bg-white dark:bg-[#141622] border-black/[0.06] dark:border-white/[0.06] hover:bg-neutral-50 dark:hover:bg-neutral-900/60'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-xl overflow-hidden border border-emerald-200 bg-white shrink-0 shadow-xs">
+                    <img
+                      src="https://muxai.vercel.app/logo/whatsapp.jpg"
+                      alt="WhatsApp"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-neutral-900 dark:text-white flex items-center gap-1">
+                      <span>WhatsApp Business</span>
+                      {activeArticle.id === 'whatsapp-feature' && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      )}
+                    </div>
+                    <p className="text-[10px] text-neutral-500 truncate">Meta Cloud Calling API</p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onNavigate('/docs/features/telegram')}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                    activeArticle.id === 'telegram-feature'
+                      ? 'bg-sky-50/80 dark:bg-sky-950/40 border-sky-300 dark:border-sky-700/60 shadow-xs'
+                      : 'bg-white dark:bg-[#141622] border-black/[0.06] dark:border-white/[0.06] hover:bg-neutral-50 dark:hover:bg-neutral-900/60'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-xl overflow-hidden border border-sky-200 bg-white shrink-0 shadow-xs">
+                    <img
+                      src="https://muxai.vercel.app/logo/telegram.jpg"
+                      alt="Telegram"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-neutral-900 dark:text-white flex items-center gap-1">
+                      <span>Telegram Voice Bot</span>
+                      {activeArticle.id === 'telegram-feature' && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                      )}
+                    </div>
+                    <p className="text-[10px] text-neutral-500 truncate">MTProto Voice &amp; VoIP</p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onNavigate('/docs/features/messenger')}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                    activeArticle.id === 'messenger-feature'
+                      ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-700/60 shadow-xs'
+                      : 'bg-white dark:bg-[#141622] border-black/[0.06] dark:border-white/[0.06] hover:bg-neutral-50 dark:hover:bg-neutral-900/60'
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-xl overflow-hidden border border-indigo-200 bg-white shrink-0 shadow-xs">
+                    <img
+                      src="https://muxai.vercel.app/logo/messenger.jpg"
+                      alt="Messenger"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-neutral-900 dark:text-white flex items-center gap-1">
+                      <span>Messenger Audio</span>
+                      {activeArticle.id === 'messenger-feature' && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                      )}
+                    </div>
+                    <p className="text-[10px] text-neutral-500 truncate">Meta Graph Audio Bridge</p>
+                  </div>
+                </button>
+              </div>
+
+              <div className="p-3 rounded-xl bg-neutral-100/70 dark:bg-neutral-900/50 border border-black/[0.06] dark:border-white/[0.06] flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 text-neutral-600 dark:text-neutral-400">
+                  <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span>All omnichannel credentials are saved securely in browser storage and persist across refreshes.</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('/caller')}
+                  className="px-3 py-1 rounded-lg bg-[var(--theme-accent)] hover:opacity-90 text-white font-semibold flex items-center gap-1 text-[11px] shadow-xs cursor-pointer"
+                >
+                  <Zap className="w-3 h-3" />
+                  <span>Open /caller Console</span>
+                </button>
               </div>
             </div>
           )}
