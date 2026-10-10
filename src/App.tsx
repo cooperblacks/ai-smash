@@ -1218,9 +1218,29 @@ export default function App() {
   const lastDiscordStatusRef = useRef<{ status: string; msg: string }>({ status: '', msg: '' });
 
   useEffect(() => {
-    // 1. Discord Bot: trigger in the background automatically as soon as /chat app is launched if token detected
-    const isChatLaunched = currentRoute === '/chat' || currentRoute.startsWith('/chat') || currentRoute.startsWith('/app');
-    const storedDiscordToken = typeof window !== 'undefined' ? (localStorage.getItem('discord_bot_token') || '').trim() : '';
+    // 1. Discord Bot: trigger in the background automatically as soon as /chat or /caller is launched if token detected
+    const isChatLaunched =
+      currentRoute === '/chat' ||
+      currentRoute.startsWith('/chat') ||
+      currentRoute.startsWith('/app') ||
+      currentRoute === '/caller' ||
+      currentRoute.startsWith('/caller');
+
+    let storedDiscordToken = typeof window !== 'undefined' ? (localStorage.getItem('discord_bot_token') || '').trim() : '';
+    if (!storedDiscordToken && typeof window !== 'undefined') {
+      try {
+        const savedPlatforms =
+          localStorage.getItem('hana_caller_platforms_v2') ||
+          localStorage.getItem('hana_caller_platforms_v1') ||
+          localStorage.getItem('hana_caller_omnichannel_backup');
+        if (savedPlatforms) {
+          const parsed = JSON.parse(savedPlatforms);
+          if (parsed?.discord?.botToken) {
+            storedDiscordToken = parsed.discord.botToken.trim();
+          }
+        }
+      } catch {}
+    }
 
     let discordInt = activeIntegrations.find((i) => i.platform === 'discord');
     if (!discordInt && storedDiscordToken) {

@@ -41,6 +41,14 @@ export interface OmnichannelGatewaysGridProps {
   savedNotice: boolean;
   onSaveNotice: () => void;
   onNavigateToDocs?: (path?: string) => void;
+  discordStatus?: {
+    status: 'connected' | 'disconnected' | 'polling' | 'error';
+    message: string;
+    botUser?: { id: string; username: string } | null;
+  };
+  onConnectDiscord?: () => void;
+  frontendMonitorAudio?: boolean;
+  onToggleFrontendMonitorAudio?: () => void;
 }
 
 export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = ({
@@ -58,6 +66,10 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
   savedNotice,
   onSaveNotice,
   onNavigateToDocs,
+  discordStatus,
+  onConnectDiscord,
+  frontendMonitorAudio = false,
+  onToggleFrontendMonitorAudio,
 }) => {
   const [showTokens, setShowTokens] = useState<Record<string, boolean>>({});
 
@@ -878,21 +890,33 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
               </div>
 
               <div className="flex items-center gap-1.5">
-                <span
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border ${
-                    platformCreds.discord.status === 'verified'
-                      ? 'bg-violet-50 border-violet-300 text-violet-700'
+                {discordStatus?.status === 'connected' ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border bg-emerald-50 border-emerald-300 text-emerald-700 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Online
+                  </span>
+                ) : discordStatus?.status === 'polling' ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border bg-amber-50 border-amber-300 text-amber-700 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-spin" />
+                    Connecting...
+                  </span>
+                ) : (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border ${
+                      platformCreds.discord.status === 'verified'
+                        ? 'bg-violet-50 border-violet-300 text-violet-700'
+                        : platformCreds.discord.status === 'error'
+                        ? 'bg-rose-50 border-rose-300 text-rose-700'
+                        : 'bg-neutral-100 border-neutral-200 text-neutral-600'
+                    }`}
+                  >
+                    {platformCreds.discord.status === 'verified'
+                      ? 'Verified'
                       : platformCreds.discord.status === 'error'
-                      ? 'bg-rose-50 border-rose-300 text-rose-700'
-                      : 'bg-neutral-100 border-neutral-200 text-neutral-600'
-                  }`}
-                >
-                  {platformCreds.discord.status === 'verified'
-                    ? 'Verified'
-                    : platformCreds.discord.status === 'error'
-                    ? 'Error'
-                    : 'Unverified'}
-                </span>
+                      ? 'Error'
+                      : 'Offline'}
+                  </span>
+                )}
 
                 <input
                   type="checkbox"
@@ -907,6 +931,50 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
                   title="Enable Discord Gateway"
                 />
               </div>
+            </div>
+
+            {/* Live Gateway Connection Bar */}
+            <div className="p-2 rounded-xl bg-violet-50/60 border border-violet-200 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${discordStatus?.status === 'connected' ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-neutral-400'}`} />
+                <span className="text-[11px] font-semibold text-neutral-800 truncate">
+                  {discordStatus?.status === 'connected'
+                    ? `Bot Online: @${discordStatus.botUser?.username || 'Hana'}`
+                    : discordStatus?.status === 'polling'
+                    ? 'Connecting to Discord Gateway...'
+                    : 'Bot Gateway Offline'}
+                </span>
+              </div>
+              {onConnectDiscord && (
+                <button
+                  type="button"
+                  onClick={onConnectDiscord}
+                  className="px-2 py-0.5 rounded-lg bg-white border border-violet-200 hover:bg-violet-100/60 text-violet-700 font-semibold text-[10px] shrink-0 cursor-pointer shadow-2xs"
+                >
+                  {discordStatus?.status === 'connected' ? 'Active' : 'Keep Online'}
+                </button>
+              )}
+            </div>
+
+            {/* Receiving End Voice Notice & Local Monitor Toggle */}
+            <div className="p-2 rounded-xl bg-neutral-50 border border-neutral-200 text-[10px] text-neutral-600 flex items-center justify-between gap-2">
+              <span className="truncate">
+                🎙️ Voice dispatched to receiving end (not web frontend).
+              </span>
+              {onToggleFrontendMonitorAudio && (
+                <button
+                  type="button"
+                  onClick={onToggleFrontendMonitorAudio}
+                  className={`px-2 py-0.5 rounded-md border font-semibold shrink-0 cursor-pointer text-[10px] ${
+                    frontendMonitorAudio
+                      ? 'bg-amber-50 border-amber-300 text-amber-800'
+                      : 'bg-white border-neutral-200 text-neutral-600'
+                  }`}
+                  title="Toggle whether to also play audio through local web frontend speakers"
+                >
+                  {frontendMonitorAudio ? 'Speaker: Monitoring' : 'Speaker: Muted'}
+                </button>
+              )}
             </div>
 
             {/* Input: Target Channel ID */}
