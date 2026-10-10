@@ -847,12 +847,12 @@ router.get('/health', (_req, res) => {
 router.get('/vrm', async (req, res) => {
   try {
     const requestedFile = typeof req.query.file === 'string' ? req.query.file.trim() : '';
-    const safeFile = /^[a-zA-Z0-9_.-]+\.vrm$/.test(requestedFile) ? requestedFile : 'hana_v1.2_vrm1.vrm';
+    const safeFile = /^[a-zA-Z0-9_.-]+\.vrm$/.test(requestedFile) ? requestedFile : 'hana_v1.3_vrm1.vrm';
 
     const targetUrls = [
       `${MODEL_SOURCE_DOMAIN}/${safeFile}`,
       `${MODEL_FALLBACK_DOMAIN}/${safeFile}`,
-      `${MODEL_SOURCE_DOMAIN}/hana_v1.2_vrm1.vrm`,
+      `${MODEL_SOURCE_DOMAIN}/hana_v1.3_vrm1.vrm`,
     ];
 
     let vrmResp = null;

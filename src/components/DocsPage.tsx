@@ -111,7 +111,7 @@ export const DOCS_ARTICLES: DocArticle[] = [
       steps: [
         {
           title: '1. Load Hana 3D VRM 1.0 Model via Asset Proxy',
-          desc: 'To prevent cross-origin redirect errors, request the avatar model from /api/vrm. You can specify a wardrobe outfit using the query parameter ?file=hana_v1.2_vrm1.vrm. Initialize Three.js, register VRMLoaderPlugin with GLTFLoader, and add the resulting VRM scene to your WebGL viewport.',
+          desc: 'To prevent cross-origin redirect errors, request the avatar model from /api/vrm. You can specify a wardrobe outfit using the query parameter ?file=hana_v1.3_vrm1.vrm. Initialize Three.js, register VRMLoaderPlugin with GLTFLoader, and add the resulting VRM scene to your WebGL viewport.',
           lang: 'typescript',
           code: `import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -363,7 +363,7 @@ sse.onmessage = (event) => {
     title: 'WhatsApp Business Setup',
     category: 'Hana features',
     tagline: 'How to obtain Phone Number ID, WABA ID, Permanent System User Access Token, and configure Meta Webhooks for Hana calling',
-    logoUrl: 'https://muxai.vercel.app/logo/whatsapp.jpg',
+    logoUrl: 'https://muxai.vercel.app/logos/whatsapp.jpg',
     content: {
       overview:
         'Hana bridges directly to Meta\'s WhatsApp Cloud API to handle customer inquiries via intelligent voice notes, interactive WebRTC voice calling, and automated receptionist switchboards. All incoming voice messages and text inquiries are retrieved, grounded in your active RAG prompt, and answered in Hana\'s synthesized speech. This guide explains how to get each required piece of information from the Meta Developer and Business Manager consoles.',
@@ -472,7 +472,7 @@ Webhook Fields Subscribed: messages, message_template_status_update`,
     title: 'Telegram Voice Bot Setup',
     category: 'Hana features',
     tagline: 'How to create a bot via @BotFather, retrieve your Bot Token, find your Chat ID, set secret webhook tokens, and configure voice calling modes',
-    logoUrl: 'https://muxai.vercel.app/logo/telegram.jpg',
+    logoUrl: 'https://muxai.vercel.app/logos/telegram.jpg',
     content: {
       overview:
         'Hana interfaces with Telegram\'s MTProto Bot API to operate as a voice-enabled assistant. You can dispatch OGG Opus voice messages, stream interactive VoIP calls, and auto-reply to incoming voice or text notes in channels and groups. Setup takes less than 3 minutes using Telegram\'s official @BotFather bot.',
@@ -567,7 +567,7 @@ Keep your token secure and store it safely.`,
     title: 'Messenger Audio Gateway Setup',
     category: 'Hana features',
     tagline: 'How to retrieve Facebook Page ID, Page Access Token, App Secret, and Recipient PSID for Hana voice messaging and calling',
-    logoUrl: 'https://muxai.vercel.app/logo/messenger.jpg',
+    logoUrl: 'https://muxai.vercel.app/logos/messenger.jpg',
     content: {
       overview:
         'Hana integrates with Meta\'s Messenger Platform (Graph API) to provide automated voice calling and spoken audio message responses to visitors on your Facebook Business Page. When a visitor leaves a voice message or asks a question, Hana generates an intelligent RAG response and returns high-fidelity audio.',
@@ -2079,7 +2079,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({
                 >
                   <div className="w-9 h-9 rounded-xl overflow-hidden border border-emerald-200 bg-white shrink-0 shadow-xs">
                     <img
-                      src="https://muxai.vercel.app/logo/whatsapp.jpg"
+                      src="https://muxai.vercel.app/logos/whatsapp.jpg"
                       alt="WhatsApp"
                       className="w-full h-full object-cover"
                     />
@@ -2106,7 +2106,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({
                 >
                   <div className="w-9 h-9 rounded-xl overflow-hidden border border-sky-200 bg-white shrink-0 shadow-xs">
                     <img
-                      src="https://muxai.vercel.app/logo/telegram.jpg"
+                      src="https://muxai.vercel.app/logos/telegram.jpg"
                       alt="Telegram"
                       className="w-full h-full object-cover"
                     />
@@ -2133,7 +2133,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({
                 >
                   <div className="w-9 h-9 rounded-xl overflow-hidden border border-indigo-200 bg-white shrink-0 shadow-xs">
                     <img
-                      src="https://muxai.vercel.app/logo/messenger.jpg"
+                      src="https://muxai.vercel.app/logos/messenger.jpg"
                       alt="Messenger"
                       className="w-full h-full object-cover"
                     />

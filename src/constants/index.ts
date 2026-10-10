@@ -637,7 +637,7 @@ export const AI_PROFILE = {
     'https://muxai.vercel.app/Hana_banner4.png',
     'https://muxai.vercel.app/Hana_banner5.png',
   ],
-  vrmModelUrl: 'https://muxai.vercel.app/hana_v1.2_vrm1.vrm',
+  vrmModelUrl: 'https://muxai.vercel.app/hana_v1.3_vrm1.vrm',
   socials: {
     instagram: 'https://instagram.com/hana_mux',
     discord: 'https://discord.gg/GRRHsFqHrK',
@@ -649,18 +649,18 @@ export const MODEL_SOURCE_DOMAIN = 'https://muxai.vercel.app';
 export const MODEL_FALLBACK_DOMAIN = 'https://ai.mux8.com';
 
 export const OMNICHANNEL_LOGOS = {
-  whatsapp: `${MODEL_SOURCE_DOMAIN}/logo/whatsapp.jpg`,
-  telegram: `${MODEL_SOURCE_DOMAIN}/logo/telegram.jpg`,
-  messenger: `${MODEL_SOURCE_DOMAIN}/logo/messenger.jpg`,
+  whatsapp: `${MODEL_SOURCE_DOMAIN}/logos/whatsapp.jpg`,
+  telegram: `${MODEL_SOURCE_DOMAIN}/logos/telegram.jpg`,
+  messenger: `${MODEL_SOURCE_DOMAIN}/logos/messenger.jpg`,
 } as const;
 
 export const WARDROBE_OUTFITS: WardrobeOutfit[] = [
   {
     id: 'mint-maid-apron',
     name: 'Mint Maid Apron',
-    fileName: 'hana_v1.2_vrm1.vrm',
-    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.2_vrm1.vrm`,
-    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.2_vrm1.vrm`,
+    fileName: 'hana_v1.3_vrm1.vrm',
+    modelUrl: `${MODEL_SOURCE_DOMAIN}/hana_v1.3_vrm1.vrm`,
+    fallbackModelUrl: `${MODEL_FALLBACK_DOMAIN}/hana_v1.3_vrm1.vrm`,
     isPremium: false,
     isDefault: true,
   },
@@ -987,7 +987,7 @@ export function getWaitingAnimationCandidateUrls(fileName: string): string[] {
 }
 
 export const VRM_CONFIG = {
-  modelUrl: 'https://muxai.vercel.app/hana_v1.2_vrm1.vrm',
+  modelUrl: 'https://muxai.vercel.app/hana_v1.3_vrm1.vrm',
   animationUrl: 'https://muxai.vercel.app/mixamo_idle.fbx',
   fallAnimationUrl: 'https://muxai.vercel.app/mixamo_fall.fbx',
   getupAnimationUrl: 'https://muxai.vercel.app/mixamo_getup.fbx',
@@ -997,8 +997,8 @@ export const VRM_CONFIG = {
   cacheKey: 'hana_vrm_cache_v1',
   candidateModelUrls: [
     '/api/vrm',
-    'https://ai.mux8.com/hana_v1.2_vrm1.vrm',
-    'https://muxai.vercel.app/hana_v1.2_vrm1.vrm',
+    'https://ai.mux8.com/hana_v1.3_vrm1.vrm',
+    'https://muxai.vercel.app/hana_v1.3_vrm1.vrm',
   ],
   candidateAnimationUrls: [
     '/api/animation/idle',
