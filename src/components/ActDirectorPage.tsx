@@ -32,6 +32,9 @@ import {
   Check,
   Sparkles,
   Loader2,
+  Camera,
+  Move,
+  RotateCcw,
 } from 'lucide-react';
 
 export interface AnimationItem {
@@ -59,6 +62,27 @@ const CATEGORY_LABELS: Record<string, string> = {
   custom: 'Custom FBX',
 };
 
+/**
+ * Normalizes a retargeted Mixamo AnimationClip so that root/hips translation tracks
+ * play strictly in the local space of the model around its local (0, y, 0) origin
+ * instead of snapping or drifting to world-space FBX coordinates.
+ */
+function localizeAnimationClip(clip: THREE.AnimationClip): THREE.AnimationClip {
+  for (const track of clip.tracks) {
+    if (track.name.endsWith('.position') && track.values.length >= 3) {
+      const values = track.values;
+      const baseX = values[0];
+      const baseZ = values[2];
+      for (let i = 0; i < values.length; i += 3) {
+        // Keep subtle local sway around 0 in X/Z while stripping world-space root displacement
+        values[i] = (values[i] - baseX) * 0.25;
+        values[i + 2] = (values[i + 2] - baseZ) * 0.25;
+      }
+    }
+  }
+  return clip;
+}
+
 interface ActDirectorPageProps {
   onBackToChat?: () => void;
   onNavigateHome?: () => void;
@@ -74,11 +98,49 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const modelRootGroupRef = useRef<THREE.Group | null>(null);
+  const modelSelectionRingRef = useRef<THREE.Group | null>(null);
   const vrmRef = useRef<VRM | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionsMapRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
   const loadingAnimPromisesRef = useRef<Map<string, Promise<THREE.AnimationAction | null>>>(new Map());
   const currentActionRef = useRef<THREE.AnimationAction | null>(null);
+
+  // Viewport Interaction Toolbar: Camera Movement vs. Model Movement (Local Space)
+  const [interactionMode, setInteractionMode] = useState<'camera' | 'model'>('camera');
+  const interactionModeRef = useRef<'camera' | 'model'>('camera');
+  const [modelMoveSubMode, setModelMoveSubMode] = useState<'xy' | 'xz' | 'rotate'>('xy');
+  const modelMoveSubModeRef = useRef<'xy' | 'xz' | 'rotate'>('xy');
+  const [modelTransformDisplay, setModelTransformDisplay] = useState<{
+    x: number;
+    y: number;
+    z: number;
+    yawDeg: number;
+  }>({ x: 0, y: 0, z: 0, yawDeg: 0 });
+  const isDraggingModelRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    interactionModeRef.current = interactionMode;
+    if (controlsRef.current) {
+      controlsRef.current.enabled = interactionMode === 'camera' && !isForceTestActiveRef.current;
+    }
+    if (modelSelectionRingRef.current) {
+      modelSelectionRingRef.current.visible = interactionMode === 'model';
+    }
+  }, [interactionMode]);
+
+  useEffect(() => {
+    modelMoveSubModeRef.current = modelMoveSubMode;
+  }, [modelMoveSubMode]);
+
+  const handleResetModelTransform = useCallback(() => {
+    if (modelRootGroupRef.current) {
+      modelRootGroupRef.current.position.set(0, 0, 0);
+      modelRootGroupRef.current.rotation.set(0, 0, 0);
+      modelRootGroupRef.current.updateMatrixWorld(true);
+    }
+    setModelTransformDisplay({ x: 0, y: 0, z: 0, yawDeg: 0 });
+  }, []);
 
   // Character & Asset state
   const [selectedOutfitId, setSelectedOutfitId] = useState<string>('mint-maid-apron');
@@ -118,7 +180,9 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     isForceTestActiveRef.current = isForceTestActive;
     if (!isForceTestActive) {
       if (forceIndicatorRef.current) forceIndicatorRef.current.visible = false;
-      if (controlsRef.current) controlsRef.current.enabled = true;
+      if (controlsRef.current) {
+        controlsRef.current.enabled = interactionModeRef.current === 'camera';
+      }
     }
   }, [isForceTestActive]);
 
@@ -241,8 +305,9 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
         }
         for (const url of animItem.candidateUrls) {
           try {
-            const clip = await retargetAnimationFromUrl(url, vrm);
-            if (clip && mixerRef.current === mixer && vrmRef.current === vrm) {
+            const rawClip = await retargetAnimationFromUrl(url, vrm);
+            if (rawClip && mixerRef.current === mixer && vrmRef.current === vrm) {
+              const clip = localizeAnimationClip(rawClip);
               animItem.clip = clip;
               const action = mixer.clipAction(clip);
               if (loop) {
@@ -591,6 +656,60 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     grid.material.transparent = true;
     scene.add(grid);
 
+    // Dedicated Model Root Group so user can grab & move the model in world space
+    // while all VRM & Mixamo animations play strictly in the model's local coordinate space
+    const modelRootGroup = new THREE.Group();
+    modelRootGroup.name = 'ActModelRootGroup';
+    scene.add(modelRootGroup);
+    modelRootGroupRef.current = modelRootGroup;
+
+    // Local-Space Selection Ring & Facing Arrow Gizmo under the model's feet
+    const selectionRingGroup = new THREE.Group();
+    selectionRingGroup.position.set(0, -0.155, 0);
+    const baseRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.32, 0.37, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0x55d2f6,
+        transparent: true,
+        opacity: 0.75,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    baseRing.rotation.x = -Math.PI / 2;
+    selectionRingGroup.add(baseRing);
+
+    const innerDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(0.32, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0x55d2f6,
+        transparent: true,
+        opacity: 0.12,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    innerDisc.rotation.x = -Math.PI / 2;
+    selectionRingGroup.add(innerDisc);
+
+    // Forward direction indicator (+Z local forward)
+    const dirCone = new THREE.Mesh(
+      new THREE.ConeGeometry(0.06, 0.14, 16),
+      new THREE.MeshBasicMaterial({
+        color: 0x55d2f6,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+      })
+    );
+    dirCone.rotation.x = Math.PI / 2;
+    dirCone.position.set(0, 0.01, 0.43);
+    selectionRingGroup.add(dirCone);
+
+    selectionRingGroup.visible = interactionModeRef.current === 'model';
+    modelRootGroup.add(selectionRingGroup);
+    modelSelectionRingRef.current = selectionRingGroup;
+
     // Force Test Visual Indicator (invisible forcefield ripple halo)
     const forceGroup = new THREE.Group();
     const innerOrb = new THREE.Mesh(
@@ -618,10 +737,30 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     scene.add(forceGroup);
     forceIndicatorRef.current = forceGroup;
 
-    // Raycaster for Force Test interaction
+    // Raycaster for Force Test & Model Grabbing interaction
     const forceRaycaster = new THREE.Raycaster();
+    const modelDragPlane = new THREE.Plane();
+    const dragStartPlaneHit = new THREE.Vector3();
+    let hasValidStartPlaneHit = false;
+    const dragStartModelPos = new THREE.Vector3();
+    let dragStartYaw = 0;
+    let dragStartClientX = 0;
+    let dragStartClientY = 0;
+    let dragButton = 0;
 
-    // Canvas Pointer Event Listeners for Force Test
+    const syncModelTransformState = () => {
+      if (!modelRootGroupRef.current) return;
+      const p = modelRootGroupRef.current.position;
+      const r = modelRootGroupRef.current.rotation;
+      setModelTransformDisplay({
+        x: Number(p.x.toFixed(2)),
+        y: Number(p.y.toFixed(2)),
+        z: Number(p.z.toFixed(2)),
+        yawDeg: Math.round((r.y * 180) / Math.PI),
+      });
+    };
+
+    // Canvas Pointer Event Listeners for Force Test & Model Movement
     const updatePointerPos = (e: PointerEvent) => {
       if (!canvas) return;
       pointerInsideCanvasRef.current = true;
@@ -630,40 +769,191 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       pointerNdcRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     };
 
+    const handleContextMenu = (e: MouseEvent) => {
+      if (interactionModeRef.current === 'model') {
+        e.preventDefault();
+      }
+    };
+
     const handlePointerDown = (e: PointerEvent) => {
-      if (!isForceTestActiveRef.current) return;
-      isPointerDownRef.current = true;
-      pointerDownTimeRef.current = performance.now();
       updatePointerPos(e);
+
+      if (isForceTestActiveRef.current) {
+        isPointerDownRef.current = true;
+        pointerDownTimeRef.current = performance.now();
+        return;
+      }
+
+      if (interactionModeRef.current === 'model' && modelRootGroupRef.current && cameraRef.current) {
+        if (controlsRef.current) {
+          controlsRef.current.enabled = false;
+        }
+        isDraggingModelRef.current = true;
+        dragButton = e.button;
+        dragStartClientX = e.clientX;
+        dragStartClientY = e.clientY;
+        dragStartModelPos.copy(modelRootGroupRef.current.position);
+        dragStartYaw = modelRootGroupRef.current.rotation.y;
+
+        forceRaycaster.setFromCamera(
+          new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
+          cameraRef.current
+        );
+
+        const subMode = modelMoveSubModeRef.current;
+        if (subMode === 'xy') {
+          const camDir = new THREE.Vector3();
+          cameraRef.current.getWorldDirection(camDir).negate();
+          const anchor = modelRootGroupRef.current.position
+            .clone()
+            .add(new THREE.Vector3(0, 0.85, 0));
+          modelDragPlane.setFromNormalAndCoplanarPoint(camDir, anchor);
+          hasValidStartPlaneHit = Boolean(
+            forceRaycaster.ray.intersectPlane(modelDragPlane, dragStartPlaneHit)
+          );
+        } else if (subMode === 'xz') {
+          modelDragPlane.setFromNormalAndCoplanarPoint(
+            new THREE.Vector3(0, 1, 0),
+            modelRootGroupRef.current.position
+          );
+          hasValidStartPlaneHit =
+            Math.abs(forceRaycaster.ray.direction.y) > 0.16 &&
+            Boolean(forceRaycaster.ray.intersectPlane(modelDragPlane, dragStartPlaneHit));
+        } else {
+          hasValidStartPlaneHit = false;
+        }
+
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {}
+      }
     };
 
     const handlePointerMove = (e: PointerEvent) => {
-      if (!isForceTestActiveRef.current) return;
       updatePointerPos(e);
+
+      if (isForceTestActiveRef.current) {
+        return;
+      }
+
+      if (
+        isDraggingModelRef.current &&
+        interactionModeRef.current === 'model' &&
+        modelRootGroupRef.current &&
+        cameraRef.current
+      ) {
+        const subMode = modelMoveSubModeRef.current;
+        const isRotateAction = dragButton === 2 || e.shiftKey || subMode === 'rotate';
+
+        if (isRotateAction) {
+          const deltaX = e.clientX - dragStartClientX;
+          modelRootGroupRef.current.rotation.y = dragStartYaw + deltaX * 0.012;
+        } else if (subMode === 'xy' && hasValidStartPlaneHit) {
+          forceRaycaster.setFromCamera(
+            new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
+            cameraRef.current
+          );
+          const currentHit = new THREE.Vector3();
+          if (forceRaycaster.ray.intersectPlane(modelDragPlane, currentHit)) {
+            const offset = currentHit.sub(dragStartPlaneHit);
+            modelRootGroupRef.current.position.copy(dragStartModelPos).add(offset);
+          }
+        } else if (subMode === 'xz') {
+          forceRaycaster.setFromCamera(
+            new THREE.Vector2(pointerNdcRef.current.x, pointerNdcRef.current.y),
+            cameraRef.current
+          );
+          const currentHit = new THREE.Vector3();
+          if (
+            hasValidStartPlaneHit &&
+            Math.abs(forceRaycaster.ray.direction.y) > 0.16 &&
+            forceRaycaster.ray.intersectPlane(modelDragPlane, currentHit)
+          ) {
+            const offset = currentHit.sub(dragStartPlaneHit);
+            if (offset.length() < 8.0) {
+              modelRootGroupRef.current.position.set(
+                dragStartModelPos.x + offset.x,
+                dragStartModelPos.y,
+                dragStartModelPos.z + offset.z
+              );
+            }
+          } else {
+            // Fallback screen-to-floor projection for shallow camera angles
+            const dx = (e.clientX - dragStartClientX) * 0.0045;
+            const dy = (e.clientY - dragStartClientY) * 0.0045;
+            const camForward = new THREE.Vector3();
+            cameraRef.current.getWorldDirection(camForward);
+            camForward.y = 0;
+            if (camForward.lengthSq() > 0.0001) camForward.normalize();
+            else camForward.set(0, 0, -1);
+            const camRight = new THREE.Vector3().crossVectors(camForward, new THREE.Vector3(0, 1, 0)).normalize();
+
+            modelRootGroupRef.current.position.set(
+              dragStartModelPos.x + camRight.x * dx - camForward.x * dy,
+              dragStartModelPos.y,
+              dragStartModelPos.z + camRight.z * dx - camForward.z * dy
+            );
+          }
+        }
+
+        modelRootGroupRef.current.updateMatrixWorld(true);
+        syncModelTransformState();
+      }
     };
 
-    const handlePointerUp = () => {
+    const handlePointerUp = (e?: PointerEvent) => {
       isPointerDownRef.current = false;
+      isDraggingModelRef.current = false;
       prevHitPointRef.current = null;
+      if (e && canvas) {
+        try {
+          canvas.releasePointerCapture(e.pointerId);
+        } catch {}
+      }
       if (controlsRef.current && !isForceTestActiveRef.current) {
-        controlsRef.current.enabled = true;
+        controlsRef.current.enabled = interactionModeRef.current === 'camera';
       }
     };
 
     const handlePointerLeave = () => {
       pointerInsideCanvasRef.current = false;
-      isPointerDownRef.current = false;
-      prevHitPointRef.current = null;
-      if (controlsRef.current) {
-        controlsRef.current.enabled = true;
+      if (!isDraggingModelRef.current) {
+        isPointerDownRef.current = false;
+        prevHitPointRef.current = null;
+        if (controlsRef.current && !isForceTestActiveRef.current) {
+          controlsRef.current.enabled = interactionModeRef.current === 'camera';
+        }
       }
     };
 
+    const handleWheel = (e: WheelEvent) => {
+      if (
+        interactionModeRef.current === 'model' &&
+        !isForceTestActiveRef.current &&
+        modelRootGroupRef.current
+      ) {
+        e.preventDefault();
+        const step = -Math.sign(e.deltaY) * 0.08;
+        const subMode = modelMoveSubModeRef.current;
+        if (subMode === 'rotate') {
+          modelRootGroupRef.current.rotation.y += step * 1.5;
+        } else if (subMode === 'xz') {
+          modelRootGroupRef.current.position.y += step;
+        } else {
+          modelRootGroupRef.current.position.z += step;
+        }
+        modelRootGroupRef.current.updateMatrixWorld(true);
+        syncModelTransformState();
+      }
+    };
+
+    canvas.addEventListener('contextmenu', handleContextMenu);
     canvas.addEventListener('pointerdown', handlePointerDown);
     canvas.addEventListener('pointermove', handlePointerMove);
     canvas.addEventListener('pointerup', handlePointerUp);
     canvas.addEventListener('pointerleave', handlePointerLeave);
     canvas.addEventListener('pointercancel', handlePointerUp);
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
 
     // Blinking
     let nextBlinkTime = 2.5;
@@ -676,13 +966,18 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       rafId = requestAnimationFrame(animate);
 
       const delta = clock.getDelta();
-      controls.update();
+      if (controls.enabled) {
+        controls.update();
+      }
 
       if (mixerRef.current) {
         mixerRef.current.update(delta);
       }
 
       if (vrmRef.current) {
+        if (modelRootGroupRef.current) {
+          modelRootGroupRef.current.updateMatrixWorld(true);
+        }
         // Crucial: synchronize animated skeleton matrices so proxy colliders match the active pose
         vrmRef.current.scene.updateMatrixWorld(true);
 
@@ -835,7 +1130,7 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                 forceIndicatorRef.current.visible = false;
               }
               if (controlsRef.current && !isPointerDownRef.current) {
-                controlsRef.current.enabled = true;
+                controlsRef.current.enabled = interactionModeRef.current === 'camera';
               }
             }
           }
@@ -872,8 +1167,11 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
           if (forceIndicatorRef.current && forceIndicatorRef.current.visible) {
             forceIndicatorRef.current.visible = false;
           }
-          if (controlsRef.current && !controlsRef.current.enabled) {
-            controlsRef.current.enabled = true;
+          if (controlsRef.current) {
+            const shouldEnableOrbit = interactionModeRef.current === 'camera';
+            if (controlsRef.current.enabled !== shouldEnableOrbit) {
+              controlsRef.current.enabled = shouldEnableOrbit;
+            }
           }
         }
 
@@ -961,11 +1259,13 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       isDisposed = true;
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', handleResize);
+      canvas.removeEventListener('contextmenu', handleContextMenu);
       canvas.removeEventListener('pointerdown', handlePointerDown);
       canvas.removeEventListener('pointermove', handlePointerMove);
       canvas.removeEventListener('pointerup', handlePointerUp);
       canvas.removeEventListener('pointerleave', handlePointerLeave);
       canvas.removeEventListener('pointercancel', handlePointerUp);
+      canvas.removeEventListener('wheel', handleWheel);
       controls.dispose();
       renderer.dispose();
     };
@@ -982,7 +1282,11 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     setIsLoading(true);
 
     if (vrmRef.current) {
-      scene.remove(vrmRef.current.scene);
+      if (vrmRef.current.scene.parent) {
+        vrmRef.current.scene.parent.remove(vrmRef.current.scene);
+      } else {
+        scene.remove(vrmRef.current.scene);
+      }
       VRMUtils.deepDispose(vrmRef.current.scene);
       vrmRef.current = null;
     }
@@ -1009,12 +1313,17 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       } catch {}
 
       vrm.scene.position.set(0, VRM_CONFIG.interaction.bodyOffsetY, 0);
+      vrm.scene.rotation.set(0, 0, 0);
       vrm.scene.traverse((obj) => {
         obj.frustumCulled = false;
       });
 
       vrmRef.current = vrm;
-      scene.add(vrm.scene);
+      if (modelRootGroupRef.current) {
+        modelRootGroupRef.current.add(vrm.scene);
+      } else {
+        scene.add(vrm.scene);
+      }
 
       // Build lightweight proxy colliders on humanoid bones for ultra-fast (0.01ms) raycasting & animated hit tracking
       proxyCollidersRef.current = [];
@@ -1110,8 +1419,9 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       const arrayBuffer = await file.arrayBuffer();
       const fbxLoader = new FBXLoader();
       const fbxGroup = fbxLoader.parse(arrayBuffer, '');
-      const clip = retargetAnimation(fbxGroup, vrmRef.current);
-      if (clip) {
+      const rawClip = retargetAnimation(fbxGroup, vrmRef.current);
+      if (rawClip) {
+        const clip = localizeAnimationClip(rawClip);
         const key = `custom_${Date.now()}`;
         const name = file.name.replace(/\.fbx$/i, '');
         const action = mixerRef.current.clipAction(clip);
@@ -1232,8 +1542,9 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
       try {
         const fbxLoader = new FBXLoader();
         const fbxGroup = fbxLoader.parse(buffer, '');
-        const clip = retargetAnimation(fbxGroup, vrmRef.current);
-        if (clip) {
+        const rawClip = retargetAnimation(fbxGroup, vrmRef.current);
+        if (rawClip) {
+          const clip = localizeAnimationClip(rawClip);
           const key = `remote_${animName}_${Date.now()}`;
           const action = mixerRef.current.clipAction(clip);
           action.setLoop(THREE.LoopRepeat, Infinity);
@@ -1324,11 +1635,24 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
     return activeAnimKey;
   }, [animModalTargetCueId, cues, activeAnimKey]);
 
+  const hasModelOffset =
+    Math.abs(modelTransformDisplay.x) > 0.01 ||
+    Math.abs(modelTransformDisplay.y) > 0.01 ||
+    Math.abs(modelTransformDisplay.z) > 0.01 ||
+    Math.abs(modelTransformDisplay.yawDeg) > 0;
+
   return (
     <div className="relative h-screen w-screen overflow-hidden select-none bg-[#f0f2f5] dark:bg-[#0f1117] text-neutral-800 dark:text-neutral-100 font-sans">
       {/* 3D Canvas Viewport */}
       <div ref={containerRef} className="absolute inset-0 w-full h-full">
-        <canvas ref={canvasRef} className="w-full h-full block cursor-grab active:cursor-grabbing touch-none" />
+        <canvas
+          ref={canvasRef}
+          className={`w-full h-full block touch-none ${
+            interactionMode === 'model'
+              ? 'cursor-move active:cursor-grabbing'
+              : 'cursor-grab active:cursor-grabbing'
+          }`}
+        />
       </div>
 
       {/* Loading Overlay */}
@@ -1338,6 +1662,92 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
           <span className="text-xs font-mono font-medium">Loading 3D Actor...</span>
         </div>
       )}
+
+      {/* Top-Center Viewport Mode Toolbar: Select Between Camera Movement & Model Movement */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 pointer-events-auto">
+        <div className="p-1.5 rounded-2xl backdrop-blur-md bg-white/90 dark:bg-[#13151f]/90 border border-black/10 dark:border-white/10 shadow-xl flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setInteractionMode('camera')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              interactionMode === 'camera'
+                ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 shadow-xs font-bold'
+                : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/5'
+            }`}
+            title="Orbit, pan, and zoom the 3D camera"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            <span>Camera Move</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setInteractionMode('model')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+              interactionMode === 'model'
+                ? 'bg-[var(--theme-accent,#55d2f6)] text-neutral-950 shadow-xs font-bold'
+                : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/5'
+            }`}
+            title="Grab and move the 3D model directly (animations play in local space)"
+          >
+            <Move className="w-3.5 h-3.5" />
+            <span>Model Move</span>
+          </button>
+
+          {interactionMode === 'model' && (
+            <>
+              <div className="h-4 w-px bg-black/10 dark:bg-white/10 mx-0.5" />
+              <div className="flex items-center gap-1">
+                {(
+                  [
+                    { id: 'xy', label: 'Free 3D', tip: 'Drag X/Y parallel to view (Wheel = Z depth)' },
+                    { id: 'xz', label: 'Floor XZ', tip: 'Slide across floor X/Z (Wheel = Y height)' },
+                    { id: 'rotate', label: 'Rotate', tip: 'Spin model local facing direction (or Right-drag)' },
+                  ] as const
+                ).map((sub) => (
+                  <button
+                    key={sub.id}
+                    type="button"
+                    onClick={() => setModelMoveSubMode(sub.id)}
+                    className={`px-2 py-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer ${
+                      modelMoveSubMode === sub.id
+                        ? 'bg-sky-500/20 border border-sky-400/50 text-sky-700 dark:text-sky-300 font-bold'
+                        : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/5'
+                    }`}
+                    title={sub.tip}
+                  >
+                    {sub.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {hasModelOffset && (
+            <button
+              type="button"
+              onClick={handleResetModelTransform}
+              className="px-2 py-1 rounded-lg bg-neutral-100 dark:bg-white/10 hover:bg-neutral-200 dark:hover:bg-white/15 text-[11px] font-mono font-semibold text-neutral-700 dark:text-neutral-200 flex items-center gap-1 cursor-pointer transition-all"
+              title="Reset model position & rotation to stage center (0, 0, 0)"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span className="hidden sm:inline">Reset</span>
+            </button>
+          )}
+        </div>
+
+        {interactionMode === 'model' && (
+          <div className="px-2.5 py-1 rounded-xl backdrop-blur-md bg-white/80 dark:bg-[#13151f]/80 border border-black/10 dark:border-white/10 text-[10px] font-mono text-neutral-600 dark:text-neutral-300 flex items-center gap-2 shadow-sm">
+            <span className="text-sky-600 dark:text-sky-400 font-semibold">Local Space Active</span>
+            <span>&bull;</span>
+            <span>
+              Pos: ({modelTransformDisplay.x}, {modelTransformDisplay.y}, {modelTransformDisplay.z})
+            </span>
+            <span>&bull;</span>
+            <span>Yaw: {modelTransformDisplay.yawDeg}&deg;</span>
+          </div>
+        )}
+      </div>
 
       {/* Top Left Floating Control Rail (Directly styled after muxai-3d-preview.html) */}
       <div
@@ -1404,6 +1814,51 @@ export const ActDirectorPage: React.FC<ActDirectorPageProps> = ({ onBackToChat }
                 <span className="truncate">
                   Emotion: <strong>{ACT_EMOTIONS.find((e) => e.key === activeEmotionKey)?.name || activeEmotionKey}</strong>
                 </span>
+              </div>
+            </div>
+
+            {/* Viewport Interaction Mode Selector in Control Rail */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-neutral-400 font-semibold">
+                  Drag Control Mode
+                </span>
+                {hasModelOffset && (
+                  <button
+                    type="button"
+                    onClick={handleResetModelTransform}
+                    className="text-[10px] font-mono text-[var(--theme-accent,#55d2f6)] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-2.5 h-2.5" />
+                    <span>Reset Pos</span>
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setInteractionMode('camera')}
+                  className={`py-1.5 px-2 rounded-xl font-semibold text-[11px] flex items-center justify-center gap-1.5 border transition-all cursor-pointer ${
+                    interactionMode === 'camera'
+                      ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.15))] text-[var(--theme-accent,#55d2f6)] font-bold'
+                      : 'border-black/5 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 text-neutral-700 dark:text-neutral-300'
+                  }`}
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>Camera Move</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInteractionMode('model')}
+                  className={`py-1.5 px-2 rounded-xl font-semibold text-[11px] flex items-center justify-center gap-1.5 border transition-all cursor-pointer ${
+                    interactionMode === 'model'
+                      ? 'border-[var(--theme-accent,#55d2f6)] bg-[var(--theme-accent-soft,rgba(85,210,246,0.15))] text-[var(--theme-accent,#55d2f6)] font-bold'
+                      : 'border-black/5 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5 text-neutral-700 dark:text-neutral-300'
+                  }`}
+                >
+                  <Move className="w-3.5 h-3.5" />
+                  <span>Model Move</span>
+                </button>
               </div>
             </div>
 

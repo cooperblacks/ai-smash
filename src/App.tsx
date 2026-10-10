@@ -98,6 +98,7 @@ import { HumanizerPage } from './components/HumanizerPage';
 import { VoiceTesterPage } from './components/VoiceTesterPage';
 import { MMDStudioPage } from './components/MMDStudioPage';
 import { InterviewPage } from './components/InterviewPage';
+import { CallerPage } from './components/CallerPage';
 import { PremiumModal } from './components/PremiumModal';
 import { IntegrationLibraryItem } from './constants';
 import { dispatchChatToWebhooks } from './lib/integrations';
@@ -143,6 +144,9 @@ export default function App() {
       if (path.startsWith('/interview')) {
         return path;
       }
+      if (path.startsWith('/caller')) {
+        return '/caller';
+      }
       return path.startsWith('/chat') ? '/chat' : '/';
     }
     return '/';
@@ -186,6 +190,10 @@ export default function App() {
         setCurrentRoute(path);
         return;
       }
+      if (path.startsWith('/caller')) {
+        setCurrentRoute('/caller');
+        return;
+      }
       setCurrentRoute(path.startsWith('/chat') ? '/chat' : '/');
     };
     window.addEventListener('popstate', handlePopState);
@@ -214,6 +222,8 @@ export default function App() {
         normalized = '/voice';
       } else if (path.startsWith('/interview')) {
         normalized = path;
+      } else if (path.startsWith('/caller')) {
+        normalized = '/caller';
       }
       window.history.pushState(null, '', normalized);
       setCurrentRoute(normalized);
@@ -2160,6 +2170,28 @@ export default function App() {
     );
   }
 
+  // Render Autonomous AI Voice Caller & Agentic Booking at '/caller'
+  if (currentRoute.startsWith('/caller')) {
+    return (
+      <>
+        {shockwaveOverlay}
+        <CallerPage
+          onNavigateHome={() => navigateTo('/')}
+          onNavigateToChat={() => navigateTo('/chat')}
+          onNavigateToDocs={(p) => navigateTo(p || '/docs')}
+          activeModel={activeModel}
+          onSelectModel={handleSelectModel}
+          cacheStatuses={cacheStatuses}
+          ollamaStatus={ollamaStatus}
+          onUpdateCustomUrl={handleUpdateCustomUrl}
+          userSettings={userSettings}
+          onUpdateSettings={handleUpdateSettings}
+          activeOutfitFileName={activeOutfit.fileName}
+        />
+      </>
+    );
+  }
+
   // Render MuxAI Humanizer & Turnitin-Reverse at '/humanizer' (and redirects)
   if (currentRoute.startsWith('/humanizer')) {
     return (
@@ -2185,6 +2217,7 @@ export default function App() {
           onNavigateToDocs={(p) => navigateTo(p || '/docs')}
           onNavigateToHumanizer={() => navigateTo('/humanizer')}
           onNavigateToInterview={(p) => navigateTo(p || '/interview?id=demo')}
+          onNavigateToCaller={() => navigateTo('/caller')}
         />
       </>
     );

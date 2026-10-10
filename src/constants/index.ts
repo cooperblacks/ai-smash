@@ -648,6 +648,12 @@ export const AI_PROFILE = {
 export const MODEL_SOURCE_DOMAIN = 'https://muxai.vercel.app';
 export const MODEL_FALLBACK_DOMAIN = 'https://ai.mux8.com';
 
+export const OMNICHANNEL_LOGOS = {
+  whatsapp: `${MODEL_SOURCE_DOMAIN}/logo/whatsapp.jpg`,
+  telegram: `${MODEL_SOURCE_DOMAIN}/logo/telegram.jpg`,
+  messenger: `${MODEL_SOURCE_DOMAIN}/logo/messenger.jpg`,
+} as const;
+
 export const WARDROBE_OUTFITS: WardrobeOutfit[] = [
   {
     id: 'mint-maid-apron',

@@ -4,8 +4,9 @@ import { ModelSpec, TelemetryStats, DownloadProgress } from '../types';
 import { THEME_COLORS, UI_CONFIG } from '../constants';
 
 interface TelemetryBarProps {
-  activeModel: ModelSpec;
-  telemetry: TelemetryStats;
+  activeModel?: ModelSpec;
+  telemetry?: TelemetryStats;
+  stats?: TelemetryStats;
   downloadProgress: DownloadProgress | null;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -15,11 +16,27 @@ interface TelemetryBarProps {
 const TelemetryBarComponent: React.FC<TelemetryBarProps> = ({
   activeModel,
   telemetry,
+  stats,
   downloadProgress,
   isExpanded,
   onToggleExpand,
   onCancelDownload,
 }) => {
+  const safeTelemetry: TelemetryStats = telemetry || stats || {
+    tokensPerSec: 0,
+    timeToFirstTokenMs: 0,
+    totalLatencyMs: 0,
+    tokenCount: 0,
+    device: 'webgpu',
+    isGenerating: false,
+    isModelLoaded: false,
+    activeModelName: activeModel?.name || 'Local SLM',
+    modelId: activeModel?.id || 'default',
+    statusText: 'Ready',
+  };
+  const deviceKey = safeTelemetry.device || 'webgpu';
+  const defaultDtype = activeModel?.defaultDtype || 'q4f16';
+
   const isDownloading = downloadProgress && (downloadProgress.status === 'downloading' || downloadProgress.status === 'loading');
 
   const getDeviceBadgeClass = (device: string) => {
@@ -84,14 +101,14 @@ const TelemetryBarComponent: React.FC<TelemetryBarProps> = ({
         {/* Left: Device Hardware Badge & Live Status */}
         <div className="flex items-center gap-2">
           <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border ${getDeviceBadgeClass(telemetry.device)}`}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-medium border ${getDeviceBadgeClass(deviceKey)}`}
           >
             <Cpu className="w-2.5 h-2.5" />
-            {telemetry.device.toUpperCase()}
+            {deviceKey.toUpperCase()}
           </span>
 
           <span className="text-[11px] text-neutral-400 dark:text-neutral-500 font-mono">
-            {telemetry.isGenerating ? (
+            {safeTelemetry.isGenerating ? (
               <span className={`${THEME_COLORS.tokens.accentText} font-medium animate-pulse flex items-center gap-1`}>
                 <Zap className={`w-3 h-3 fill-current ${THEME_COLORS.tokens.accentText}`} /> Generating...
               </span>
@@ -104,23 +121,23 @@ const TelemetryBarComponent: React.FC<TelemetryBarProps> = ({
         {/* Right: Real-time generation metrics & expand toggle */}
         <div className="flex items-center gap-2 sm:gap-3 text-[11px] font-mono">
           {/* Tokens Per Second */}
-          {telemetry.tokensPerSec > 0 && (
+          {safeTelemetry.tokensPerSec > 0 && (
             <span className="text-neutral-700 dark:text-neutral-300" title="Generation Speed">
-              <span className={`${THEME_COLORS.tokens.accentText} font-semibold`}>{telemetry.tokensPerSec.toFixed(1)}</span> t/s
+              <span className={`${THEME_COLORS.tokens.accentText} font-semibold`}>{safeTelemetry.tokensPerSec.toFixed(1)}</span> t/s
             </span>
           )}
 
           {/* Time to First Token (TTFT) */}
-          {telemetry.timeToFirstTokenMs > 0 && (
+          {safeTelemetry.timeToFirstTokenMs > 0 && (
             <span className="hidden sm:inline text-neutral-500 dark:text-neutral-400" title="Time to first token">
-              TTFT <span className="text-neutral-700 dark:text-neutral-300">{telemetry.timeToFirstTokenMs}ms</span>
+              TTFT <span className="text-neutral-700 dark:text-neutral-300">{safeTelemetry.timeToFirstTokenMs}ms</span>
             </span>
           )}
 
           {/* Total latency */}
-          {telemetry.totalLatencyMs > 0 && (
+          {safeTelemetry.totalLatencyMs > 0 && (
             <span className="hidden md:inline text-neutral-500 dark:text-neutral-400" title="Total response generation time">
-              {(telemetry.totalLatencyMs / 1000).toFixed(2)}s
+              {(safeTelemetry.totalLatencyMs / 1000).toFixed(2)}s
             </span>
           )}
 
@@ -149,14 +166,14 @@ const TelemetryBarComponent: React.FC<TelemetryBarProps> = ({
           <div className={`p-2 rounded-xl ${THEME_COLORS.tokens.telemetryCard} shadow-sm flex flex-col`}>
             <span className="text-neutral-400 dark:text-neutral-500 text-[10px]">WEIGHT PRECISION</span>
             <span className="text-neutral-800 dark:text-neutral-200 font-semibold mt-0.5">
-              {activeModel.defaultDtype.toUpperCase()} Quantized
+              {defaultDtype.toUpperCase()} Quantized
             </span>
           </div>
 
           <div className={`p-2 rounded-xl ${THEME_COLORS.tokens.telemetryCard} shadow-sm flex flex-col`}>
             <span className="text-neutral-400 dark:text-neutral-500 text-[10px]">GENERATED TOKENS</span>
             <span className="text-neutral-800 dark:text-neutral-200 font-semibold mt-0.5">
-              {telemetry.tokenCount > 0 ? `${telemetry.tokenCount} tokens` : '0 tokens'}
+              {safeTelemetry.tokenCount > 0 ? `${safeTelemetry.tokenCount} tokens` : '0 tokens'}
             </span>
           </div>
         </div>

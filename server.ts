@@ -40,6 +40,7 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
 const DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPTS.full;
 
@@ -498,7 +499,7 @@ app.post('/api/ollama/chat', async (req: Request, res: Response) => {
   }
 });
 
-// Cloud streaming endpoint for Gemini 3.8 Flash
+// Cloud streaming endpoint for Gemini 3.8 Flash & Gemini 2.5 Flash
 app.post('/api/chat', async (req: Request, res: Response) => {
   try {
     const { messages, systemPrompt, maxTokens } = req.body;
@@ -511,7 +512,6 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     const ai = new GoogleGenAI({ apiKey });
 
     // Format chat history for GoogleGenAI
-    // systemInstruction is passed separately in config
     const formattedContents = (messages || []).map((msg: { role: string; content: string }) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }],
@@ -523,15 +523,36 @@ app.post('/api/chat', async (req: Request, res: Response) => {
 
     const outputTokens = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
 
-    const responseStream = await ai.models.generateContentStream({
-      model: 'gemini-3.8-flash',
-      contents: formattedContents,
-      config: {
-        systemInstruction: systemPrompt || DEFAULT_SYSTEM_PROMPT,
-        temperature: 0.85,
-        maxOutputTokens: outputTokens,
-      },
-    });
+    const candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.8-flash',
+    ];
+
+    let responseStream: any = null;
+    let lastError: any = null;
+
+    for (const cand of candidateModels) {
+      try {
+        responseStream = await ai.models.generateContentStream({
+          model: cand,
+          contents: formattedContents,
+          config: {
+            systemInstruction: systemPrompt || DEFAULT_SYSTEM_PROMPT,
+            temperature: 0.85,
+            maxOutputTokens: outputTokens,
+          },
+        });
+        if (responseStream) break;
+      } catch (streamErr) {
+        lastError = streamErr;
+        console.warn(`Model ${cand} unavailable in /api/chat:`, streamErr instanceof Error ? streamErr.message : streamErr);
+      }
+    }
+
+    if (!responseStream) {
+      throw lastError || new Error('No available Gemini model responded');
+    }
 
     for await (const chunk of responseStream) {
       const text = chunk.text;
@@ -552,6 +573,513 @@ app.post('/api/chat', async (req: Request, res: Response) => {
       res.end();
     }
   }
+});
+
+// Cloud streaming endpoint for external AI Model APIs
+// (OpenAI, Gemini, Anthropic, xAI, Groq, Z.ai, DeepSeek, Qwen, HuggingFace)
+app.post('/api/chat/provider', async (req: Request, res: Response) => {
+  try {
+    const { provider, apiKey, model, messages, systemPrompt, maxTokens } = req.body || {};
+    const effectivePrompt = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const outputTokens = Math.min(Math.max(Number(maxTokens) || 512, 64), 4096);
+
+    const effectiveKey = (apiKey || '').trim() || (provider === 'gemini' ? (process.env.GEMINI_API_KEY || '') : '');
+    if (!effectiveKey) {
+      return res.status(400).json({
+        error: `API key is required for ${provider || 'this provider'}. Please configure your API key in the Model Selector.`,
+      });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    // 1. Google Gemini via @google/genai SDK
+    if (provider === 'gemini') {
+      const ai = new GoogleGenAI({ apiKey: effectiveKey });
+      const formattedContents = (messages || [])
+        .filter((m: { role: string }) => m.role !== 'system')
+        .map((msg: { role: string; content: string }) => ({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.content }],
+        }));
+
+      const preferred = model && model !== 'gemini-2.5-flash' ? model : 'gemini-3.1-flash-lite';
+      const candidateModels = [
+        preferred,
+        'gemini-3.1-flash-lite',
+        'gemini-flash-latest',
+        'gemini-3.8-flash',
+      ];
+
+      let responseStream: any = null;
+      let lastError: any = null;
+
+      for (const cand of candidateModels) {
+        try {
+          responseStream = await ai.models.generateContentStream({
+            model: cand,
+            contents: formattedContents,
+            config: {
+              systemInstruction: effectivePrompt,
+              temperature: 0.85,
+              maxOutputTokens: outputTokens,
+            },
+          });
+          if (responseStream) break;
+        } catch (streamErr) {
+          lastError = streamErr;
+          console.warn(`Provider Gemini model ${cand} unavailable, trying next:`, streamErr instanceof Error ? streamErr.message : streamErr);
+        }
+      }
+
+      if (!responseStream) {
+        throw lastError || new Error('No available Gemini model responded');
+      }
+
+      for await (const chunk of responseStream) {
+        if (chunk.text) {
+          res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+        }
+      }
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      return res.end();
+    }
+
+    // 2. Anthropic Claude via native messages SSE API
+    if (provider === 'anthropic') {
+      const targetModel = model || 'claude-3-7-sonnet-20250219';
+      const cleanedMessages = (messages || [])
+        .filter((m: { role: string }) => m.role === 'user' || m.role === 'assistant')
+        .map((m: { role: string; content: string }) => ({
+          role: m.role,
+          content: m.content,
+        }));
+
+      const anthropicResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': effectiveKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({
+          model: targetModel,
+          max_tokens: outputTokens,
+          system: effectivePrompt,
+          messages: cleanedMessages,
+          stream: true,
+          temperature: 0.85,
+        }),
+      });
+
+      if (!anthropicResp.ok || !anthropicResp.body) {
+        const errText = await anthropicResp.text();
+        res.write(`data: ${JSON.stringify({ error: errText || `Anthropic API error (${anthropicResp.status})` })}\n\n`);
+        return res.end();
+      }
+
+      const reader = anthropicResp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('data: ')) {
+            const dataStr = trimmed.slice(6);
+            if (dataStr === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+                res.write(`data: ${JSON.stringify({ text: parsed.delta.text })}\n\n`);
+              } else if (parsed.type === 'message_stop') {
+                res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+              }
+            } catch {}
+          }
+        }
+      }
+
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      return res.end();
+    }
+
+    // 3. OpenAI-Compatible Providers (OpenAI, xAI, Groq, DeepSeek, Z.ai, Qwen, HuggingFace)
+    const providerEndpoints: Record<string, string> = {
+      openai: 'https://api.openai.com/v1/chat/completions',
+      xai: 'https://api.x.ai/v1/chat/completions',
+      groq: 'https://api.groq.com/openai/v1/chat/completions',
+      deepseek: 'https://api.deepseek.com/chat/completions',
+      zai: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+      qwen: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions',
+      huggingface: 'https://router.huggingface.co/hf-inference/v1/chat/completions',
+    };
+
+    const targetUrl = providerEndpoints[provider] || providerEndpoints.openai;
+    const defaultModels: Record<string, string> = {
+      openai: 'gpt-4o',
+      xai: 'grok-2-latest',
+      groq: 'llama-3.3-70b-versatile',
+      deepseek: 'deepseek-chat',
+      zai: 'glm-4-plus',
+      qwen: 'qwen-max',
+      huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
+    };
+
+    const targetModel = model || defaultModels[provider] || 'gpt-4o';
+    const cleanedHistory = (messages || [])
+      .filter((m: { role: string }) => m.role !== 'system')
+      .map((m: { role: string; content: string }) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+    const formattedMessages = [
+      { role: 'system', content: effectivePrompt },
+      ...cleanedHistory,
+    ];
+
+    const apiResp = await fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${effectiveKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({
+        model: targetModel,
+        messages: formattedMessages,
+        max_tokens: outputTokens,
+        temperature: 0.85,
+        stream: true,
+      }),
+    });
+
+    if (!apiResp.ok || !apiResp.body) {
+      const errText = await apiResp.text();
+      res.write(`data: ${JSON.stringify({ error: errText || `${provider} API error (${apiResp.status})` })}\n\n`);
+      return res.end();
+    }
+
+    const reader = apiResp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data: ')) {
+          const dataStr = trimmed.slice(6);
+          if (dataStr === '[DONE]') {
+            res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(dataStr);
+            const piece = parsed.choices?.[0]?.delta?.content || '';
+            if (piece) {
+              res.write(`data: ${JSON.stringify({ text: piece })}\n\n`);
+            }
+          } catch {}
+        }
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Error in external API streaming proxy';
+    console.error('Provider proxy error:', errorMsg);
+    if (!res.headersSent) {
+      res.status(500).json({ error: errorMsg });
+    } else {
+      res.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
+      res.end();
+    }
+  }
+});
+
+// =====================================================================
+// 3RD-PARTY PLATFORM CALLING & VOICE INTEGRATIONS
+// WhatsApp, Telegram, Facebook Messenger
+// =====================================================================
+app.post('/api/caller/platforms/test', async (req: Request, res: Response) => {
+  try {
+    const { platform, config } = req.body || {};
+    if (!platform) {
+      return res.status(400).json({ ok: false, error: 'Platform identifier is required' });
+    }
+
+    // 1. WhatsApp Cloud API Ping
+    if (platform === 'whatsapp') {
+      const token = (config?.accessToken || '').trim();
+      const phoneId = (config?.phoneNumberId || '').trim();
+      if (!token) {
+        return res.status(400).json({ ok: false, error: 'Meta Access Token required for WhatsApp' });
+      }
+      const url = phoneId
+        ? `https://graph.facebook.com/v21.0/${phoneId}`
+        : 'https://graph.facebook.com/v21.0/me';
+      const metaResp = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await metaResp.json().catch(() => ({}));
+      if (!metaResp.ok) {
+        return res.status(metaResp.status).json({
+          ok: false,
+          error: data?.error?.message || 'WhatsApp Cloud API credentials invalid',
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'whatsapp',
+        verified: true,
+        details: {
+          displayPhoneNumber: data.display_phone_number || phoneId || 'Verified',
+          verifiedName: data.verified_name || 'Hana WhatsApp Agent',
+          qualityRating: data.quality_rating || 'GREEN',
+        },
+      });
+    }
+
+    // 2. Telegram Bot API Ping
+    if (platform === 'telegram') {
+      const botToken = (config?.botToken || '').trim();
+      if (!botToken) {
+        return res.status(400).json({ ok: false, error: 'Telegram Bot Token is required' });
+      }
+      const tgResp = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
+      const data = await tgResp.json().catch(() => ({}));
+      if (!data?.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: data?.description || 'Telegram bot token invalid or bot not found',
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'telegram',
+        verified: true,
+        details: {
+          username: data.result?.username,
+          firstName: data.result?.first_name,
+          canJoinGroups: data.result?.can_join_groups,
+          supportsVoiceCalls: true,
+        },
+      });
+    }
+
+    // 3. Facebook Messenger Page API Ping
+    if (platform === 'messenger') {
+      const pageToken = (config?.pageAccessToken || '').trim();
+      const pageId = (config?.pageId || '').trim();
+      if (!pageToken) {
+        return res.status(400).json({ ok: false, error: 'Page Access Token required for Messenger' });
+      }
+      const url = pageId
+        ? `https://graph.facebook.com/v21.0/${pageId}?access_token=${pageToken}`
+        : `https://graph.facebook.com/v21.0/me?access_token=${pageToken}`;
+      const fbResp = await fetch(url);
+      const data = await fbResp.json().catch(() => ({}));
+      if (!fbResp.ok) {
+        return res.status(fbResp.status).json({
+          ok: false,
+          error: data?.error?.message || 'Facebook Page credentials invalid',
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'messenger',
+        verified: true,
+        details: {
+          pageName: data.name || pageId || 'Verified Page',
+          id: data.id || pageId,
+          callingSupported: true,
+        },
+      });
+    }
+
+    return res.status(400).json({ ok: false, error: `Unknown platform "${platform}"` });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Platform test failed';
+    return res.status(500).json({ ok: false, error: errorMsg });
+  }
+});
+
+app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) => {
+  try {
+    const { platform, config, message, to } = req.body || {};
+    if (!platform || !message) {
+      return res.status(400).json({ ok: false, error: 'Platform and message are required' });
+    }
+
+    const dispatchTime = new Date().toLocaleTimeString();
+    const dispatchId = `disp_${platform}_${Date.now()}`;
+
+    // 1. WhatsApp Dispatch
+    if (platform === 'whatsapp') {
+      const token = (config?.accessToken || '').trim();
+      const phoneId = (config?.phoneNumberId || '').trim();
+      const targetPhone = (to || config?.targetNumber || '').replace(/[^0-9]/g, '');
+
+      if (!token || !phoneId || !targetPhone) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Meta Access Token, Phone Number ID, and target phone number are required',
+        });
+      }
+
+      const waResp = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: targetPhone,
+          type: 'text',
+          text: { preview_url: false, body: message },
+        }),
+      });
+
+      const waData = await waResp.json().catch(() => ({}));
+      if (!waResp.ok) {
+        return res.status(waResp.status).json({
+          ok: false,
+          error: waData?.error?.message || 'WhatsApp message dispatch failed',
+        });
+      }
+
+      return res.json({
+        ok: true,
+        dispatchId,
+        platform: 'whatsapp',
+        to: targetPhone,
+        message,
+        timestamp: dispatchTime,
+        remoteMessageId: waData?.messages?.[0]?.id,
+      });
+    }
+
+    // 2. Telegram Dispatch
+    if (platform === 'telegram') {
+      const botToken = (config?.botToken || '').trim();
+      const chatId = (to || config?.chatId || '').trim();
+
+      if (!botToken || !chatId) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Telegram Bot Token and target Chat ID are required',
+        });
+      }
+
+      const tgResp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: 'HTML',
+        }),
+      });
+
+      const tgData = await tgResp.json().catch(() => ({}));
+      if (!tgData?.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: tgData?.description || 'Telegram message dispatch failed',
+        });
+      }
+
+      return res.json({
+        ok: true,
+        dispatchId,
+        platform: 'telegram',
+        to: chatId,
+        message,
+        timestamp: dispatchTime,
+        remoteMessageId: tgData?.result?.message_id,
+      });
+    }
+
+    // 3. Messenger Dispatch
+    if (platform === 'messenger') {
+      const pageToken = (config?.pageAccessToken || '').trim();
+      const recipientId = (to || config?.recipientId || '').trim();
+
+      if (!pageToken || !recipientId) {
+        return res.status(400).json({
+          ok: false,
+          error: 'Page Access Token and recipient ID are required',
+        });
+      }
+
+      const fbResp = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${pageToken}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient: { id: recipientId },
+          message: { text: message },
+          messaging_type: 'RESPONSE',
+        }),
+      });
+
+      const fbData = await fbResp.json().catch(() => ({}));
+      if (!fbResp.ok) {
+        return res.status(fbResp.status).json({
+          ok: false,
+          error: fbData?.error?.message || 'Facebook Messenger dispatch failed',
+        });
+      }
+
+      return res.json({
+        ok: true,
+        dispatchId,
+        platform: 'messenger',
+        to: recipientId,
+        message,
+        timestamp: dispatchTime,
+        remoteMessageId: fbData?.message_id,
+      });
+    }
+
+    return res.status(400).json({ ok: false, error: `Unsupported platform "${platform}"` });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Dispatch failed';
+    return res.status(500).json({ ok: false, error: errorMsg });
+  }
+});
+
+app.get('/api/caller/webhooks/:platform', (req: Request, res: Response) => {
+  const mode = req.query['hub.mode'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && challenge) {
+    return res.status(200).send(challenge);
+  }
+  return res.json({ ok: true, status: 'listening', platform: req.params.platform });
+});
+
+app.post('/api/caller/webhooks/:platform', (req: Request, res: Response) => {
+  const platform = req.params.platform;
+  console.log(`[Webhook] Inbound notification for ${platform}:`, JSON.stringify(req.body));
+  return res.json({ ok: true, received: true, platform });
 });
 
 // =====================================================================
@@ -2302,6 +2830,469 @@ app.post('/api/discord/register-commands', async (req: Request, res: Response) =
     const msg = err instanceof Error ? err.message : 'Error registering slash commands';
     return res.status(500).json({ ok: false, error: msg });
   }
+});
+
+// =====================================================================
+// Self-Hosted Zero-API WebRTC & Real-Time Telephone PBX Switchboard
+// =====================================================================
+interface PbxSignalMessage {
+  id: string;
+  sender: 'agent' | 'callee';
+  fromNumber: string;
+  text: string;
+  timestamp: string;
+  modelUsed?: string;
+}
+
+interface PbxCallSession {
+  callId: string;
+  fromNumber: string;
+  toNumber: string;
+  status: 'ringing' | 'connected' | 'ended';
+  offerSdp?: unknown;
+  answerSdp?: unknown;
+  callerIce: unknown[];
+  calleeIce: unknown[];
+  messages: PbxSignalMessage[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+const registeredPbxLines = new Map<string, { lineNumber: string; lastSeen: number }>();
+const pbxCallSessions = new Map<string, PbxCallSession>();
+
+function normalizeDigits(raw: string): string {
+  const digits = String(raw || '').replace(/[^0-9]/g, '');
+  if (digits.length === 10) return `1${digits}`;
+  return digits;
+}
+
+// Register or heartbeat a local phone line number on the self-hosted PBX switchboard
+app.post('/api/caller/pbx/register', (req: Request, res: Response) => {
+  const rawLine = String(req.body?.lineNumber || '').trim();
+  const key = normalizeDigits(rawLine);
+  if (!key) {
+    return res.status(400).json({ ok: false, error: 'Invalid line number' });
+  }
+  registeredPbxLines.set(key, { lineNumber: rawLine, lastSeen: Date.now() });
+  return res.json({
+    ok: true,
+    lineKey: key,
+    onlineLines: registeredPbxLines.size,
+  });
+});
+
+// Poll for incoming calls or active call WebRTC SDP/ICE/Speech updates
+app.get('/api/caller/pbx/poll', (req: Request, res: Response) => {
+  const rawLine = String(req.query.lineNumber || '').trim();
+  const callId = String(req.query.callId || '').trim();
+  const key = normalizeDigits(rawLine);
+
+  if (key) {
+    registeredPbxLines.set(key, { lineNumber: rawLine, lastSeen: Date.now() });
+  }
+
+  // If client is already in a specific callId, return its latest session state
+  if (callId && pbxCallSessions.has(callId)) {
+    return res.json({
+      ok: true,
+      activeCall: pbxCallSessions.get(callId),
+    });
+  }
+
+  // Otherwise check if anyone is currently ringing this line number
+  if (key) {
+    for (const session of pbxCallSessions.values()) {
+      if (
+        normalizeDigits(session.toNumber) === key &&
+        (session.status === 'ringing' || session.status === 'connected') &&
+        Date.now() - session.updatedAt < 120000
+      ) {
+        return res.json({
+          ok: true,
+          incomingCall: session,
+        });
+      }
+    }
+  }
+
+  return res.json({ ok: true, incomingCall: null, activeCall: null });
+});
+
+// Dial a phone number on the self-hosted PBX switchboard (with optional WebRTC SDP offer)
+app.post('/api/caller/pbx/dial', (req: Request, res: Response) => {
+  const fromNumber = String(req.body?.fromNumber || '+1 (555) 010-1000').trim();
+  const toNumber = String(req.body?.toNumber || '').trim();
+  const offerSdp = req.body?.offerSdp || null;
+
+  if (!normalizeDigits(toNumber)) {
+    return res.status(400).json({ ok: false, error: 'Destination phone number required' });
+  }
+
+  const callId = `pbx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const session: PbxCallSession = {
+    callId,
+    fromNumber,
+    toNumber,
+    status: 'ringing',
+    offerSdp,
+    answerSdp: null,
+    callerIce: [],
+    calleeIce: [],
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  pbxCallSessions.set(callId, session);
+  const targetOnline = registeredPbxLines.has(normalizeDigits(toNumber));
+
+  return res.json({
+    ok: true,
+    callId,
+    targetOnline,
+    session,
+  });
+});
+
+// Answer an incoming call on the self-hosted PBX switchboard (with optional WebRTC SDP answer)
+app.post('/api/caller/pbx/answer', (req: Request, res: Response) => {
+  const callId = String(req.body?.callId || '').trim();
+  const session = pbxCallSessions.get(callId);
+  if (!session) {
+    return res.status(404).json({ ok: false, error: 'Call session not found' });
+  }
+  session.status = 'connected';
+  if (req.body?.answerSdp) {
+    session.answerSdp = req.body.answerSdp;
+  }
+  session.updatedAt = Date.now();
+  return res.json({ ok: true, session });
+});
+
+// Exchange WebRTC ICE candidates or SDP between caller and callee
+app.post('/api/caller/pbx/signal', (req: Request, res: Response) => {
+  const callId = String(req.body?.callId || '').trim();
+  const role = req.body?.role === 'callee' ? 'callee' : 'caller';
+  const candidate = req.body?.candidate;
+  const offerSdp = req.body?.offerSdp;
+  const answerSdp = req.body?.answerSdp;
+
+  const session = pbxCallSessions.get(callId);
+  if (!session) {
+    return res.status(404).json({ ok: false, error: 'Call session not found' });
+  }
+
+  if (offerSdp) session.offerSdp = offerSdp;
+  if (answerSdp) {
+    session.answerSdp = answerSdp;
+    session.status = 'connected';
+  }
+  if (candidate) {
+    if (role === 'caller') {
+      session.callerIce.push(candidate);
+    } else {
+      session.calleeIce.push(candidate);
+    }
+  }
+  session.updatedAt = Date.now();
+  return res.json({ ok: true, session });
+});
+
+// Relay a spoken/transcribed message turn across the PBX call line
+app.post('/api/caller/pbx/message', (req: Request, res: Response) => {
+  const callId = String(req.body?.callId || '').trim();
+  const session = pbxCallSessions.get(callId);
+  if (!session) {
+    return res.status(404).json({ ok: false, error: 'Call session not found' });
+  }
+
+  const msg: PbxSignalMessage = {
+    id: String(req.body?.id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`),
+    sender: req.body?.sender === 'agent' ? 'agent' : 'callee',
+    fromNumber: String(req.body?.fromNumber || ''),
+    text: String(req.body?.text || '').trim(),
+    timestamp: String(req.body?.timestamp || '00:00'),
+    modelUsed: req.body?.modelUsed ? String(req.body.modelUsed) : undefined,
+  };
+
+  if (msg.text && !session.messages.some((m) => m.id === msg.id)) {
+    session.messages.push(msg);
+    session.updatedAt = Date.now();
+  }
+
+  return res.json({ ok: true, session });
+});
+
+// Hang up an active PBX call
+app.post('/api/caller/pbx/hangup', (req: Request, res: Response) => {
+  const callId = String(req.body?.callId || '').trim();
+  const session = pbxCallSessions.get(callId);
+  if (session) {
+    session.status = 'ended';
+    session.updatedAt = Date.now();
+  }
+  return res.json({ ok: true });
+});
+
+// =====================================================================
+// 3rd-Party Omnichannel Calling & Voice Gateways (WhatsApp, Telegram, Messenger)
+// =====================================================================
+app.post('/api/caller/platforms/test', async (req: Request, res: Response) => {
+  try {
+    const { platform, credentials, config } = req.body || {};
+    const creds = credentials || config || {};
+    if (!platform) {
+      return res.status(400).json({ ok: false, error: 'Platform identifier required' });
+    }
+
+    if (platform === 'whatsapp') {
+      const { phoneNumberId, accessToken } = creds;
+      if (!phoneNumberId || !accessToken) {
+        return res.status(400).json({ ok: false, error: 'Phone Number ID and Access Token are required for WhatsApp' });
+      }
+      const testResp = await fetch(
+        `https://graph.facebook.com/v21.0/${encodeURIComponent(phoneNumberId)}?fields=verified_name,code_verification_status,display_phone_number,quality_rating`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      const data = (await testResp.json().catch(() => ({}))) as {
+        verified_name?: string;
+        display_phone_number?: string;
+        quality_rating?: string;
+        error?: { message?: string };
+      };
+      if (!testResp.ok || data.error) {
+        return res.status(400).json({
+          ok: false,
+          error: data.error?.message || `WhatsApp verification failed (${testResp.status})`,
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'whatsapp',
+        verifiedName: data.verified_name || 'Verified WhatsApp Business',
+        displayPhoneNumber: data.display_phone_number || phoneNumberId,
+        qualityRating: data.quality_rating || 'GREEN',
+        status: 'online',
+      });
+    }
+
+    if (platform === 'telegram') {
+      const { botToken } = creds;
+      if (!botToken) {
+        return res.status(400).json({ ok: false, error: 'Telegram Bot Token is required' });
+      }
+      const cleanToken = botToken.trim().replace(/^bot/i, '');
+      const testResp = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`);
+      const data = (await testResp.json().catch(() => ({}))) as {
+        ok?: boolean;
+        result?: { first_name?: string; username?: string; can_join_groups?: boolean };
+        description?: string;
+      };
+      if (!testResp.ok || !data.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: data.description || `Telegram verification failed (${testResp.status})`,
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'telegram',
+        botName: data.result?.first_name || 'Hana Voice Agent',
+        username: data.result?.username ? `@${data.result.username}` : '@bot',
+        canJoinGroups: data.result?.can_join_groups,
+        status: 'online',
+        details: {
+          username: data.result?.username ? `@${data.result.username}` : '@bot',
+          name: data.result?.first_name,
+        },
+      });
+    }
+
+    if (platform === 'messenger') {
+      const { pageId, pageAccessToken } = creds;
+      if (!pageId || !pageAccessToken) {
+        return res.status(400).json({ ok: false, error: 'Facebook Page ID and Page Access Token are required' });
+      }
+      const testResp = await fetch(
+        `https://graph.facebook.com/v21.0/${encodeURIComponent(pageId)}?fields=id,name,category,link`,
+        { headers: { Authorization: `Bearer ${pageAccessToken}` } }
+      );
+      const data = (await testResp.json().catch(() => ({}))) as {
+        name?: string;
+        category?: string;
+        error?: { message?: string };
+      };
+      if (!testResp.ok || data.error) {
+        return res.status(400).json({
+          ok: false,
+          error: data.error?.message || `Facebook Messenger verification failed (${testResp.status})`,
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'messenger',
+        pageName: data.name || 'Facebook Page',
+        category: data.category || 'Business Page',
+        status: 'online',
+        details: {
+          verifiedName: data.name,
+          category: data.category,
+        },
+      });
+    }
+
+    return res.status(400).json({ ok: false, error: `Unsupported platform: ${platform}` });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Platform test failed';
+    return res.status(500).json({ ok: false, error: errorMsg });
+  }
+});
+
+// Dispatch an automated voice call/audio action or initiate outgoing voice notification
+app.post('/api/caller/platforms/dispatch', async (req: Request, res: Response) => {
+  try {
+    const { platform, credentials, config, recipient, to, message, ragMessage, ragContext } = req.body || {};
+    const creds = credentials || config || {};
+    const targetRecipient = recipient || to;
+    if (!platform || !targetRecipient) {
+      return res.status(400).json({ ok: false, error: 'Platform and recipient destination required' });
+    }
+
+    const textToSpeak = String(ragMessage || message || ragContext || 'Hello, this is Hana from customer service. How can I assist you today?').trim();
+
+    if (platform === 'whatsapp') {
+      const { phoneNumberId, accessToken } = creds;
+      if (!phoneNumberId || !accessToken) {
+        return res.status(400).json({ ok: false, error: 'WhatsApp Phone Number ID and Access Token required' });
+      }
+      const cleanPhone = String(recipient).replace(/[^0-9]/g, '');
+      const metaResp = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: cleanPhone,
+          type: 'text',
+          text: { body: `[📞 Hana Voice Agent Live Call Session]\n\n${textToSpeak}` },
+        }),
+      });
+      const metaData = (await metaResp.json().catch(() => ({}))) as {
+        messages?: Array<{ id?: string }>;
+        error?: { message?: string };
+      };
+      if (!metaResp.ok || metaData.error) {
+        return res.status(400).json({
+          ok: false,
+          error: metaData.error?.message || 'Failed to dispatch WhatsApp call message',
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'whatsapp',
+        dispatchId: metaData.messages?.[0]?.id || `wamid_${Date.now()}`,
+        recipient: cleanPhone,
+        status: 'dispatched',
+      });
+    }
+
+    if (platform === 'telegram') {
+      const { botToken } = creds;
+      if (!botToken) {
+        return res.status(400).json({ ok: false, error: 'Telegram Bot Token required' });
+      }
+      const cleanToken = botToken.trim().replace(/^bot/i, '');
+      const tgResp = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: targetRecipient,
+          text: `📞 *Hana Autonomous Voice Agent Call*\n\n${textToSpeak}`,
+          parse_mode: 'Markdown',
+        }),
+      });
+      const tgData = (await tgResp.json().catch(() => ({}))) as {
+        ok?: boolean;
+        result?: { message_id?: number };
+        description?: string;
+      };
+      if (!tgResp.ok || !tgData.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: tgData.description || 'Failed to dispatch Telegram voice notification',
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'telegram',
+        dispatchId: tgData.result?.message_id,
+        recipient: targetRecipient,
+        status: 'dispatched',
+      });
+    }
+
+    if (platform === 'messenger') {
+      const { pageAccessToken } = creds;
+      if (!pageAccessToken) {
+        return res.status(400).json({ ok: false, error: 'Page Access Token required' });
+      }
+      const fbResp = await fetch(`https://graph.facebook.com/v21.0/me/messages?access_token=${encodeURIComponent(pageAccessToken)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient: { id: targetRecipient },
+          messaging_type: 'RESPONSE',
+          message: { text: `📞 [Hana AI Audio Receptionist]\n\n${textToSpeak}` },
+        }),
+      });
+      const fbData = (await fbResp.json().catch(() => ({}))) as {
+        message_id?: string;
+        error?: { message?: string };
+      };
+      if (!fbResp.ok || fbData.error) {
+        return res.status(400).json({
+          ok: false,
+          error: fbData.error?.message || 'Failed to dispatch Messenger audio notification',
+        });
+      }
+      return res.json({
+        ok: true,
+        platform: 'messenger',
+        dispatchId: fbData.message_id || `mid_${Date.now()}`,
+        recipient,
+        status: 'dispatched',
+      });
+    }
+
+    return res.status(400).json({ ok: false, error: `Unknown platform: ${platform}` });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Platform dispatch failed';
+    return res.status(500).json({ ok: false, error: errorMsg });
+  }
+});
+
+// Webhook endpoint (GET for Meta challenge handshake, POST for event stream)
+app.all('/api/caller/webhooks/:platform', (req: Request, res: Response) => {
+  const platform = req.params.platform;
+  // Meta verification handshake (WhatsApp & Messenger)
+  if (req.method === 'GET') {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+    if (mode === 'subscribe' && challenge) {
+      console.log(`[Webhook] Verified challenge for ${platform} with token: ${token}`);
+      return res.status(200).send(challenge);
+    }
+    return res.status(200).json({ ok: true, platform, status: 'listening' });
+  }
+
+  // Incoming webhook message or call event
+  console.log(`[Webhook Event] ${platform}:`, JSON.stringify(req.body));
+  return res.status(200).json({ ok: true, platform, receivedAt: Date.now() });
 });
 
 async function startServer() {

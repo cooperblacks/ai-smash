@@ -152,6 +152,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigateToDocs,
   onNavigateToHumanizer,
   onNavigateToInterview,
+  onNavigateToCaller,
 }) => {
   const [activeAccordion, setActiveAccordion] = useState<number>(0);
   const [activeAutomationAccordion, setActiveAutomationAccordion] = useState<number | null>(0);
@@ -1005,6 +1006,31 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                                 className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0f9bc7] hover:bg-[#117ba2] text-white shadow-xs hover:shadow transition-all active:scale-95 cursor-pointer shrink-0"
                               >
                                 <span>Launch AI Interview</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+
+                          {item.id === 'voice-calling' && (
+                            <div className="mt-5 pt-4 border-t border-black/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div>
+                                <span className="text-xs font-bold text-neutral-900 block">
+                                  Experience Hana&apos;s AI Voice Caller
+                                </span>
+                                <span className="text-[11px] text-neutral-500 block">
+                                  Direct phone dialing, editable RAG knowledge base &amp; real-time 2-way voice booking
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onNavigateToCaller
+                                    ? onNavigateToCaller()
+                                    : onStartChat()
+                                }
+                                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#0f9bc7] hover:bg-[#117ba2] text-white shadow-xs hover:shadow transition-all active:scale-95 cursor-pointer shrink-0"
+                              >
+                                <span>Launch AI Caller</span>
                                 <ArrowRight className="w-3.5 h-3.5" />
                               </button>
                             </div>
