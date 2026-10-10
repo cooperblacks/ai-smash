@@ -3526,32 +3526,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                           )}
                         </span>
                       </div>
-
-                      {/* Accurate timed progress bar based on silence delay timer */}
-                      {silenceTimerProgress && (
-                        <div className="flex items-center gap-2 shrink-0 bg-white/10 px-2.5 py-1 rounded-xl border border-white/15">
-                          <div className="flex flex-col gap-1 w-20 sm:w-24">
-                            <div className="flex items-center justify-between text-[10px] font-mono text-neutral-300">
-                              <span className="flex items-center gap-1">
-                                <Clock className="w-2.5 h-2.5 text-sky-400 animate-spin" />
-                                <span>Silence</span>
-                              </span>
-                              <span className="text-sky-300 font-semibold font-mono">
-                                {(silenceTimerProgress.durationMs / 1000).toFixed(1)}s
-                              </span>
-                            </div>
-                            <div className="h-1.5 w-full bg-black/40 rounded-full overflow-hidden shadow-inner">
-                              <div
-                                key={silenceTimerProgress.id}
-                                className="h-full bg-gradient-to-r from-sky-400 via-teal-400 to-emerald-400 rounded-full"
-                                style={{
-                                  animation: `silence-progress-fill ${silenceTimerProgress.durationMs}ms linear forwards`,
-                                }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
                 )}

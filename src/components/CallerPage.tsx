@@ -167,9 +167,9 @@ const RAG_PRESETS: RagPreset[] = [
     id: 'clinic',
     name: 'Clinic',
     outboundGreeting:
-      'Hello! This is Hana calling from Hana Dental and Wellness Clinic regarding your appointment. Do you have a quick moment to pick a time that works for you?',
+      'Hello! This is Hana calling from Mux Dental and Wellness Clinic regarding your appointment. Do you have a quick moment to pick a time that works for you?',
     inboundGreeting:
-      'Thank you for calling Hana Dental and Wellness Clinic! My name is Hana. How may I help you today?',
+      'Thank you for calling Mux Dental and Wellness Clinic! My name is Hana. How may I help you today?',
     quickPhrases: [
       'How much is a routine checkup and cleaning?',
       'What are your hours and open slots this week?',
@@ -177,7 +177,7 @@ const RAG_PRESETS: RagPreset[] = [
       'Book me for Friday at 5:00 PM please.',
     ],
     content: `[CLINIC RAG KNOWLEDGE BASE]
-Business Name: Hana Dental & Wellness Clinic
+Business Name: Mux Dental & Wellness Clinic
 Hours: Mon-Fri 8:30 AM - 6:00 PM, Sat 9:00 AM - 2:00 PM.
 Services & Pricing:
 - Routine Checkup & Cleaning: $95 (45 min)
@@ -194,9 +194,9 @@ Instructions: Answer caller questions accurately from this text and confirm thei
     id: 'bistro',
     name: 'Restaurant',
     outboundGreeting:
-      'Hi there! This is Hana calling from Hana Garden Bistro to confirm your table reservation. How many guests will be joining, and what time works best?',
+      'Hi there! This is Hana calling from Mux Garden Bistro to confirm your table reservation. How many guests will be joining, and what time works best?',
     inboundGreeting:
-      'Welcome to Hana Garden Bistro! This is Hana speaking. Would you like to reserve a table or ask about our menu?',
+      'Welcome to Mux Garden Bistro! This is Hana speaking. Would you like to reserve a table or ask about our menu?',
     quickPhrases: [
       'Do you have patio seating for 4 tomorrow at 7:00 PM?',
       'Do you have vegan and gluten-free options?',
@@ -204,7 +204,7 @@ Instructions: Answer caller questions accurately from this text and confirm thei
       'Reserve a patio table for 4 tomorrow at 7:00 PM.',
     ],
     content: `[RESTAURANT RAG KNOWLEDGE BASE]
-Business Name: Hana Garden Bistro
+Business Name: Mux Garden Bistro
 Hours: Tue-Sun 11:30 AM - 10:30 PM. Closed Mondays.
 Seating: Indoor Dining Room, Heated Sakura Patio, Private Chef's Counter ($85 tasting menu).
 Policies:
