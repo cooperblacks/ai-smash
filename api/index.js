@@ -270,6 +270,18 @@ VALUES
   ('HANA-IS-MINE', 'skin', ARRAY['base'], 3650, 100000),
   ('HANA-PAIN-GIVER', 'skin', ARRAY['pain-giver'], 3650, 100000),
   ('HANA-PAIN-TAKER', 'skin', ARRAY['pain-taker'], 3650, 100000),
+  ('HANA-SECRET-WARDROBE', 'skin', ARRAY[
+    'beauty-of-pink',
+    'streetwear',
+    'staying-casual',
+    'black-swimsuit',
+    'gothic-beauty',
+    'powerpuff',
+    'neat-and-nimble',
+    'frilly-dress',
+    'cookie-maid',
+    'coffee-maid'
+  ], 3650, 100000)
 ON CONFLICT (code) DO UPDATE SET
   unlocked_outfit_ids = EXCLUDED.unlocked_outfit_ids;
 `;
