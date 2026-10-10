@@ -31,9 +31,9 @@ export interface OmnichannelGatewaysGridProps {
   onChangeCreds: (updater: (prev: PlatformCredentials) => PlatformCredentials) => void;
   activityLogs: PlatformActivityLogItem[];
   onClearLogs: () => void;
-  onTestPlatform: (platform: 'whatsapp' | 'telegram' | 'messenger') => Promise<void>;
-  onDispatchCall: (platform: 'whatsapp' | 'telegram' | 'messenger') => Promise<void>;
-  onSimulateInbound: (platform: 'whatsapp' | 'telegram' | 'messenger') => Promise<void>;
+  onTestPlatform: (platform: 'whatsapp' | 'telegram' | 'messenger' | 'discord') => Promise<void>;
+  onDispatchCall: (platform: 'whatsapp' | 'telegram' | 'messenger' | 'discord') => Promise<void>;
+  onSimulateInbound: (platform: 'whatsapp' | 'telegram' | 'messenger' | 'discord') => Promise<void>;
   testingPlatform: string | null;
   dispatchingPlatform: string | null;
   copiedWebhook: string | null;
@@ -86,7 +86,7 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
-        if (parsed && (parsed.whatsapp || parsed.telegram || parsed.messenger)) {
+        if (parsed && (parsed.whatsapp || parsed.telegram || parsed.messenger || parsed.discord)) {
           onChangeCreds((prev) => ({
             ...prev,
             ...parsed,
@@ -120,6 +120,15 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
           chatId: '',
           secretToken: 'hana_tg_secret_2026',
           callMode: 'voice_note',
+          status: 'idle',
+        },
+        discord: {
+          enabled: true,
+          botToken: '',
+          guildId: '',
+          channelId: '',
+          targetUserId: '',
+          callMode: 'voice_bridge',
           status: 'idle',
         },
         messenger: {
@@ -205,9 +214,9 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
       </div>
 
       {/* ======================================================== */}
-      {/* 3-COLUMN BENTO GRID: WhatsApp, Telegram, Messenger       */}
+      {/* 4-COLUMN BENTO GRID: WhatsApp, Telegram, Discord, Messenger */}
       {/* ======================================================== */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-stretch">
         {/* ------------------------------------------------------ */}
         {/* TILE 1: WHATSAPP BUSINESS CALLING & VOICE GATEWAY      */}
         {/* ------------------------------------------------------ */}
@@ -836,6 +845,230 @@ export const OmnichannelGatewaysGrid: React.FC<OmnichannelGatewaysGridProps> = (
             >
               <Radio className="w-3 h-3 text-indigo-600 animate-pulse" />
               <span>Simulate Inbound Messenger Call</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ------------------------------------------------------ */}
+        {/* TILE 4: DISCORD BOT CALLING & VOICE GATEWAY            */}
+        {/* ------------------------------------------------------ */}
+        <div className="rounded-2xl p-4 bg-white border border-neutral-200/90 shadow-xs flex flex-col justify-between gap-4">
+          <div className="space-y-3">
+            {/* Header */}
+            <div className="flex items-center justify-between gap-2 border-b border-neutral-100 pb-2.5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-violet-50 border border-violet-200 flex items-center justify-center text-violet-600 shrink-0 overflow-hidden">
+                  <img
+                    src={OMNICHANNEL_LOGOS.discord}
+                    alt="Discord"
+                    className="w-5 h-5 object-contain rounded"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold font-heading text-neutral-900">
+                    Discord Voice Bot
+                  </h3>
+                  <p className="text-[10px] text-neutral-500">
+                    Voice Channel &amp; Audio DM Bridge
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border ${
+                    platformCreds.discord.status === 'verified'
+                      ? 'bg-violet-50 border-violet-300 text-violet-700'
+                      : platformCreds.discord.status === 'error'
+                      ? 'bg-rose-50 border-rose-300 text-rose-700'
+                      : 'bg-neutral-100 border-neutral-200 text-neutral-600'
+                  }`}
+                >
+                  {platformCreds.discord.status === 'verified'
+                    ? 'Verified'
+                    : platformCreds.discord.status === 'error'
+                    ? 'Error'
+                    : 'Unverified'}
+                </span>
+
+                <input
+                  type="checkbox"
+                  checked={platformCreds.discord.enabled}
+                  onChange={(e) =>
+                    onChangeCreds((prev) => ({
+                      ...prev,
+                      discord: { ...prev.discord, enabled: e.target.checked },
+                    }))
+                  }
+                  className="accent-violet-600 rounded cursor-pointer"
+                  title="Enable Discord Gateway"
+                />
+              </div>
+            </div>
+
+            {/* Input: Target Channel ID */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-neutral-700 flex items-center justify-between">
+                <span>Target Channel ID</span>
+                <span className="text-[10px] text-neutral-400 font-normal">Voice or Text Channel</span>
+              </label>
+              <input
+                type="text"
+                value={platformCreds.discord.channelId}
+                onChange={(e) =>
+                  onChangeCreds((prev) => ({
+                    ...prev,
+                    discord: { ...prev.discord, channelId: e.target.value },
+                  }))
+                }
+                placeholder="e.g. 112233445566778899"
+                className="w-full px-3 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono text-neutral-900 focus:outline-none focus:border-violet-500 focus:bg-white"
+              />
+            </div>
+
+            {/* Input: Discord Bot Token */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-neutral-700 flex items-center justify-between">
+                <span>Bot Token</span>
+                <button
+                  type="button"
+                  onClick={() => toggleShowToken('discord_bot')}
+                  className="text-[10px] text-violet-600 hover:underline flex items-center gap-0.5 cursor-pointer"
+                >
+                  {showTokens['discord_bot'] ? <EyeOff className="w-2.5 h-2.5" /> : <Eye className="w-2.5 h-2.5" />}
+                  <span>{showTokens['discord_bot'] ? 'Hide' : 'Show'}</span>
+                </button>
+              </label>
+              <input
+                type={showTokens['discord_bot'] ? 'text' : 'password'}
+                value={platformCreds.discord.botToken}
+                onChange={(e) =>
+                  onChangeCreds((prev) => ({
+                    ...prev,
+                    discord: { ...prev.discord, botToken: e.target.value },
+                  }))
+                }
+                placeholder="MTI..."
+                className="w-full px-3 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono text-neutral-900 focus:outline-none focus:border-violet-500 focus:bg-white"
+              />
+            </div>
+
+            {/* Input: Guild (Server) ID */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-neutral-700 flex items-center justify-between">
+                <span>Guild / Server ID</span>
+                <span className="text-[10px] text-neutral-400 font-normal">Optional</span>
+              </label>
+              <input
+                type="text"
+                value={platformCreds.discord.guildId}
+                onChange={(e) =>
+                  onChangeCreds((prev) => ({
+                    ...prev,
+                    discord: { ...prev.discord, guildId: e.target.value },
+                  }))
+                }
+                placeholder="e.g. 998877665544332211"
+                className="w-full px-3 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono text-neutral-900 focus:outline-none focus:border-violet-500 focus:bg-white"
+              />
+            </div>
+
+            {/* Input: Target User ID */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-neutral-700 flex items-center justify-between">
+                <span>Target User ID</span>
+                <span className="text-[10px] text-neutral-400 font-normal">Optional (Direct Mention)</span>
+              </label>
+              <input
+                type="text"
+                value={platformCreds.discord.targetUserId}
+                onChange={(e) =>
+                  onChangeCreds((prev) => ({
+                    ...prev,
+                    discord: { ...prev.discord, targetUserId: e.target.value },
+                  }))
+                }
+                placeholder="e.g. 123456789012345678"
+                className="w-full px-3 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono text-neutral-900 focus:outline-none focus:border-violet-500 focus:bg-white"
+              />
+            </div>
+
+            {/* Select: Voice Call Routing Mode */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-neutral-700">
+                Voice Call Routing Mode
+              </label>
+              <select
+                value={platformCreds.discord.callMode}
+                onChange={(e) =>
+                  onChangeCreds((prev) => ({
+                    ...prev,
+                    discord: { ...prev.discord, callMode: e.target.value as any },
+                  }))
+                }
+                className="w-full px-2.5 py-1.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-medium text-neutral-900 focus:outline-none focus:border-violet-500"
+              >
+                <option value="voice_bridge">Two-Way Voice Bridge (Call Room + Audio Attachments)</option>
+                <option value="direct_call">Direct User Audio DM &amp; Call Alert</option>
+                <option value="audio_bot">Interactive Channel Audio Receptionist</option>
+              </select>
+            </div>
+
+            {/* Webhook Endpoint */}
+            <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-neutral-600 uppercase tracking-wider">
+                  Discord Interactions / Webhook
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onCopyWebhook('discord')}
+                  className="text-[10px] font-semibold text-violet-600 hover:text-violet-800 flex items-center gap-1 cursor-pointer"
+                >
+                  {copiedWebhook === 'discord' ? <Check className="w-2.5 h-2.5 text-emerald-600" /> : <Copy className="w-2.5 h-2.5" />}
+                  <span>{copiedWebhook === 'discord' ? 'Copied' : 'Copy'}</span>
+                </button>
+              </div>
+              <p className="text-[10px] font-mono text-neutral-500 break-all bg-white p-1 rounded border border-neutral-200">
+                {originUrl}/api/caller/webhooks/discord
+              </p>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="space-y-2 pt-2 border-t border-neutral-100">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={testingPlatform === 'discord'}
+                onClick={() => onTestPlatform('discord')}
+                className="py-1.5 px-2.5 rounded-xl bg-neutral-100 hover:bg-neutral-200/80 text-neutral-800 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3 h-3 ${testingPlatform === 'discord' ? 'animate-spin' : ''}`} />
+                <span>Test Bot</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={dispatchingPlatform === 'discord'}
+                onClick={() => onDispatchCall('discord')}
+                className="py-1.5 px-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Play className="w-3 h-3 fill-current" />
+                <span>Dispatch Call</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onSimulateInbound('discord')}
+              className="w-full py-1 rounded-lg bg-violet-50 hover:bg-violet-100/70 border border-violet-200 text-violet-800 text-[11px] font-semibold flex items-center justify-center gap-1 transition-all cursor-pointer"
+            >
+              <Radio className="w-3 h-3 text-violet-600 animate-pulse" />
+              <span>Simulate Inbound Discord Call</span>
             </button>
           </div>
         </div>

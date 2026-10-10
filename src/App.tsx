@@ -2497,6 +2497,7 @@ export default function App() {
             onRemoveIntegration={handleRemoveIntegration}
             onNavigateToDocs={navigateTo}
             onMicAlert={setMicAlert}
+            isHanaSpeaking={Boolean(currentlySpeakingMsgId !== null || isPainSoundActive)}
           />
         </div>
       </main>

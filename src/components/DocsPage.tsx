@@ -1200,7 +1200,7 @@ curl -X GET "https://sheets.googleapis.com/v4/spreadsheets/YOUR_SPREADSHEET_ID/v
     logoUrl: 'https://muxai.vercel.app/logos/gemini.jpg',
     content: {
       overview:
-        'Google Gemini delivers fast reasoning and long-context windows. AI Smash supports Gemini 2.5 Flash, 2.5 Pro, and Gemini 3.8 Flash via the official @google/genai SDK with server-side proxy streaming.',
+        'Google Gemini delivers fast reasoning and long-context windows. AI Smash supports Gemini 3.1 Flash-Lite, Gemini 3.8 Flash, and Gemini 3.1 Pro via the official @google/genai SDK with server-side proxy streaming.',
       prerequisites: [
         'A Google Gemini API key from Google AI Studio (https://aistudio.google.com)',
       ],
@@ -1216,7 +1216,7 @@ curl -X GET "https://sheets.googleapis.com/v4/spreadsheets/YOUR_SPREADSHEET_ID/v
       ],
       parameters: [
         { name: 'apiKey', type: 'string', required: false, desc: 'Custom Gemini key or server fallback.' },
-        { name: 'model', type: 'string', required: true, desc: 'gemini-2.5-flash, gemini-2.5-pro, gemini-3.8-flash.' },
+        { name: 'model', type: 'string', required: true, desc: 'gemini-3.1-flash-lite, gemini-3.8-flash, gemini-3.1-pro-preview.' },
       ],
       codeExample: {
         lang: 'typescript',
@@ -1224,7 +1224,7 @@ curl -X GET "https://sheets.googleapis.com/v4/spreadsheets/YOUR_SPREADSHEET_ID/v
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const responseStream = await ai.models.generateContentStream({
-  model: 'gemini-2.5-flash',
+  model: 'gemini-3.1-flash-lite',
   contents: [{ role: 'user', parts: [{ text: 'Hello Hana!' }] }],
 });`,
       },

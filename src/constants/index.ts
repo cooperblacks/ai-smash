@@ -652,6 +652,7 @@ export const OMNICHANNEL_LOGOS = {
   whatsapp: `${MODEL_SOURCE_DOMAIN}/logos/whatsapp.jpg`,
   telegram: `${MODEL_SOURCE_DOMAIN}/logos/telegram.jpg`,
   messenger: `${MODEL_SOURCE_DOMAIN}/logos/messenger.jpg`,
+  discord: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/discord.png',
 } as const;
 
 export const WARDROBE_OUTFITS: WardrobeOutfit[] = [
@@ -1604,10 +1605,10 @@ export const API_PROVIDERS_CONFIG: Record<ApiProviderId, ApiProviderConfig> = {
     id: 'gemini',
     name: 'Gemini API',
     shortName: 'Gemini',
-    tagline: 'Google Gemini 2.5 Flash & 2.5 Pro',
+    tagline: 'Google Gemini 3.1 Flash-Lite & 3.8 Flash',
     logoUrl: 'https://muxai.vercel.app/logos/gemini.jpg',
-    defaultModel: 'gemini-2.5-flash',
-    availableModels: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3.8-flash', 'gemini-2.0-flash'],
+    defaultModel: 'gemini-3.1-flash-lite',
+    availableModels: ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-3.1-pro-preview'],
     docsPath: '/docs/api/gemini',
   },
   anthropic: {

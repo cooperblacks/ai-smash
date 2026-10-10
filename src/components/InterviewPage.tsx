@@ -50,7 +50,7 @@ interface InterviewPageProps {
   onNavigateToChat: () => void;
 }
 
-type InterviewStage = 'lobby' | 'meeting' | 'recruiter_review';
+type InterviewStage = 'lobby' | 'meeting' | 'candidate_complete' | 'recruiter_review';
 
 type MeetingPhase =
   | 'joining'
@@ -97,6 +97,7 @@ export interface InterviewScenarioConfig {
   qaSilenceSeconds: number; // default 5.0s (as requested)
   activeSilenceVoiceline: string;
   silenceVoicelineOptions: string[];
+  minWordsForOpenQuestionSilence: number; // default 6 words (5-8 words demo config)
   minCharsForOpenQuestionAdvance: number;
   showHana3DModel: boolean; // Recruiter toggle for 3D model
 }
@@ -113,6 +114,7 @@ const DEFAULT_SCENARIO_CONFIG: InterviewScenarioConfig = {
     "Appreciated! I have logged those details. Let's transition to the next phase.",
     "Wonderful, thank you for walking me through that. Let's move right along.",
   ],
+  minWordsForOpenQuestionSilence: 6, // 5-8 words demo config
   minCharsForOpenQuestionAdvance: 10,
   showHana3DModel: true,
 };
@@ -625,12 +627,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     }
   }, [candidateLiveTranscript]);
 
-  // Accurately timed progress bar for candidate silence auto-send timer
-  const [silenceTimerProgress, setSilenceTimerProgress] = useState<{
-    id: number;
-    durationMs: number;
-  } | null>(null);
-
   // Spotlight Tasks Data
   // Task 1: Resume Document Upload (handled via uploadedResume)
   // Task 2: Written assessment (>= 100 characters)
@@ -703,7 +699,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
       const saved = sessionStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && (parsed.stage === 'meeting' || parsed.stage === 'recruiter_review')) {
+        if (parsed && (parsed.stage === 'meeting' || parsed.stage === 'candidate_complete' || parsed.stage === 'recruiter_review')) {
           setHasSavedSession(true);
           setSavedSessionData(parsed);
         }
@@ -748,7 +744,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
 
   // Persist session snapshot to sessionStorage whenever critical interview states change
   useEffect(() => {
-    if (stage === 'meeting' || stage === 'recruiter_review') {
+    if (stage === 'meeting' || stage === 'candidate_complete' || stage === 'recruiter_review') {
       try {
         const stateToSave = {
           stage,
@@ -1581,29 +1577,32 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
   );
 
   // Reset / Trigger Silence Auto-Send for Open Questions
-  // Uses configurable silence seconds, varied voicelines, and smart done-intent detection
+  // Uses configurable silence seconds, varied voicelines, min word count, and smart done-intent detection
   const resetSilenceTimer = useCallback(() => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
     }
 
     const curPhase = meetingPhaseRef.current;
     if (curPhase !== 'question_1' && curPhase !== 'question_2') {
-      setSilenceTimerProgress(null);
       return;
     }
 
     const currentText = candidateTranscriptRef.current.trim();
     const isExplicitlyDone = detectCandidateFinishedIntent(currentText, curPhase);
+    const wordCount = currentText ? currentText.split(/\s+/).filter(Boolean).length : 0;
+    const minWords = scenarioConfig.minWordsForOpenQuestionSilence ?? 6;
+
+    // Minimum number of words needed when listening during open questions before checking for silence (e.g. 5-8 words)
+    if (!isExplicitlyDone && wordCount < minWords) {
+      return;
+    }
 
     // Configurable duration (default 3.0s, or faster 1.0s if candidate explicitly stated they are done)
     const waitDurationMs = isExplicitlyDone ? 1000 : scenarioConfig.openQuestionSilenceSeconds * 1000;
 
-    // Trigger accurate timed progress bar
-    setSilenceTimerProgress({ id: Date.now(), durationMs: waitDurationMs });
-
     silenceTimerRef.current = setTimeout(() => {
-      setSilenceTimerProgress(null);
       const text = candidateTranscriptRef.current.trim();
       const phaseNow = meetingPhaseRef.current;
       const doneNow = detectCandidateFinishedIntent(text, phaseNow);
@@ -1636,20 +1635,15 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             'neutral'
           );
         } else if (phaseNow === 'question_2') {
-          speakHanaLine(
-            voiceline,
-            () => {
-              setTimeout(() => {
-                handleSaveResponse(
-                  'question_2',
-                  'Walk me through a challenging technical problem or project you tackled recently.',
-                  text || '[No verbal response provided]',
-                  'task_resume'
-                );
-              }, 450);
-            },
-            'neutral'
-          );
+          // Transition directly to task_resume so taskResumeIntro is the single transition voiceline before task panels arrive
+          setTimeout(() => {
+            handleSaveResponse(
+              'question_2',
+              'Walk me through a challenging technical problem or project you tackled recently.',
+              text || '[No verbal response provided]',
+              'task_resume'
+            );
+          }, 450);
         }
       }
       silenceTimerRef.current = null;
@@ -1658,6 +1652,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     handleSaveResponse,
     scenarioConfig.activeSilenceVoiceline,
     scenarioConfig.openQuestionSilenceSeconds,
+    scenarioConfig.minWordsForOpenQuestionSilence,
     speakHanaLine,
     pickUniqueVoiceline,
   ]);
@@ -1775,11 +1770,10 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   }, 450);
                 }, 'neutral');
               } else {
-                speakHanaLine(voiceline, () => {
-                  setTimeout(() => {
-                    handleSaveResponse('question_2', 'Challenging technical problem', text, 'task_resume');
-                  }, 450);
-                }, 'neutral');
+                // For question_2 transitioning to task_resume, proceed directly to task_resume so only 1 transition voiceline is spoken
+                setTimeout(() => {
+                  handleSaveResponse('question_2', 'Challenging technical problem', text, 'task_resume');
+                }, 450);
               }
               return;
             }
@@ -2716,6 +2710,20 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
     window.speechSynthesis?.cancel();
     lipSyncManager.endSpeech();
     await stopRecordingSession();
+    setStage('candidate_complete');
+    setActivePov('candidate');
+    try {
+      confetti({
+        particleCount: 75,
+        spread: 70,
+        origin: { y: 0.6 },
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleGoToRecruiterReview = () => {
     setStage('recruiter_review');
     setActivePov('recruiter');
   };
@@ -2887,6 +2895,38 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                 <span>3.0s</span>
                 <span>5.0s (default)</span>
                 <span>8.0s</span>
+              </div>
+            </div>
+
+            {/* Setting 4: Minimum Words Before Silence Check */}
+            <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="font-bold text-neutral-900 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Minimum Words Before Silence Check</span>
+                </label>
+                <span className="font-mono font-bold text-sky-600 bg-sky-50 px-2.5 py-0.5 rounded border border-sky-200">
+                  {scenarioConfig.minWordsForOpenQuestionSilence} words
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-500 mb-3">
+                Minimum number of words the candidate must speak during open questions before Hana initiates the silence countdown (e.g. 5–8 words).
+              </p>
+              <input
+                type="range"
+                min="3"
+                max="12"
+                step="1"
+                value={scenarioConfig.minWordsForOpenQuestionSilence}
+                onChange={(e) =>
+                  updateScenarioConfig({ minWordsForOpenQuestionSilence: parseInt(e.target.value, 10) })
+                }
+                className="w-full accent-sky-500 cursor-pointer"
+              />
+              <div className="flex justify-between text-[10px] text-neutral-400 font-mono mt-1">
+                <span>3 words</span>
+                <span>6 words (demo default)</span>
+                <span>12 words</span>
               </div>
             </div>
 
@@ -3509,8 +3549,8 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                   </div>
                 )}
 
-                {/* Live speech auto-scrolling marquee subtitle indicator & accurately timed silence progress bar */}
-                {(candidateLiveTranscript || silenceTimerProgress) && (
+                {/* Live speech auto-scrolling marquee subtitle indicator */}
+                {candidateLiveTranscript && (
                   <div className="absolute top-4 left-4 right-4 z-20 pointer-events-none">
                     <div className="px-3.5 py-2 rounded-2xl bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs leading-relaxed max-w-lg mx-auto shadow-xl flex items-center gap-3 overflow-hidden">
                       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
@@ -3519,11 +3559,7 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
                         className="flex-1 overflow-x-auto whitespace-nowrap scroll-smooth flex items-center justify-end [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                       >
                         <span className="inline-block pl-2 font-medium">
-                          {candidateLiveTranscript ? (
-                            <>&ldquo;{candidateLiveTranscript.split(/\s+/).slice(-18).join(' ')}&rdquo;</>
-                          ) : (
-                            <span className="text-neutral-400 italic">Listening...</span>
-                          )}
+                          &ldquo;{candidateLiveTranscript.split(/\s+/).slice(-18).join(' ')}&rdquo;
                         </span>
                       </div>
                     </div>
@@ -3874,31 +3910,6 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2.5 py-1 rounded-full border border-sky-200">
               {meetingPhase.replace('_', ' ').toUpperCase()}
             </span>
-            {(meetingPhase === 'question_1' || meetingPhase === 'question_2') && (
-              <div className="flex items-center gap-2 ml-2">
-                {silenceTimerProgress ? (
-                  <div className="flex items-center gap-2 px-3 py-1 bg-sky-50 border border-sky-200 rounded-full">
-                    <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse shrink-0" />
-                    <span className="text-xs font-mono font-medium text-sky-800 shrink-0">
-                      Auto-sending in {(silenceTimerProgress.durationMs / 1000).toFixed(1)}s
-                    </span>
-                    <div className="w-24 sm:w-32 h-2 bg-neutral-200 rounded-full overflow-hidden shadow-inner shrink-0">
-                      <div
-                        key={silenceTimerProgress.id}
-                        className="h-full bg-gradient-to-r from-sky-500 via-teal-400 to-emerald-500 rounded-full"
-                        style={{
-                          animation: `silence-progress-fill ${silenceTimerProgress.durationMs}ms linear forwards`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 px-2.5 py-1 bg-neutral-100 border border-neutral-200 rounded-full text-xs font-mono text-neutral-600">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Voice status info indicator */}
@@ -3913,6 +3924,180 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
             </div>
           </div>
         </footer>
+      </div>
+    );
+  }
+
+  // ----------------------------------------------------
+  // STAGE 2.5: CANDIDATE POV INTERVIEW CONCLUDED SCREEN
+  // ----------------------------------------------------
+  if (stage === 'candidate_complete') {
+    return (
+      <div className="min-h-screen bg-[#f8fafc] text-neutral-900 flex flex-col font-sans select-none">
+        {/* Header Bar */}
+        <header className="h-16 border-b border-neutral-200 px-4 sm:px-6 flex items-center justify-between bg-white/95 backdrop-blur-md sticky top-0 z-30 shadow-xs">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onNavigateHome}
+              className="p-2 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
+              title="Return to Home"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <div>
+              <h1 className="font-bold text-sm sm:text-base font-heading text-neutral-900 flex items-center gap-2">
+                <span>Interview Completed</span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono font-semibold">
+                  Candidate POV
+                </span>
+              </h1>
+              <span className="text-[11px] text-neutral-500">
+                MuxAI Autonomous Hiring Assessment • {targetRole}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                sessionStorage.removeItem(STORAGE_KEY);
+                setStage('lobby');
+                setMeetingPhase('joining');
+                setHanaEntered(false);
+                setIsHana3DReady(false);
+                recordedChunksRef.current = [];
+                setRecordedVideoUrl(null);
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-xs font-semibold text-neutral-700 transition-colors cursor-pointer"
+            >
+              Start New Session
+            </button>
+          </div>
+        </header>
+
+        {/* Candidate Completion Body */}
+        <main className="flex-1 max-w-4xl w-full mx-auto p-4 sm:p-8 flex flex-col items-center justify-center space-y-6">
+          {/* Hero Celebration Card */}
+          <div className="w-full bg-white rounded-3xl border border-neutral-200 p-6 sm:p-10 shadow-md text-center flex flex-col items-center">
+            <div className="w-20 h-20 rounded-3xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center mb-5 shadow-sm">
+              <CheckCircle2 className="w-10 h-10" />
+            </div>
+
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold mb-3">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Assessment Completed &amp; Submitted</span>
+            </span>
+
+            <h2 className="text-2xl sm:text-3xl font-bold font-heading text-neutral-900 mb-2">
+              Thank You, {effectiveDossierName}!
+            </h2>
+            <p className="text-sm sm:text-base text-neutral-600 max-w-xl mx-auto leading-relaxed">
+              Your interview with Hana for the <span className="font-semibold text-neutral-900">{targetRole}</span> position is complete. All responses, documents, and evaluation data have been safely compiled and forwarded to the recruiting team.
+            </p>
+
+            {/* Checklist of Completed Steps */}
+            <div className="w-full mt-8 pt-8 border-t border-neutral-100 grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200/80">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="text-xs">
+                  <div className="font-semibold text-neutral-900">Background &amp; Technical Q&amp;A</div>
+                  <div className="text-neutral-500 text-[11px]">2 core open responses recorded</div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200/80">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="text-xs">
+                  <div className="font-semibold text-neutral-900">Credentials Document</div>
+                  <div className="text-neutral-500 text-[11px] truncate max-w-[200px]">
+                    {uploadedResume ? uploadedResume.fileName : 'Resume document on file'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200/80">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="text-xs">
+                  <div className="font-semibold text-neutral-900">Written Reflection</div>
+                  <div className="text-neutral-500 text-[11px]">
+                    {writtenText.trim().length > 0 ? `${writtenText.trim().length} characters submitted` : 'Completed'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200/80">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="text-xs">
+                  <div className="font-semibold text-neutral-900">Situational Performance Check</div>
+                  <div className="text-neutral-500 text-[11px]">
+                    {pressureRating ? `Rated: ${pressureRating}` : 'Response logged'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200/80">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="text-xs">
+                  <div className="font-semibold text-neutral-900">Multi-Angle Identity Check</div>
+                  <div className="text-neutral-500 text-[11px]">
+                    {snapshots.length} photo angles captured
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-neutral-50 border border-neutral-200/80">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="text-xs">
+                  <div className="font-semibold text-neutral-900">Open Q&amp;A Session</div>
+                  <div className="text-neutral-500 text-[11px]">
+                    {qaHistory.length} dialogue turns archived
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Optional Video Playback */}
+            {recordedVideoUrl && (
+              <div className="w-full mt-6 text-left">
+                <h4 className="text-xs font-semibold text-neutral-700 mb-2 flex items-center gap-1.5">
+                  <Video className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Session Video Recording</span>
+                </h4>
+                <video
+                  src={recordedVideoUrl}
+                  controls
+                  className="w-full max-h-56 rounded-2xl bg-black object-cover border border-neutral-200"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Bottom Action Area: "See Recruiter's Side" */}
+          <div className="w-full bg-gradient-to-br from-sky-50 via-white to-sky-50/50 rounded-3xl border border-sky-200/80 p-6 sm:p-8 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-800 text-[11px] font-semibold mb-1 font-mono">
+                DEMO CONFIGURATION
+              </div>
+              <h3 className="text-base sm:text-lg font-bold text-neutral-900 font-heading">
+                Ready to review the evaluation?
+              </h3>
+              <p className="text-xs sm:text-sm text-neutral-600 max-w-md">
+                Switch perspective to see how the hiring team evaluates candidate dossiers, AI scores, and verification assets.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGoToRecruiterReview}
+              className="px-8 py-3.5 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-bold text-sm sm:text-base shadow-md shadow-sky-500/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 cursor-pointer shrink-0"
+            >
+              <span>See Recruiter&apos;s Side</span>
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        </main>
       </div>
     );
   }
@@ -3944,6 +4129,19 @@ export const InterviewPage: React.FC<InterviewPageProps> = ({
         </div>
 
         <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              setStage('candidate_complete');
+              setActivePov('candidate');
+            }}
+            className="px-3.5 py-1.5 rounded-xl bg-neutral-100 hover:bg-neutral-200 border border-neutral-200 text-xs font-semibold text-neutral-700 transition-colors cursor-pointer flex items-center gap-1.5"
+            title="Inspect Candidate POV End Screen"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Candidate POV Screen</span>
+          </button>
+
           <button
             type="button"
             onClick={() => {

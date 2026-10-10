@@ -31,6 +31,7 @@ interface ChatInputProps {
   onRemoveIntegration: (id: string) => void;
   onNavigateToDocs?: (docsPath: string) => void;
   onMicAlert?: (alert: string | null) => void;
+  isHanaSpeaking?: boolean;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -56,6 +57,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onRemoveIntegration,
   onNavigateToDocs,
   onMicAlert,
+  isHanaSpeaking = false,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,15 +65,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   // ------------------------------------------------------------------
   // Web Speech API: Continuous Voice to Text with silence detection auto-send
   // Mic stays ON until the user explicitly turns it off.
+  // Auto-pauses while Hana is speaking + 1.6s cooldown after her last word.
   // ------------------------------------------------------------------
   const [isListening, setIsListening] = useState(false);
+  const [isSttPausedForHana, setIsSttPausedForHana] = useState(false);
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
   const isListeningRef = useRef(false);
+  const isSttPausedForHanaRef = useRef(false);
+  const wasListeningBeforeHanaSpokeRef = useRef(false);
+  const hanaCooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<any>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef(input);
   const initialTextRef = useRef('');
   const isGeneratingRef = useRef(isGenerating);
+  const isHanaSpeakingRef = useRef(isHanaSpeaking);
 
   useEffect(() => {
     inputRef.current = input;
@@ -81,62 +89,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     isGeneratingRef.current = isGenerating;
   }, [isGenerating]);
 
-  // Check microphone hardware / browser capability on mount
   useEffect(() => {
-    let isMounted = true;
+    isHanaSpeakingRef.current = isHanaSpeaking;
+  }, [isHanaSpeaking]);
 
-    const checkMicCapability = async () => {
-      if (typeof window === 'undefined') return;
-      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (!SpeechRec) {
-        if (isMounted) {
-          setMicAvailable(false);
-          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.unsupported);
-        }
-        return;
-      }
+  useEffect(() => {
+    isSttPausedForHanaRef.current = isSttPausedForHana;
+  }, [isSttPausedForHana]);
 
-      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-        try {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const hasAudioInput = devices.some((d) => d.kind === 'audioinput');
-          if (isMounted) {
-            setMicAvailable(hasAudioInput);
-            if (!hasAudioInput) {
-              onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.notFound);
-            }
-          }
-        } catch {
-          if (isMounted) setMicAvailable(true);
-        }
-      } else {
-        if (isMounted) setMicAvailable(true);
-      }
-    };
-
-    checkMicCapability();
-
-    if (navigator.mediaDevices?.addEventListener) {
-      navigator.mediaDevices.addEventListener('devicechange', checkMicCapability);
-      return () => {
-        isMounted = false;
-        navigator.mediaDevices.removeEventListener('devicechange', checkMicCapability);
-      };
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
+  // Keep silence auto-send timer fresh
   const resetSilenceTimer = () => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
     }
     // Only schedule auto-send after continuous silence for the configured duration
     silenceTimerRef.current = setTimeout(() => {
-      // If currently generating, do not auto-send mid-reply; reset timer and wait
-      if (isGeneratingRef.current) {
+      // If currently generating or Hana is speaking, do not auto-send mid-reply; reset timer and wait
+      if (isGeneratingRef.current || isHanaSpeakingRef.current || isSttPausedForHanaRef.current) {
         resetSilenceTimer();
         return;
       }
@@ -161,6 +130,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const stopListening = () => {
     isListeningRef.current = false;
+    wasListeningBeforeHanaSpokeRef.current = false;
+    if (hanaCooldownTimerRef.current) {
+      clearTimeout(hanaCooldownTimerRef.current);
+      hanaCooldownTimerRef.current = null;
+    }
+    setIsSttPausedForHana(false);
+    isSttPausedForHanaRef.current = false;
+
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
@@ -174,6 +151,103 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       recognitionRef.current = null;
     }
     setIsListening(false);
+  };
+
+  // Reusable recognition initiator (used on start and upon resuming after Hana's speech cooldown)
+  const restartRecognition = () => {
+    if (!isListeningRef.current || isHanaSpeakingRef.current || isSttPausedForHanaRef.current) {
+      return;
+    }
+    if (typeof window === 'undefined') return;
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) return;
+
+    try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+        recognitionRef.current = null;
+      }
+
+      const recognition = new SpeechRec();
+      recognition.continuous = SPEECH_RECOGNITION_CONFIG.continuous;
+      recognition.interimResults = SPEECH_RECOGNITION_CONFIG.interimResults;
+      recognition.lang = SPEECH_RECOGNITION_CONFIG.lang;
+
+      initialTextRef.current = inputRef.current ? inputRef.current.trim() : '';
+
+      recognition.onstart = () => {
+        isListeningRef.current = true;
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        // Drop any results if Hana is speaking or in post-speech cooldown
+        if (isHanaSpeakingRef.current || isSttPausedForHanaRef.current) {
+          return;
+        }
+
+        let sessionFinal = '';
+        let sessionInterim = '';
+
+        for (let i = 0; i < event.results.length; i++) {
+          const item = event.results[i];
+          if (item.isFinal) {
+            sessionFinal += item[0].transcript + ' ';
+          } else {
+            sessionInterim += item[0].transcript;
+          }
+        }
+
+        const base = initialTextRef.current ? initialTextRef.current + ' ' : '';
+        const combined = (base + sessionFinal + sessionInterim).trimStart();
+        setInput(combined);
+        inputRef.current = combined;
+
+        resetSilenceTimer();
+      };
+
+      recognition.onerror = (event: any) => {
+        if (event.error === 'not-allowed') {
+          setMicAvailable(false);
+          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.denied);
+          stopListening();
+        } else if (event.error === 'audio-capture') {
+          setMicAvailable(false);
+          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.notFound);
+          stopListening();
+        }
+      };
+
+      recognition.onend = () => {
+        // If STT was temporarily paused for Hana, do NOT restart until cooldown finishes
+        if (isSttPausedForHanaRef.current || isHanaSpeakingRef.current) {
+          return;
+        }
+
+        if (isListeningRef.current) {
+          try {
+            recognition.start();
+          } catch {
+            setTimeout(() => {
+              if (isListeningRef.current && !isSttPausedForHanaRef.current && !isHanaSpeakingRef.current) {
+                try {
+                  recognition.start();
+                } catch {}
+              }
+            }, 120);
+          }
+        } else {
+          setIsListening(false);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.warn('SpeechRecognition start failed:', err);
+    }
   };
 
   const startListening = async () => {
@@ -217,87 +291,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       }
     }
 
-    try {
-      const recognition = new SpeechRec();
-      recognition.continuous = SPEECH_RECOGNITION_CONFIG.continuous;
-      recognition.interimResults = SPEECH_RECOGNITION_CONFIG.interimResults;
-      recognition.lang = SPEECH_RECOGNITION_CONFIG.lang;
+    isListeningRef.current = true;
+    setIsListening(true);
 
-      initialTextRef.current = inputRef.current ? inputRef.current.trim() : '';
-
-      recognition.onstart = () => {
-        isListeningRef.current = true;
-        setIsListening(true);
-      };
-
-      recognition.onresult = (event: any) => {
-        let sessionFinal = '';
-        let sessionInterim = '';
-
-        for (let i = 0; i < event.results.length; i++) {
-          const item = event.results[i];
-          if (item.isFinal) {
-            sessionFinal += item[0].transcript + ' ';
-          } else {
-            sessionInterim += item[0].transcript;
-          }
-        }
-
-        const base = initialTextRef.current ? initialTextRef.current + ' ' : '';
-        const combined = (base + sessionFinal + sessionInterim).trimStart();
-        setInput(combined);
-        inputRef.current = combined;
-
-        // Reset continuous silence timer whenever user speaks
-        resetSilenceTimer();
-      };
-
-      recognition.onerror = (event: any) => {
-        console.warn('SpeechRecognition error:', event.error);
-        if (event.error === 'not-allowed') {
-          setMicAvailable(false);
-          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.denied);
-          stopListening();
-        } else if (event.error === 'audio-capture') {
-          setMicAvailable(false);
-          onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.notFound);
-          stopListening();
-        }
-        // For 'no-speech' or other network glitches, do NOT turn off mic
-      };
-
-      recognition.onend = () => {
-        // Continuous listening: if user hasn't toggled off, keep microphone listening!
-        if (isListeningRef.current) {
-          try {
-            recognition.start();
-          } catch {
-            setTimeout(() => {
-              if (isListeningRef.current) {
-                try {
-                  recognition.start();
-                } catch {
-                  // transient error, will try again if still listening
-                }
-              }
-            }, 120);
-          }
-        } else {
-          setIsListening(false);
-        }
-      };
-
-      recognitionRef.current = recognition;
-      isListeningRef.current = true;
-      setIsListening(true);
-      recognition.start();
-    } catch (err) {
-      console.error('Failed to start speech recognition:', err);
-      setMicAvailable(false);
-      onMicAlert?.(SPEECH_RECOGNITION_CONFIG.errorMessages.generic);
-      isListeningRef.current = false;
-      setIsListening(false);
+    // If Hana is currently speaking, mark paused and wait for her cooldown to finish
+    if (isHanaSpeakingRef.current) {
+      wasListeningBeforeHanaSpokeRef.current = true;
+      isSttPausedForHanaRef.current = true;
+      setIsSttPausedForHana(true);
+      return;
     }
+
+    restartRecognition();
   };
 
   const toggleListening = () => {
@@ -307,6 +312,61 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       startListening();
     }
   };
+
+  // ------------------------------------------------------------------
+  // Automatic STT pause whenever Hana is saying something,
+  // plus 1.6s delay after her last word finishes so voicelines don't mix into user input.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (isHanaSpeaking) {
+      // Clear any pending post-speech resume timer if Hana begins speaking again
+      if (hanaCooldownTimerRef.current) {
+        clearTimeout(hanaCooldownTimerRef.current);
+        hanaCooldownTimerRef.current = null;
+      }
+
+      if (isListeningRef.current) {
+        wasListeningBeforeHanaSpokeRef.current = true;
+        isSttPausedForHanaRef.current = true;
+        setIsSttPausedForHana(true);
+
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+        }
+
+        // Temporarily stop microphone speech recognition while Hana speaks
+        try {
+          recognitionRef.current?.stop();
+        } catch {}
+      }
+    } else {
+      // Hana finished saying something: Wait 1.6s (between 1-2 seconds) after her last word finishes
+      if (wasListeningBeforeHanaSpokeRef.current && isListeningRef.current) {
+        isSttPausedForHanaRef.current = true;
+        setIsSttPausedForHana(true);
+
+        if (hanaCooldownTimerRef.current) {
+          clearTimeout(hanaCooldownTimerRef.current);
+        }
+
+        hanaCooldownTimerRef.current = setTimeout(() => {
+          hanaCooldownTimerRef.current = null;
+          isSttPausedForHanaRef.current = false;
+          setIsSttPausedForHana(false);
+
+          // If still in listening mode, resume continuous speech recognition cleanly
+          if (isListeningRef.current && wasListeningBeforeHanaSpokeRef.current) {
+            initialTextRef.current = inputRef.current ? inputRef.current.trim() : '';
+            restartRecognition();
+          }
+        }, 1600);
+      } else {
+        setIsSttPausedForHana(false);
+        isSttPausedForHanaRef.current = false;
+      }
+    }
+  }, [isHanaSpeaking]);
 
   useEffect(() => {
     return () => {
@@ -443,21 +503,32 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
             {/* Right: Mic Button + Send or Stop button */}
             <div className="flex items-center gap-1.5 shrink-0 self-end pb-0.5">
+              {isSttPausedForHana && isListening && (
+                <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                  Hana speaking (mic paused)...
+                </span>
+              )}
+
               {/* Mic Button: Speech to Text with silence detection auto-send */}
               <button
                 type="button"
                 onClick={toggleListening}
                 disabled={isGenerating || micAvailable === false}
-                className={`flex items-center justify-center w-8 h-8 rounded-full transition-all duration-150 ${
+                className={`flex items-center justify-center w-8 h-8 rounded-full transition-all duration-150 relative ${
                   micAvailable === false
                     ? `${THEME_COLORS.tokens.sendButtonDisabled} cursor-not-allowed opacity-40`
                     : isListening
-                    ? 'bg-red-500 text-white animate-pulse shadow-md ring-2 ring-red-400/50 cursor-pointer'
+                    ? isSttPausedForHana
+                      ? 'bg-amber-500 text-white animate-pulse shadow-md ring-2 ring-amber-400/50 cursor-pointer'
+                      : 'bg-red-500 text-white animate-pulse shadow-md ring-2 ring-red-400/50 cursor-pointer'
                     : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer'
                 }`}
                 title={
                   micAvailable === false
                     ? 'No microphone detected or permission denied'
+                    : isSttPausedForHana
+                    ? 'Speech recognition auto-paused while Hana speaks (resumes 1.5s after her voicelines finish)'
                     : isListening
                     ? 'Listening... Speak now (auto-sends on pause)'
                     : 'Voice to Text (speaks into chat, auto-sends on pause)'
@@ -465,6 +536,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 aria-label="Toggle voice input"
               >
                 <Mic className={`w-4 h-4 ${isListening ? 'fill-current' : ''}`} />
+                {isSttPausedForHana && isListening && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white dark:ring-neutral-900" />
+                )}
               </button>
 
               {isGenerating ? (

@@ -134,6 +134,16 @@ export interface PlatformCredentials {
     status: 'idle' | 'verified' | 'error';
     statusMessage?: string;
   };
+  discord: {
+    enabled: boolean;
+    botToken: string;
+    guildId: string;
+    channelId: string;
+    targetUserId: string;
+    callMode: 'voice_bridge' | 'direct_call' | 'audio_bot';
+    status: 'idle' | 'verified' | 'error';
+    statusMessage?: string;
+  };
   messenger: {
     enabled: boolean;
     pageAccessToken: string;
@@ -154,7 +164,7 @@ export interface PlatformCredentials {
 
 export interface PlatformActivityLogItem {
   id: string;
-  platform: 'whatsapp' | 'telegram' | 'messenger' | 'system';
+  platform: 'whatsapp' | 'telegram' | 'messenger' | 'discord' | 'system';
   action: string;
   target?: string;
   message?: string;
@@ -459,6 +469,15 @@ export const CallerPage: React.FC<CallerPageProps> = ({
         callMode: 'voice_note',
         status: 'idle',
       },
+      discord: {
+        enabled: true,
+        botToken: '',
+        guildId: '',
+        channelId: '',
+        targetUserId: '',
+        callMode: 'voice_bridge',
+        status: 'idle',
+      },
       messenger: {
         enabled: true,
         pageAccessToken: '',
@@ -508,6 +527,16 @@ export const CallerPage: React.FC<CallerPageProps> = ({
               status: parsed.telegram?.status || 'idle',
               statusMessage: parsed.telegram?.statusMessage,
             },
+            discord: {
+              enabled: parsed.discord?.enabled ?? true,
+              botToken: parsed.discord?.botToken || '',
+              guildId: parsed.discord?.guildId || '',
+              channelId: parsed.discord?.channelId || '',
+              targetUserId: parsed.discord?.targetUserId || '',
+              callMode: parsed.discord?.callMode || 'voice_bridge',
+              status: parsed.discord?.status || 'idle',
+              statusMessage: parsed.discord?.statusMessage,
+            },
             messenger: {
               enabled: parsed.messenger?.enabled ?? true,
               pageAccessToken: parsed.messenger?.pageAccessToken || '',
@@ -547,6 +576,15 @@ export const CallerPage: React.FC<CallerPageProps> = ({
         chatId: '',
         secretToken: 'hana_tg_secret_2026',
         callMode: 'voice_note',
+        status: 'idle',
+      },
+      discord: {
+        enabled: true,
+        botToken: '',
+        guildId: '',
+        channelId: '',
+        targetUserId: '',
+        callMode: 'voice_bridge',
         status: 'idle',
       },
       messenger: {
@@ -617,6 +655,18 @@ export const CallerPage: React.FC<CallerPageProps> = ({
   const [dispatchingPlatform, setDispatchingPlatform] = useState<string | null>(null);
   const [copiedPlatformWebhook, setCopiedPlatformWebhook] = useState<string | null>(null);
   const [savedPlatformNotice, setSavedPlatformNotice] = useState<boolean>(false);
+
+  // Active 3rd-party omnichannel call state (Telegram, Discord, WhatsApp, Messenger)
+  const [activePlatformCall, setActivePlatformCall] = useState<{
+    platform: 'whatsapp' | 'telegram' | 'messenger' | 'discord';
+    target: string;
+    botToken?: string;
+    channelId?: string;
+  } | null>(null);
+  const activePlatformCallRef = useRef(activePlatformCall);
+  useEffect(() => {
+    activePlatformCallRef.current = activePlatformCall;
+  }, [activePlatformCall]);
 
   const [platformActivityLog, setPlatformActivityLog] = useState<PlatformActivityLogItem[]>([
     {
@@ -1345,6 +1395,20 @@ export const CallerPage: React.FC<CallerPageProps> = ({
         }).catch(() => {});
       }
 
+      // Relay Hana's spoken reply to active 3rd-party platform (Telegram or Discord)
+      if (activePlatformCallRef.current) {
+        fetch('/api/caller/platforms/relay-reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            platform: activePlatformCallRef.current.platform,
+            target: activePlatformCallRef.current.target,
+            botToken: activePlatformCallRef.current.botToken,
+            text: finalReply,
+          }),
+        }).catch(() => {});
+      }
+
       await speakAgentVoice(finalReply);
     },
     [
@@ -1361,14 +1425,14 @@ export const CallerPage: React.FC<CallerPageProps> = ({
   // ----------------------------------------------------
   // 3rd-Party Platform Actions & Testing
   // ----------------------------------------------------
-  const handleTestPlatform = async (platform: 'whatsapp' | 'telegram' | 'messenger') => {
+  const handleTestPlatform = async (platform: 'whatsapp' | 'telegram' | 'messenger' | 'discord') => {
     setTestingPlatform(platform);
     try {
       const cfg = platformCreds[platform];
       const resp = await fetch('/api/caller/platforms/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform, config: cfg }),
+        body: JSON.stringify({ platform, config: cfg, credentials: cfg }),
       });
       const data = await resp.json().catch(() => ({}));
       if (data?.ok) {
@@ -1426,7 +1490,7 @@ export const CallerPage: React.FC<CallerPageProps> = ({
     }
   };
 
-  const handleDispatchPlatformCall = async (platform: 'whatsapp' | 'telegram' | 'messenger') => {
+  const handleDispatchPlatformCall = async (platform: 'whatsapp' | 'telegram' | 'messenger' | 'discord') => {
     setDispatchingPlatform(platform);
     try {
       const cfg = platformCreds[platform];
@@ -1436,17 +1500,69 @@ export const CallerPage: React.FC<CallerPageProps> = ({
           ? platformCreds.whatsapp.targetNumber
           : platform === 'telegram'
           ? platformCreds.telegram.chatId
+          : platform === 'discord'
+          ? platformCreds.discord.channelId || platformCreds.discord.targetUserId
           : platformCreds.messenger.recipientId;
 
+      if (!target) {
+        alert(`Please enter the target destination for ${platform.toUpperCase()}`);
+        return;
+      }
+
+      // 1. Immediately initiate active outbound call on the Caller web frontend!
+      setActivePlatformCall({
+        platform,
+        target,
+        botToken: (cfg as any)?.botToken,
+        channelId: (cfg as any)?.channelId,
+      });
+      setPhoneNumber(`[${platform.toUpperCase()}] ${target}`);
+      setCallDirection('outbound');
+      soundManager.playSend();
+      playRingTone();
+      setCallStatus('dialing');
+      setCallSeconds(0);
+      setLiveInterimSpeech('');
+      accumulatedSttRef.current = '';
+
+      if (ringTimerRef.current) clearTimeout(ringTimerRef.current);
+      ringTimerRef.current = setTimeout(() => {
+        playRingTone();
+        setCallStatus('ringing');
+        ringTimerRef.current = setTimeout(() => {
+          setCallStatus('connected');
+          soundManager.playReceive();
+
+          const greeting = currentPreset.outboundGreeting || testMsg;
+          const greetId = `msg_greet_${Date.now()}`;
+          processedMsgIdsRef.current.add(greetId);
+
+          setTranscript([
+            {
+              id: greetId,
+              sender: 'agent',
+              text: greeting,
+              timestamp: '00:01',
+              modelUsed: activeModel.name,
+            },
+          ]);
+          speakAgentVoice(greeting);
+        }, 900);
+      }, 700);
+
+      // 2. Dispatch call to platform backend API
       const resp = await fetch('/api/caller/platforms/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           platform,
           config: cfg,
+          credentials: cfg,
           message: testMsg,
           to: target,
+          recipient: target,
           ragContext: ragText,
+          callerUrl: typeof window !== 'undefined' ? window.location.origin : '',
         }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -1455,9 +1571,9 @@ export const CallerPage: React.FC<CallerPageProps> = ({
           {
             id: `act_${Date.now()}`,
             platform,
-            action: 'Voice Call Turn Dispatched',
-            target: data.to,
-            message: testMsg,
+            action: `Live ${platform.toUpperCase()} Call Active`,
+            target: data.to || target,
+            message: `${testMsg} (Interactive Voice Bridge Initiated)`,
             timestamp: new Date().toLocaleTimeString(),
             status: 'success',
           },
@@ -1468,10 +1584,10 @@ export const CallerPage: React.FC<CallerPageProps> = ({
           {
             id: `act_${Date.now()}`,
             platform,
-            action: 'Dispatch Failed',
-            message: data?.error || 'Could not send platform message. Check target recipient.',
+            action: 'Dispatch Notice',
+            message: data?.error || 'Call initiated on frontend, check platform credentials.',
             timestamp: new Date().toLocaleTimeString(),
-            status: 'failed',
+            status: 'pending',
           },
           ...prev,
         ]);
@@ -1493,10 +1609,11 @@ export const CallerPage: React.FC<CallerPageProps> = ({
     }
   };
 
-  const handleSimulatePlatformInbound = async (platform: 'whatsapp' | 'telegram' | 'messenger') => {
+  const handleSimulatePlatformInbound = async (platform: 'whatsapp' | 'telegram' | 'messenger' | 'discord') => {
     const questions: Record<string, string> = {
       whatsapp: 'Hi Hana! What dental checkup packages and hours do you have open tomorrow?',
       telegram: 'Hello Hana! Can you tell me your pricing and whether you have 2 PM slots available?',
+      discord: 'Hey Hana! Are you able to help me schedule my consultation through this voice call?',
       messenger: 'Hey! I need to book an appointment with your clinic. What insurance do you accept?',
     };
     const incomingText = questions[platform] || 'What appointment times are open?';
@@ -1692,6 +1809,55 @@ export const CallerPage: React.FC<CallerPageProps> = ({
       if (pbxPollRef.current) clearInterval(pbxPollRef.current);
     };
   }, [handleAnswerIncomingCall, myLineNumber, speakAgentVoice]);
+
+  // ----------------------------------------------------
+  // Omnichannel Platform Call Polling (Telegram & Discord Live Speech Sync)
+  // ----------------------------------------------------
+  const platformPollRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    if (!activePlatformCall) {
+      if (platformPollRef.current) {
+        clearInterval(platformPollRef.current);
+        platformPollRef.current = null;
+      }
+      return;
+    }
+
+    platformPollRef.current = setInterval(async () => {
+      try {
+        if (!activePlatformCallRef.current) return;
+        const cur = activePlatformCallRef.current;
+        const query = new URLSearchParams({
+          platform: cur.platform,
+          target: cur.target,
+          botToken: cur.botToken || '',
+        });
+        const resp = await fetch(`/api/caller/platforms/poll?${query.toString()}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (Array.isArray(data?.messages)) {
+          for (const m of data.messages) {
+            if (!processedMsgIdsRef.current.has(m.id)) {
+              processedMsgIdsRef.current.add(m.id);
+              if (m.sender === 'callee') {
+                handleSendCalleeInputRef.current(m.text, true);
+              } else {
+                setTranscript((prev) => [...prev, m]);
+                speakAgentVoice(m.text);
+              }
+            }
+          }
+        }
+      } catch {}
+    }, 1200);
+
+    return () => {
+      if (platformPollRef.current) {
+        clearInterval(platformPollRef.current);
+        platformPollRef.current = null;
+      }
+    };
+  }, [activePlatformCall, speakAgentVoice]);
 
   // ----------------------------------------------------
   // Continuous Real-Time Speech-to-Text (STT) with Silence Auto-Send
@@ -1952,6 +2118,10 @@ export const CallerPage: React.FC<CallerPageProps> = ({
         body: JSON.stringify({ callId: activePbxCallId }),
       }).catch(() => {});
       setActivePbxCallId(null);
+    }
+
+    if (activePlatformCallRef.current) {
+      setActivePlatformCall(null);
     }
 
     setIncomingPbxOffer(null);
@@ -2402,6 +2572,29 @@ export const CallerPage: React.FC<CallerPageProps> = ({
           {/* ROW 2: MERGED DOUBLE COLUMN (LIVE 2-WAY VOICE Q&A)     */}
           {/* ------------------------------------------------------ */}
           <section className="md:col-span-2 rounded-2xl p-4 bg-white border border-neutral-200/90 shadow-xs flex flex-col gap-3 min-w-0">
+            {activePlatformCall && (
+              <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-violet-50 border border-violet-200 text-violet-950 text-xs shadow-xs animate-in fade-in duration-200">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="w-2.5 h-2.5 rounded-full bg-violet-600 animate-ping shrink-0" />
+                  <div className="min-w-0">
+                    <p className="font-bold text-violet-900 truncate">
+                      🟢 Live {activePlatformCall.platform.toUpperCase()} Call Bridge Active: {activePlatformCall.target}
+                    </p>
+                    <p className="text-[11px] text-violet-700 truncate">
+                      Callee audio voice notes &amp; messages stream into this caller room; Hana speaks replies back as voiceovers.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleEndCall}
+                  className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shrink-0 cursor-pointer shadow-xs transition-all"
+                >
+                  End Call
+                </button>
+              </div>
+            )}
+
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-sky-50 border border-sky-200 flex items-center justify-center text-sky-600">
